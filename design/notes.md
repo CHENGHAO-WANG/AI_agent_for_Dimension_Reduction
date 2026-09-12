@@ -330,6 +330,58 @@ day 14.
   eight plus two written here. This is the one place where "use libraries wherever
   possible" loses to the libraries not working.
 
+- **2026-09-13** — Day 2 settled four things the interview had left implicit.
+
+  *The contract admits sparse matrices.* A 2,700-cell count matrix is 707 MB dense and
+  8 MB sparse, and the sparsity is itself evidence the planner must reason about —
+  densifying at load time would destroy it before the agent ever saw it. Densification
+  therefore becomes a recorded preprocessing decision rather than a silent default.
+
+  *Loaders never guess.* Missing values, non-numeric columns and string labels are
+  rejected with a message saying what to do instead. Imputation is a decision the agent
+  must make explicitly and log; a loader that quietly filled in means would put an
+  unrecorded modelling choice underneath every result.
+
+  *Evidence keys are artefact-rooted, and absence is not null.* Citations read
+  `profile.shape.n_samples`, not `shape.n_samples`, so they resolve identically from
+  the decision log, the report, or a test. `resolve_evidence` returns a `MISSING`
+  sentinel for keys that do not exist, because a measurement that is legitimately null
+  — an undefined ratio, an unestimable dimension — is a real finding, while a citation
+  pointing at nothing is a broken rationale. Collapsing the two would hide the exact
+  failure the mechanism exists to catch.
+
+  *The profile carries interpretation, not just measurement.* Alongside the numbers it
+  emits `observations`: statements tying a measurement to what it implies for the
+  analysis, each citing the keys behind it. "sparsity: 0.87" is something the planner
+  must interpret; "87% of entries are zero and sample totals vary 24-fold, so raw
+  Euclidean distance mostly measures sequencing depth" is something it can act on.
+
+- **2026-09-13** — Reconnaissance measures a *probe representation*, not the raw matrix,
+  and says so. A k-NN graph over raw UMI counts measures library size, not biology. The
+  representation is chosen by a fixed documented rule (counts → normalise-total + log1p;
+  feature scales spanning >100× → standardise; otherwise as given) and reported with the
+  results, so the agent knows what its evidence is conditional on. Where the transform
+  changes anything, the spectrum is computed on *both* raw and probe: how much structure
+  moves under normalisation is the cheapest available check on whether preprocessing
+  matters for this dataset. Intrinsic dimension and the neighbourhood graph are measured
+  on the leading 50 components of the probe, which is what makes them affordable and is
+  what any real pipeline does — also declared rather than assumed.
+
+  Validated against the fixtures, which is the point of having built them first:
+
+  | fixture | two-NN (truth) | graph components | spectrum elbow (truth) |
+  |---|---|---|---|
+  | swiss_roll | 1.98 (2) | 1 | 2 (2) |
+  | s_curve | 2.94 (2) | 1 | 2 (2) |
+  | blobs | 16.3 | 5 (5 clusters) | 4 |
+  | linear_subspace | 6.04 (5) | 1 | 5 (5) |
+  | sparse_counts | 24.2 | 1 | 16 |
+
+  The small-sample UMAP thumbnail named in section 3.1 is deferred to day 6, when the
+  viz module exists to render it. Claude can read an image, so the thumbnail is evidence
+  the agent can genuinely look at rather than a figure for the report only — worth doing
+  properly rather than half now.
+
 - **2026-09-12** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
   goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
   cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the

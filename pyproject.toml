@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dr-agent"
+version = "0.1.0"
+description = "An AI agent for exploratory data analysis through dimension reduction"
+requires-python = ">=3.12"
+dynamic = ["dependencies"]
+
+[project.scripts]
+drtools = "drtools.cli:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["drtools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
