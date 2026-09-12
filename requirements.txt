@@ -1,0 +1,37 @@
+# dr-agent — pinned direct dependencies.
+# Verified importing on Windows 10 / CPython 3.12.10 on 2026-09-12.
+# Curated, not `pip freeze`: transitive packages are left to the resolver.
+
+# Core numerics and data handling
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.5
+scikit-learn==1.9.1
+
+# Dimension reduction beyond scikit-learn
+umap-learn==0.5.12
+openTSNE==1.0.4          # substantially faster than sklearn's t-SNE at n > 10k
+torch==2.14.0            # MAP-GPLVM only; CPU build is sufficient at n <= 5000
+
+# Single-cell handling and reference clustering
+scanpy==1.12.4
+anndata==0.13.3.post0
+leidenalg==0.12.0
+igraph==1.0.0
+
+# Image benchmark datasets
+medmnist==3.0.2
+
+# Figures
+matplotlib==3.11.2
+seaborn==0.13.2
+
+# Plan schema, method registry, tests
+pydantic==2.13.5
+PyYAML==6.0.3
+pytest==9.1.1
+
+# Deliberately absent: datafold. Version 1.0.0 imports the private symbol
+# `sklearn.utils._message_with_time`, removed in modern scikit-learn, so it fails
+# at import against 1.9.1. Diffusion Maps is implemented directly in
+# drtools/executors instead — see design/notes.md.
