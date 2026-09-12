@@ -21,8 +21,10 @@ from typing import Any
 import numpy as np
 
 from drtools import jsonio
+from drtools.cache import ensure_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
+from drtools.isolation import run_candidate
 from drtools.loaders import available, load
 from drtools.pipeline import PipelineError, run_pipeline
 from drtools.profile import profile_dataset
@@ -131,6 +133,19 @@ def _build_parser() -> argparse.ArgumentParser:
     embed.add_argument(
         "--id", default="candidate", help="name for this candidate's artefacts"
     )
+    embed.add_argument(
+        "--timeout",
+        type=float,
+        default=600.0,
+        help="wall-clock cap in seconds; the candidate is stopped and recorded as a "
+        "timeout rather than left running",
+    )
+    embed.add_argument(
+        "--in-process",
+        action="store_true",
+        help="run in this process instead of an isolated one. Faster, but a method that "
+        "exhausts memory takes the whole command down with it and leaves no record",
+    )
     embed.set_defaults(handler=_cmd_embed)
 
     return parser
@@ -233,6 +248,14 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     stages = _read_stages(args.stages)
     X, labels, meta = _load(args)
     run = _open_run(args, meta)
+    ensure_cache(run, X, labels, meta)
+
+    if not args.in_process:
+        # A candidate that exhausts memory or never converges cannot be caught in
+        # process, so by default it runs somewhere that can be killed.
+        return run_candidate(
+            run, args.id, stages, seed=args.seed, timeout_s=args.timeout
+        )
 
     result = run_pipeline(X, labels, stages, seed=args.seed)
 
@@ -243,6 +266,7 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
 
     record = {
         "id": args.id,
+        "status": "ok",
         "run_id": run.id,
         "dataset": meta.get("name"),
         "stages_requested": stages,

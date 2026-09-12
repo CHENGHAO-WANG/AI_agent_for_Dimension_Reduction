@@ -305,3 +305,211 @@ ops:
         describes: diffusion time; larger t emphasises coarser structure
     fails_when:
       - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
+
+  # ------------------------------------------------------------------ manifold
+
+  mds:
+    kind: reduction
+    family: manifold/global
+    roles: [terminal]
+    summary: Place points so that embedded distances match the original distances.
+    preserves: >
+      Pairwise distances directly, which makes it the most literal reading of "the
+      structure" and the easiest embedding to interpret: distance on the plot means
+      distance in the data.
+    assumes: >
+      That the original distance matrix is meaningful in the first place. In high
+      dimensions distances concentrate, and MDS will faithfully reproduce a
+      concentration artefact.
+    distorts: >
+      Local detail, when global fit demands it. Non-metric MDS preserves only the rank
+      order of distances, which is more robust but discards their magnitudes.
+    handles_sparse: false
+    complexity: O(n^2) memory, iterative SMACOF
+    scales_to: 5000
+    out_of_sample: none
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      metric:
+        type: bool
+        default: true
+        describes: >
+          true fits distances themselves; false fits only their rank order, which suits
+          data whose distances are ordinal rather than quantitative
+      n_init:
+        type: int
+        default: 4
+        min: 1
+        describes: restarts, since SMACOF converges to local minima
+    fails_when:
+      - n_samples above roughly 5000, where the dense distance matrix and the iteration
+        cost together become impractical
+
+  isomap:
+    kind: reduction
+    family: manifold/global
+    roles: [terminal]
+    summary: MDS on geodesic distances measured along a neighbourhood graph.
+    preserves: >
+      Global geodesic structure. Distance is measured along the manifold rather than
+      through the ambient space, which is what lets it unroll a curved surface.
+    assumes: >
+      A single connected, densely sampled manifold with no holes. Every one of those
+      conditions is load-bearing.
+    distorts: >
+      Everything, if the graph is wrong. A single spurious edge between distant parts of
+      the manifold short-circuits the geodesic and corrupts the whole embedding, not
+      just its neighbourhood.
+    handles_sparse: false
+    complexity: O(n^2 log n) for all-pairs shortest paths, O(n^2) memory
+    scales_to: 5000
+    out_of_sample: approximate
+    stochastic: false
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 10
+        min: 2
+        describes: >
+          graph degree; too small disconnects the graph, too large creates short-circuit
+          edges that bridge folds of the manifold
+    fails_when:
+      - the neighbourhood graph is disconnected, leaving infinite geodesic distances
+      - n_samples above roughly 5000, where all-pairs shortest paths dominate the runtime
+
+  lle:
+    kind: reduction
+    family: manifold/local
+    roles: [terminal]
+    summary: Locally linear embedding, reconstructing each point from its neighbours.
+    preserves: >
+      Local linear reconstruction weights: whatever combination of its neighbours
+      describes a point in the original space should describe it in the embedding.
+    assumes: the manifold is locally linear at the scale set by n_neighbors
+    distorts: >
+      Global structure entirely, and the standard variant is prone to collapsing whole
+      regions toward a point when the local weight problem is ill-conditioned.
+    handles_sparse: false
+    complexity: O(n k^3) for the weights, then a sparse eigenproblem
+    scales_to: 20000
+    out_of_sample: approximate
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 12
+        min: 2
+        describes: >
+          neighbourhood size defining "locally linear", and the parameter LLE is most
+          sensitive to. Measured on a noise-free Swiss roll at n = 1000, every variant
+          recovered the roll parameter at rho = 1.00 for k between 6 and 12, fell to
+          around 0.9 at k = 16, and collapsed to between 0.01 and 0.46 by k = 24: once
+          a neighbourhood spans two folds of the manifold, "locally linear" is false and
+          the reconstruction weights are meaningless. Prefer small values, and smaller
+          still when the data is noisy or sparsely sampled.
+      method:
+        type: str
+        default: standard
+        choices: [standard, modified, hessian, ltsa]
+        describes: >
+          standard is the original and the least stable; modified uses several weight
+          vectors per neighbourhood and largely fixes its regularisation problem;
+          hessian and ltsa estimate the local tangent space and handle curvature better
+          but require more neighbours
+    fails_when:
+      - a disconnected neighbourhood graph
+      - n_neighbors too small for the chosen variant, each of which requires a different
+        minimum relative to n_components
+
+  # --------------------------------------------------------- neighbour embeddings
+
+  tsne:
+    kind: reduction
+    family: neighbour_embedding
+    roles: [terminal]
+    summary: t-distributed stochastic neighbour embedding.
+    preserves: >
+      Local neighbourhoods, and it is very good at them. Points that are near in the
+      data end up near in the plot.
+    assumes: >
+      That local neighbourhood membership is what matters, and that a perplexity matched
+      to the data's density can be chosen.
+    distorts: >
+      Global structure, thoroughly and in ways that invite misreading. Cluster sizes
+      carry no meaning, distances between clusters carry no meaning, and apparent gaps
+      may be artefacts of the optimisation. Any interpretation that reads the layout as
+      a map is wrong.
+    handles_sparse: false
+    complexity: O(n log n) with the FFT-accelerated gradient
+    scales_to: 500000
+    out_of_sample: approximate
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1, max: 3}
+      perplexity:
+        type: float
+        default: 30.0
+        min: 2.0
+        describes: >
+          effective neighbourhood size; must stay well below n/3 or the neighbourhood
+          spans the whole dataset and the embedding degenerates
+      initialization:
+        type: str
+        default: pca
+        choices: [pca, random, spectral]
+        describes: >
+          PCA initialisation makes the result reproducible and retains some global
+          arrangement; random initialisation discards it
+      n_iter:
+        type: int
+        default: 500
+        min: 50
+    fails_when:
+      - perplexity at or above n_samples / 3
+
+  umap:
+    kind: reduction
+    family: neighbour_embedding
+    roles: [terminal]
+    summary: Uniform manifold approximation and projection.
+    preserves: >
+      Local neighbourhoods, with more global arrangement retained than t-SNE, and fast
+      enough to run on data where the alternatives are not.
+    assumes: >
+      Locally uniform sampling on a manifold. Where density varies sharply that
+      assumption is violated and the layout distorts accordingly.
+    distorts: >
+      Inter-cluster distances, which are more meaningful than t-SNE's but still not
+      metric. min_dist controls how tightly points pack and is a display choice rather
+      than a property of the data.
+    handles_sparse: true
+    complexity: approximate nearest neighbours, then stochastic optimisation
+    scales_to: 1000000
+    out_of_sample: approximate
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 15
+        min: 2
+        describes: >
+          balance between local and global structure; small values fragment the manifold
+          into local patches, large values blur fine structure
+      min_dist:
+        type: float
+        default: 0.1
+        min: 0.0
+        max: 0.99
+        describes: >
+          minimum separation in the embedding; purely a visual packing parameter with no
+          bearing on what the data is like
+      metric:
+        type: str
+        default: euclidean
+        choices: [euclidean, cosine, correlation, manhattan]
+    fails_when:
+      - n_neighbors at or above n_samples

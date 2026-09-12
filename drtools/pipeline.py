@@ -78,6 +78,34 @@ class PipelineResult:
         }
 
 
+def _tag_failure(
+    error: ExecutionError,
+    op: str,
+    params: dict[str, Any],
+    underlying: str | None = None,
+) -> None:
+    """Attach the failing stage to an exception, without overwriting an inner tag."""
+    if getattr(error, "op", None) is None:
+        error.op = op
+        error.params = dict(params)
+        error.underlying = underlying
+
+
+def failure_record(error: ExecutionError) -> dict[str, Any]:
+    """The structured form of a failure: what broke, where, and with what settings.
+
+    A traceback tells a developer where in the library the error surfaced. This tells
+    the agent which stage of its plan failed and what it was configured with, which is
+    what it needs in order to revise and retry.
+    """
+    return {
+        "op": getattr(error, "op", None),
+        "error_type": getattr(error, "underlying", None) or "ExecutionError",
+        "message": str(error),
+        "params": getattr(error, "params", {}),
+    }
+
+
 def normalise_stages(stages: Any) -> list[Stage]:
     """Accept `["pca"]` or `[{"op": "pca", "params": {...}}]` and return the long form."""
     if not isinstance(stages, list):
@@ -173,14 +201,20 @@ def run_pipeline(
         started = time.perf_counter()
         try:
             current, notes = executor(current, context, **params)
-        except ExecutionError:
+        except ExecutionError as error:
+            # Tag the failure with the stage and the parameters it ran with, so the
+            # structured failure record can name them without re-deriving anything.
+            _tag_failure(error, op, params)
             raise
         except Exception as error:
             # Library failures are re-raised as ExecutionError so that everything
-            # upstream sees one failure type carrying the stage that produced it.
-            raise ExecutionError(
+            # upstream sees one failure type, carrying the original exception's name —
+            # "MemoryError" and "LinAlgError" call for different repairs.
+            wrapped = ExecutionError(
                 f"{op} failed with {type(error).__name__}: {error}"
-            ) from error
+            )
+            _tag_failure(wrapped, op, params, underlying=type(error).__name__)
+            raise wrapped from error
         duration = time.perf_counter() - started
 
         context.history.append(op)

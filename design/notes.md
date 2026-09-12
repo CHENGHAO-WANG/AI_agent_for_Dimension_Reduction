@@ -429,6 +429,67 @@ day 14.
   size is not validated. The parametrised regression test now sweeps n rather than
   fixing it.
 
+- **2026-09-15** — Day 4 brings the registry to eighteen ops and ten reductions. LLE is
+  one op with a `method` parameter over its four variants rather than four ops: they
+  share every precondition and differ only in how the local problem is posed, so the
+  planner's real decision is *which variant*, which is a parameter choice. The registry
+  documents what each variant buys.
+
+  Each of these methods has a precondition that fails quietly, so each executor checks
+  it and reports in terms of the plan. Isomap on a disconnected graph would otherwise
+  get infinite geodesics that scikit-learn patches over, leaving an embedding that looks
+  fine and means nothing. Hessian LLE with too few neighbours raises from inside a
+  least-squares solve, naming no parameter the plan actually set. t-SNE with the default
+  perplexity of 30 at n = 60 produces a featureless disc that still plots happily. All
+  three now refuse, and name the parameter to change.
+
+- **2026-09-15** — Candidates run in a subprocess with a wall-clock cap.
+
+  The reason is that only one of the three ways this goes wrong is an exception. A
+  method can raise, which is catchable. It can allocate more than the OS will give and
+  take the interpreter down, which is not. Or it can simply not finish — SMACOF on fifty
+  thousand points does not fail, it runs until someone stops it. A killable process
+  turns all three into a record: `ok`, `failed`, `timeout`, or `crashed`, where the last
+  is synthesised by the parent from the exit status because the child died before it
+  could write anything.
+
+  Failure records name the stage and the parameters it ran with, and keep the underlying
+  exception's type — `MemoryError` and `LinAlgError` call for different repairs. A
+  traceback tells a developer where in a library something surfaced; this tells the agent
+  which stage of its plan failed and how it was configured, which is what it needs to
+  revise.
+
+  The dataset is cached into the run directory once so candidates need not each reload
+  it, which also makes a run self-contained: the artefacts describe an analysis of a
+  matrix that is still there to inspect.
+
+- **2026-09-15** — Measured LLE's sensitivity to `n_neighbors` rather than assuming it.
+  On a noise-free Swiss roll at n = 1000, every variant recovered the roll parameter at
+  rho = 1.00 for k between 6 and 12, fell to about 0.9 at k = 16, and collapsed to
+  between 0.01 and 0.46 by k = 24. Once a neighbourhood spans two folds of the roll,
+  "locally linear" is false and the reconstruction weights stop meaning anything. That
+  measurement is now in the registry as guidance to the planner and in the test suite as
+  a regression, since it is a property of the method rather than a bug.
+
+  It also explains an earlier confusion: a first check at n = 700 with noise gave LLE
+  about 0.55 and looked like a defect. It was the marginal zone, not a defect. Isomap
+  reached rho = 1.000 on the same data and MDS 0.24, the latter being the negative
+  control that makes the former mean something.
+
+- **2026-09-15** — Two library-compatibility findings.
+
+  UMAP fails on `scipy.sparse.csr_array` while working on `csr_matrix`. Its inner loops
+  are numba-compiled and numba understands only scipy's legacy sparse matrix types; the
+  newer sparse array — which scipy's own operations increasingly return — produces a
+  type-inference error mentioning "non-precise type pyobject" and nothing about
+  sparsity. The executor converts, which is free, and keeps the registry's
+  `handles_sparse` claim honest. Worth remembering because this will bite again anywhere
+  numba meets scipy sparse.
+
+  scikit-learn's MDS has renamed `metric` to `metric_mds` and is changing its default
+  `init` in 1.10. Both now passed explicitly, which also removes a source of run-to-run
+  variation.
+
 - **2026-09-12** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
   goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
   cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the

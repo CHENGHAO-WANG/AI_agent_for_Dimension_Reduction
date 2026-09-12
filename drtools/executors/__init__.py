@@ -117,7 +117,13 @@ def require_pairwise_affordable(n_samples: int, op: str) -> None:
 
 
 # Importing the modules is what populates EXECUTORS.
-from drtools.executors import linear, preprocessing, spectral  # noqa: E402,F401
+from drtools.executors import (  # noqa: E402,F401
+    linear,
+    manifold,
+    neighbour,
+    preprocessing,
+    spectral,
+)
 
 __all__ = [
     "Context",
