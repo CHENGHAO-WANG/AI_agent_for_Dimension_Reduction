@@ -13,19 +13,27 @@ should tell it what to fix.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from drtools import jsonio
 from drtools.contract import ContractError
+from drtools.executors import ExecutionError
 from drtools.loaders import available, load
+from drtools.pipeline import PipelineError, run_pipeline
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
+from drtools.registry import RegistryError, load_registry
 from drtools.runs import RunDir
 
 EXIT_CONTRACT_ERROR = 2
 EXIT_USAGE_ERROR = 3
+EXIT_EXECUTION_ERROR = 4
+EXIT_PLAN_ERROR = 5
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     except ContractError as error:
         print(f"contract error: {error}", file=sys.stderr)
         return EXIT_CONTRACT_ERROR
+    except (PipelineError, RegistryError) as error:
+        print(f"plan error: {error}", file=sys.stderr)
+        return EXIT_PLAN_ERROR
+    except ExecutionError as error:
+        print(f"execution error: {error}", file=sys.stderr)
+        return EXIT_EXECUTION_ERROR
     except FileNotFoundError as error:
         print(f"missing artefact: {error}", file=sys.stderr)
         return EXIT_USAGE_ERROR
@@ -87,6 +101,37 @@ def _build_parser() -> argparse.ArgumentParser:
         help="cap on samples used by the neighbour probes",
     )
     recon.set_defaults(handler=_cmd_recon)
+
+    methods = subparsers.add_parser(
+        "methods",
+        help="capability records for every op: what it preserves, assumes and destroys",
+    )
+    methods.add_argument(
+        "--op", default=None, help="show one op in full instead of the whole registry"
+    )
+    methods.add_argument(
+        "--kind",
+        default=None,
+        choices=["preprocessing", "reduction"],
+        help="restrict the listing to one kind of op",
+    )
+    methods.set_defaults(handler=_cmd_methods)
+
+    embed = subparsers.add_parser(
+        "embed", help="run one candidate pipeline and save its embedding"
+    )
+    _add_data_arguments(embed)
+    _add_run_arguments(embed)
+    embed.add_argument(
+        "--stages",
+        required=True,
+        help='ordered stages as JSON, e.g. \'[{"op":"pca","params":{"n_components":2}}]\''
+        ", or @path to read that JSON from a file",
+    )
+    embed.add_argument(
+        "--id", default="candidate", help="name for this candidate's artefacts"
+    )
+    embed.set_defaults(handler=_cmd_embed)
 
     return parser
 
@@ -169,7 +214,60 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
     return recon
 
 
+def _cmd_methods(args: argparse.Namespace) -> dict[str, Any]:
+    registry = load_registry()
+    if args.op:
+        return registry.describe(args.op)
+    selected = (
+        registry.ops
+        if args.kind is None
+        else {n: s for n, s in registry.ops.items() if s.kind == args.kind}
+    )
+    return {
+        "version": registry.version,
+        "ops": {name: registry.describe(name) for name in selected},
+    }
+
+
+def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
+    stages = _read_stages(args.stages)
+    X, labels, meta = _load(args)
+    run = _open_run(args, meta)
+
+    result = run_pipeline(X, labels, stages, seed=args.seed)
+
+    embeddings = run.path / "embeddings"
+    np.save(embeddings / f"{args.id}.npy", result.embedding)
+    if result.labels is not None:
+        np.save(embeddings / f"{args.id}.labels.npy", result.labels)
+
+    record = {
+        "id": args.id,
+        "run_id": run.id,
+        "dataset": meta.get("name"),
+        "stages_requested": stages,
+        "seed": args.seed,
+        "embedding_path": str(embeddings / f"{args.id}.npy"),
+        **result.as_dict(),
+    }
+    jsonio.write(embeddings / f"{args.id}.json", record)
+    return record
+
+
 # ----------------------------------------------------------------------- helpers
+
+
+def _read_stages(argument: str) -> list[Any]:
+    """Stages come as inline JSON, or as @path for anything long enough to want a file."""
+    text = (
+        Path(argument[1:]).read_text(encoding="utf-8")
+        if argument.startswith("@")
+        else argument
+    )
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise PipelineError(f"--stages is not valid JSON: {error}") from None
 
 
 def _load(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:

@@ -382,6 +382,53 @@ day 14.
   the agent can genuinely look at rather than a figure for the report only — worth doing
   properly rather than half now.
 
+- **2026-09-14** — Day 3. The registry declares thirteen ops and a test asserts that the
+  set of declared ops and the set of implemented executors are *equal*. An entry with no
+  executor is a method the planner can select and never run; an executor with no entry is
+  a capability the planner cannot see. Adding a method stays a registry entry plus one
+  function, with no skill edits, which is the reusability claim made concrete.
+
+  Parameter resolution records provenance — `specified` against `registry_default` — for
+  every value. "The agent set `n_neighbors` to 30 because density varied 40-fold" and
+  "the agent left `n_neighbors` at the default" are very different claims for a report to
+  make, and the difference should not rest on anyone's memory. Unknown parameter names
+  are an error rather than a silent no-op, since a plan setting `perplexity` on Isomap
+  has misunderstood something, and swallowing it would leave the report describing a
+  setting that never took effect.
+
+  Structural plan checks run before any compute: a terminal method cannot feed another
+  stage, and a candidate must end in a reduction. Each refusal says what to do instead,
+  because the agent repairs its plan from these messages.
+
+- **2026-09-14** — The diffusion-maps bandwidth default was wrong, and the way it was
+  wrong is worth keeping.
+
+  The obvious heuristic is the median squared distance to the k-th neighbour. It passed
+  a first check at n = 700 with the Swiss roll recovered at rho = 1.00, then failed at
+  n = 600 with rho = 0.74 and at n = 400 with rho = 0.16. The cause is that the
+  heuristic scales with sampling density while the gaps a manifold method must *not*
+  bridge do not: on a sparsely sampled roll the seventh neighbour is far enough away
+  that the kernel reaches across adjacent sheets and diffusion short-circuits between
+  them. A bandwidth sweep confirmed the working range is eps in 0.5 to 4 and barely
+  moves with n, collapsing to rho < 0.4 by eps = 8.
+
+  The first replacement — Coifman and Singer's kernel-sum scaling criterion, taking eps
+  at the steepest point of log S(eps) against log eps — was *worse*, choosing eps near
+  33 at every n. It finds the right scaling regime, which is why its slope gives a good
+  intrinsic dimension estimate (2.2 against a true 2), but the steepest point sits at
+  the coarse end of that regime.
+
+  What works is the same criterion read differently: the *lower edge* of the linear
+  regime, the smallest eps whose slope has reached half the maximum, where the kernel
+  has just begun to resolve the manifold rather than isolating every point. That gives
+  rho >= 0.98 for both the Swiss roll and the S-curve across n from 300 to 1500, and
+  reports the implied dimension as a free cross-check on reconnaissance's two-NN
+  estimate.
+
+  The lesson generalises past this one method: a default validated at a single sample
+  size is not validated. The parametrised regression test now sweeps n rather than
+  fixing it.
+
 - **2026-09-12** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
   goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
   cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the

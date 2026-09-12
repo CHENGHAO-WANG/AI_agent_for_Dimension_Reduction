@@ -1,0 +1,307 @@
+# Method capability records.
+#
+# This file is the agent's knowledge of what each method is for. Claude cannot
+# introspect scikit-learn, so anything it needs in order to choose sensibly has to be
+# declared here: what a method preserves, what it assumes, what it destroys, where it
+# stops scaling, and how it fails.
+#
+# Three consumers read it. The planner reasons over it when selecting candidates; the
+# plan validator enforces the hard constraints; the rule-based planner branches on the
+# same fields. One source of truth, so the LLM path and the no-LLM path cannot drift
+# apart in what they believe about a method.
+#
+# Adding a method means adding an entry here and one executor function. No skill edits.
+
+version: 1
+
+ops:
+
+  # ----------------------------------------------------------------- preprocessing
+
+  drop_constant:
+    kind: preprocessing
+    summary: Remove features with zero variance.
+    rationale: >
+      Constant features carry no information and make standardisation divide by zero.
+      Dropping them is close to free and prevents a class of silent NaN propagation.
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params: {}
+
+  normalise_total:
+    kind: preprocessing
+    summary: Rescale each sample so its feature total matches a common target.
+    rationale: >
+      For count data the sample total is sequencing depth, a technical quantity. Left
+      in, it becomes the dominant axis of variation in any distance-based embedding,
+      and the leading component measures how deeply a cell was sequenced rather than
+      what it is.
+    assumes: >
+      Total magnitude is technical rather than biological. False for data where the
+      total is the signal, such as absolute abundance.
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params:
+      target:
+        type: float
+        default: null
+        describes: common total to scale to; null uses the median sample total
+
+  log1p:
+    kind: preprocessing
+    summary: Apply log(1 + x) elementwise.
+    rationale: >
+      Counts are heteroscedastic: variance grows with the mean, so without a
+      variance-stabilising transform the highest-expressed features dominate every
+      Euclidean distance regardless of how informative they are.
+    assumes: non-negative input
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params: {}
+
+  standardise:
+    kind: preprocessing
+    summary: Centre each feature to zero mean and unit variance.
+    rationale: >
+      Puts features on a comparable scale so that no feature dominates a distance
+      purely because it was measured in larger units.
+    caution: >
+      Destroys sparsity, since centring makes every zero non-zero. On a wide sparse
+      matrix this can turn megabytes into gigabytes. It also inflates noise in
+      near-constant features, which is why drop_constant belongs before it.
+    handles_sparse: false
+    preserves_sparsity: false
+    deterministic: true
+    params: {}
+
+  l2_normalise:
+    kind: preprocessing
+    summary: Scale each sample to unit L2 norm.
+    rationale: >
+      Makes Euclidean distance monotonic in cosine distance, which is often the right
+      similarity for high-dimensional non-negative data where direction matters more
+      than magnitude.
+    caution: undefined for all-zero samples, which must be dropped first
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params: {}
+
+  select_variable_features:
+    kind: preprocessing
+    summary: Keep the most variable features and discard the rest.
+    rationale: >
+      In wide data most features are noise. Restricting to the variable ones improves
+      the signal-to-noise of every downstream distance and cuts cost substantially.
+    caution: >
+      Selection is made on the current representation, so it belongs after
+      normalisation and log1p rather than before, or it will simply select the
+      highest-expressed features.
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params:
+      n_features:
+        type: int
+        default: 2000
+        min: 2
+        describes: how many features to retain
+      criterion:
+        type: str
+        default: variance
+        choices: [variance, dispersion]
+        describes: >
+          variance ranks raw spread; dispersion ranks variance-to-mean ratio, which is
+          less biased toward highly expressed features
+
+  densify:
+    kind: preprocessing
+    summary: Convert a sparse matrix to a dense array.
+    rationale: Many methods require dense input; making that explicit keeps the memory cost visible.
+    caution: cost is n_samples * n_features * 8 bytes, which the planner should check first
+    handles_sparse: true
+    preserves_sparsity: false
+    deterministic: true
+    params: {}
+
+  subsample:
+    kind: preprocessing
+    summary: Draw a stratified subsample of the samples.
+    rationale: >
+      The honest way to run a quadratic method on data too large for it. Recorded as a
+      decision so that any metric computed afterwards is known to describe the subset.
+    caution: >
+      Thins neighbourhoods, so local-density conclusions do not transfer back to the
+      full data even though global ones largely do.
+    handles_sparse: true
+    preserves_sparsity: true
+    deterministic: true
+    params:
+      n_samples:
+        type: int
+        default: 5000
+        min: 10
+        describes: target sample count; stratified by label when labels exist
+
+  # ------------------------------------------------------------------ linear methods
+
+  pca:
+    kind: reduction
+    family: linear
+    roles: [intermediate, terminal]
+    summary: Principal component analysis.
+    preserves: >
+      Global variance structure, and Euclidean distances within the retained subspace.
+      Component scores are interpretable and the projection extends exactly to new data.
+    assumes: the structure of interest lies along directions of high variance
+    distorts: >
+      Nonlinear structure. A curved manifold projects to a smear, and a spiral or roll
+      is flattened onto itself rather than unrolled.
+    handles_sparse: true
+    sparse_note: >
+      Sparse input uses TruncatedSVD, which does not centre. The result is then an SVD
+      of the uncentred matrix, not strictly PCA, and its leading component often tracks
+      sample magnitude.
+    complexity: O(n d k) with a randomised solver
+    scales_to: 2000000
+    out_of_sample: exact
+    stochastic: false
+    params:
+      n_components:
+        type: int
+        default: 2
+        min: 1
+        describes: output dimension; bounded by min(n_samples, n_features)
+      whiten:
+        type: bool
+        default: false
+        describes: rescale components to unit variance, discarding relative scale
+    fails_when: []
+
+  kernel_pca:
+    kind: reduction
+    family: linear/kernel
+    roles: [terminal]
+    summary: PCA in a feature space induced by a kernel.
+    preserves: structure that is linear after the kernel map, so some nonlinear structure
+    assumes: a kernel whose induced geometry suits the data; the choice matters more than the tuning
+    distorts: >
+      Interpretability. Components live in feature space and have no expression in the
+      original variables.
+    handles_sparse: true
+    complexity: O(n^2 d) to build the kernel, O(n^3) to decompose it
+    scales_to: 10000
+    out_of_sample: approximate
+    stochastic: false
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      kernel:
+        type: str
+        default: rbf
+        choices: [rbf, poly, cosine, sigmoid]
+      gamma:
+        type: float
+        default: null
+        describes: kernel width; null uses 1/n_features, which is rarely well scaled
+    fails_when:
+      - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
+
+  sparse_pca:
+    kind: reduction
+    family: linear/sparse
+    roles: [terminal]
+    summary: PCA with an L1 penalty, giving components that load on few features.
+    preserves: variance structure, subject to a sparsity constraint on the loadings
+    assumes: the signal is carried by a small subset of features
+    distorts: >
+      Orthogonality and the variance ordering. Components are no longer orthogonal and
+      no longer ranked by explained variance, so they cannot be read like PCA's.
+    handles_sparse: false
+    complexity: iterative dictionary learning; substantially slower than PCA
+    scales_to: 50000
+    out_of_sample: exact
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      alpha:
+        type: float
+        default: 1.0
+        min: 0.0
+        describes: sparsity penalty; larger gives fewer non-zero loadings
+    fails_when: []
+
+  # ---------------------------------------------------------------- spectral methods
+
+  laplacian_eigenmaps:
+    kind: reduction
+    family: spectral/graph
+    roles: [terminal]
+    summary: Eigenvectors of the graph Laplacian of a neighbourhood graph.
+    preserves: >
+      Local neighbourhood structure. Points that are neighbours in the graph stay close
+      in the embedding.
+    assumes: >
+      The data lies on a manifold sampled densely enough that a k-NN graph approximates
+      it, and that the graph is connected.
+    distorts: >
+      Global distances entirely; only the local graph structure is represented. Scale is
+      arbitrary.
+    handles_sparse: true
+    complexity: O(n k) to build the graph, then a sparse eigenproblem
+    scales_to: 50000
+    out_of_sample: none
+    stochastic: true
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 15
+        min: 2
+        describes: neighbours per node; must be large enough to connect the graph
+    fails_when:
+      - the k-NN graph is disconnected, which makes the trailing eigenvectors indicator
+        functions of components rather than coordinates
+
+  diffusion_maps:
+    kind: reduction
+    family: spectral/diffusion
+    roles: [terminal]
+    summary: Coordinates from the eigendecomposition of a diffusion operator on the data.
+    preserves: >
+      Diffusion distance, which measures connectivity through the data rather than
+      straight-line proximity. Robust to noise because it averages over all paths.
+    assumes: a manifold, plus a kernel bandwidth matched to the sampling density
+    distorts: >
+      The embedding depends on diffusion time t; different t give different and equally
+      valid geometries, so t must be reported alongside the result.
+    handles_sparse: false
+    complexity: O(n^2) memory for the dense kernel, O(n^3) to decompose
+    scales_to: 10000
+    out_of_sample: approximate
+    stochastic: false
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      epsilon:
+        type: float
+        default: null
+        describes: >
+          kernel bandwidth; null uses the median squared k-NN distance, which adapts to
+          the scale of the data
+      alpha:
+        type: float
+        default: 1.0
+        min: 0.0
+        max: 1.0
+        describes: >
+          density normalisation. 0 keeps the density in the operator, 1 removes it and
+          recovers the Laplace-Beltrami operator of the manifold, 0.5 is Fokker-Planck
+      t:
+        type: int
+        default: 1
+        min: 1
+        describes: diffusion time; larger t emphasises coarser structure
+    fails_when:
+      - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
