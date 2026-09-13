@@ -3,7 +3,9 @@
 Running record of decisions and their rationale. Raw material for the manually
 written 4-page `report.pdf`. Append as decisions are made; do not rewrite history.
 
-Started 2026-09-12. Deadline 2026-09-28. Target completion 2026-09-25.
+Fourteen work days against a 2026-09-28 deadline. Days are indexed rather than
+dated: the build has run ahead of the calendar, and the index is what the schedule
+actually tracks.
 
 ---
 
@@ -289,22 +291,22 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 
 ## 9. Schedule
 
-| Day | Date | Work |
-|---|---|---|
-| 1 | Sep 12 | Env, pinned deps, repo skeleton, these notes, synthetic fixtures |
-| 2 | Sep 13 | Loader contract, profiler, recon pass, CLI/JSON scaffold |
-| 3 | Sep 14 | Registry YAML, pipeline engine, linear and spectral executors |
-| 4 | Sep 15 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
-| 5 | Sep 16 | Metrics battery, rank, pre-registered weighting, plan validator |
-| 6 | Sep 17 | Viz house style, size-adaptive rendering |
-| 7 | Sep 18 | The five skills, /analyze, decisions.jsonl |
-| 8 | Sep 19 | Report template + pandoc render; first end-to-end run, dataset 1 |
-| 9 | Sep 20 | Fix what day 8 broke; clean run on dataset 1 |
-| 10 | Sep 21 | End-to-end on dataset 2 (large) |
-| 11 | Sep 22 | GPLVM, timeboxed |
-| 12 | Sep 23 | Rules-planner hedge + ablation run |
-| 13 | Sep 24 | Agent-behaviour tests, ADR, README, CONTEXT.md |
-| 14 | Sep 25 | Final graded runs, reports, submit |
+| Day | Work |
+|---|---|
+| 1 | Env, pinned deps, repo skeleton, these notes, synthetic fixtures |
+| 2 | Loader contract, profiler, recon pass, CLI/JSON scaffold |
+| 3 | Registry YAML, pipeline engine, linear and spectral executors |
+| 4 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
+| 5 | Metrics battery, rank, pre-registered weighting, plan validator |
+| 6 | Viz house style, size-adaptive rendering |
+| 7 | The five skills, /analyze, decisions.jsonl |
+| 8 | Report template + pandoc render; first end-to-end run, dataset 1 |
+| 9 | Fix what day 8 broke; clean run on dataset 1 |
+| 10 | End-to-end on dataset 2 (large) |
+| 11 | GPLVM, timeboxed |
+| 12 | Rules-planner hedge + ablation run |
+| 13 | Agent-behaviour tests, ADR, README, CONTEXT.md |
+| 14 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
 the full pipeline running on toy data in under a minute.
@@ -316,11 +318,11 @@ day 14.
 
 ## Decision log
 
-- **2026-09-12** — All of the above settled in a design interview before any code was
+- **Day 1** — All of the above settled in a design interview before any code was
   written: 40 questions across 9 rounds, no implementation until the frontier was
   empty.
 
-- **2026-09-12** — `datafold` dropped; Diffusion Maps will be implemented directly.
+- **Day 1** — `datafold` dropped; Diffusion Maps will be implemented directly.
   datafold 1.0.0 imports `sklearn.utils._message_with_time`, a private symbol removed
   from modern scikit-learn, so it fails at import against 1.9.1. The alternatives were
   pinning scikit-learn backwards — which would cascade through umap-learn and scanpy —
@@ -330,7 +332,12 @@ day 14.
   eight plus two written here. This is the one place where "use libraries wherever
   possible" loses to the libraries not working.
 
-- **2026-09-13** — Day 2 settled four things the interview had left implicit.
+- **Day 1** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
+  goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
+  cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the
+  one method most likely to be cut. Revisit only if day 11 finishes early.
+
+- **Day 2** — Settled four things the interview had left implicit.
 
   *The contract admits sparse matrices.* A 2,700-cell count matrix is 707 MB dense and
   8 MB sparse, and the sparsity is itself evidence the planner must reason about —
@@ -356,7 +363,7 @@ day 14.
   must interpret; "87% of entries are zero and sample totals vary 24-fold, so raw
   Euclidean distance mostly measures sequencing depth" is something it can act on.
 
-- **2026-09-13** — Reconnaissance measures a *probe representation*, not the raw matrix,
+- **Day 2** — Reconnaissance measures a *probe representation*, not the raw matrix,
   and says so. A k-NN graph over raw UMI counts measures library size, not biology. The
   representation is chosen by a fixed documented rule (counts → normalise-total + log1p;
   feature scales spanning >100× → standardise; otherwise as given) and reported with the
@@ -382,7 +389,7 @@ day 14.
   the agent can genuinely look at rather than a figure for the report only — worth doing
   properly rather than half now.
 
-- **2026-09-14** — Day 3. The registry declares thirteen ops and a test asserts that the
+- **Day 3** — The registry declares thirteen ops and a test asserts that the
   set of declared ops and the set of implemented executors are *equal*. An entry with no
   executor is a method the planner can select and never run; an executor with no entry is
   a capability the planner cannot see. Adding a method stays a registry entry plus one
@@ -400,7 +407,7 @@ day 14.
   stage, and a candidate must end in a reduction. Each refusal says what to do instead,
   because the agent repairs its plan from these messages.
 
-- **2026-09-14** — The diffusion-maps bandwidth default was wrong, and the way it was
+- **Day 3** — The diffusion-maps bandwidth default was wrong, and the way it was
   wrong is worth keeping.
 
   The obvious heuristic is the median squared distance to the k-th neighbour. It passed
@@ -429,7 +436,7 @@ day 14.
   size is not validated. The parametrised regression test now sweeps n rather than
   fixing it.
 
-- **2026-09-15** — Day 4 brings the registry to eighteen ops and ten reductions. LLE is
+- **Day 4** — The registry reaches eighteen ops and ten reductions. LLE is
   one op with a `method` parameter over its four variants rather than four ops: they
   share every precondition and differ only in how the local problem is posed, so the
   planner's real decision is *which variant*, which is a parameter choice. The registry
@@ -443,7 +450,7 @@ day 14.
   perplexity of 30 at n = 60 produces a featureless disc that still plots happily. All
   three now refuse, and name the parameter to change.
 
-- **2026-09-15** — Candidates run in a subprocess with a wall-clock cap.
+- **Day 4** — Candidates run in a subprocess with a wall-clock cap.
 
   The reason is that only one of the three ways this goes wrong is an exception. A
   method can raise, which is catchable. It can allocate more than the OS will give and
@@ -463,7 +470,7 @@ day 14.
   it, which also makes a run self-contained: the artefacts describe an analysis of a
   matrix that is still there to inspect.
 
-- **2026-09-15** — Measured LLE's sensitivity to `n_neighbors` rather than assuming it.
+- **Day 4** — Measured LLE's sensitivity to `n_neighbors` rather than assuming it.
   On a noise-free Swiss roll at n = 1000, every variant recovered the roll parameter at
   rho = 1.00 for k between 6 and 12, fell to about 0.9 at k = 16, and collapsed to
   between 0.01 and 0.46 by k = 24. Once a neighbourhood spans two folds of the roll,
@@ -476,7 +483,7 @@ day 14.
   reached rho = 1.000 on the same data and MDS 0.24, the latter being the negative
   control that makes the former mean something.
 
-- **2026-09-15** — Two library-compatibility findings.
+- **Day 4** — Two library-compatibility findings.
 
   UMAP fails on `scipy.sparse.csr_array` while working on `csr_matrix`. Its inner loops
   are numba-compiled and numba understands only scipy's legacy sparse matrix types; the
@@ -490,7 +497,7 @@ day 14.
   `init` in 1.10. Both now passed explicitly, which also removes a source of run-to-run
   variation.
 
-- **2026-09-16** — Day 5 closes the planning loop: `validate-plan`, `evaluate`, `rank`.
+- **Day 5** — The planning loop closes: `validate-plan`, `evaluate`, `rank`.
 
   *Metrics are scored on an absolute scale, not min-max across candidates.* Min-max
   always awards 1.0 to the best candidate, so a field of uniformly poor embeddings would
@@ -510,7 +517,7 @@ day 14.
   *Failed candidates are excluded rather than scored as zero.* Zero would rank the
   method; what failed was one configuration of it.
 
-- **2026-09-16** — The plan validator *simulates* the plan rather than pattern-matching
+- **Day 5** — The plan validator *simulates* the plan rather than pattern-matching
   on it. Walking the stage list while tracking sample count, feature count, sparsity and
   whether the values are still raw counts means it knows what each method will actually
   receive. That is what distinguishes "Isomap on 107,000 points", which is hopeless, from
@@ -523,7 +530,7 @@ day 14.
   claim that the data needs a manifold method cannot be supported — if PCA does as well,
   the extra machinery bought nothing.
 
-- **2026-09-16** — Two defects the first end-to-end run exposed, both worth recording.
+- **Day 5** — Two defects the first end-to-end run exposed, both worth recording.
 
   `prepare-reference` failed silently. Base preprocessing is by construction a stage
   list containing only preprocessing, but `run_pipeline` required every stage list to end
@@ -542,8 +549,3 @@ day 14.
   noisy directions recovers structure the full-dimensional space obscured. The note now
   explains that rather than dividing through, and says the reference is a weak baseline
   for such a dataset rather than a ceiling.
-
-- **2026-09-12** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
-  goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
-  cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the
-  one method most likely to be cut. Revisit only if day 11 finishes early.
