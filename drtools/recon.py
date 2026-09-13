@@ -44,6 +44,7 @@ def reconnaissance(
     seed: int = 0,
     max_samples: int = RECON_SAMPLE,
     k: int | None = None,
+    thumbnail_path: Any = None,
 ) -> dict[str, Any]:
     """Probe `X` for structural evidence. Never mutates its inputs."""
     n_samples = X.shape[0]
@@ -81,6 +82,7 @@ def reconnaissance(
         "spectrum": spectrum,
         "intrinsic_dimension": _intrinsic_dimension(coords),
         "neighbourhood": _neighbourhood(coords, k=k),
+        "thumbnail": _thumbnail(coords, labels, index, seed, thumbnail_path),
     }
     result["observations"] = _observations(result, profile)
     return result
@@ -403,3 +405,42 @@ def _observations(recon: dict[str, Any], profile: dict[str, Any]) -> list[dict[s
         )
 
     return notes
+
+
+def _thumbnail(
+    coords: np.ndarray,
+    labels: np.ndarray | None,
+    index: np.ndarray,
+    seed: int,
+    path: Any,
+) -> dict[str, Any]:
+    """A small picture of the data, for the agent to look at before it plans.
+
+    Every other probe here returns a number. This one returns something to see, which
+    matters because the agent can read an image: a spectrum and an intrinsic dimension
+    describe structure, while a glance says whether there are two clumps or twenty,
+    whether they are strung out or blobby, whether one of them is a thin filament that
+    no summary statistic mentions.
+
+    Deliberately cheap and deliberately plain. It is a 2-D projection of the probe
+    coordinates already computed, not a fresh embedding, so it costs nothing beyond the
+    drawing; and it carries no title or legend, so it tells the agent nothing except
+    what the data looks like.
+    """
+    if path is None:
+        return {"drawn": False, "reason": "no output path was given"}
+
+    from drtools.viz import figure_thumbnail
+
+    thumbnail_labels = None
+    if labels is not None:
+        thumbnail_labels = np.asarray(labels)[index]
+
+    info = figure_thumbnail(coords[:, :2], thumbnail_labels, path)
+    return {
+        "drawn": True,
+        "source": "first two components of the probe representation",
+        "caveat": "a projection of the probe coordinates, not a fitted embedding; read "
+        "it for the shape of the data, not as a result",
+        **info,
+    }

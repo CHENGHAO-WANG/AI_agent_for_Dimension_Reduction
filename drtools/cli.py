@@ -35,6 +35,14 @@ from drtools.recon import reconnaissance
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import RunDir
+from drtools.viz import (
+    figure_class_facet,
+    figure_comparison,
+    figure_embedding,
+    figure_metrics,
+    figure_scree,
+    figure_shepard,
+)
 
 EXIT_CONTRACT_ERROR = 2
 EXIT_USAGE_ERROR = 3
@@ -204,6 +212,20 @@ def _build_parser() -> argparse.ArgumentParser:
     suggest.add_argument("--op", required=True, help="the op to suggest parameters for")
     suggest.set_defaults(handler=_cmd_suggest_params)
 
+    figures = subparsers.add_parser(
+        "figures", help="draw the standard figure set for a run"
+    )
+    _add_run_arguments(figures)
+    figures.add_argument(
+        "--theme", default="light", choices=["light", "dark"], help="palette to render in"
+    )
+    figures.add_argument(
+        "--facet-candidate",
+        default=None,
+        help="candidate to draw the per-class facet for; defaults to the ranking winner",
+    )
+    figures.set_defaults(handler=_cmd_figures)
+
     return parser
 
 
@@ -248,6 +270,10 @@ def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
     X, labels, meta = _load(args)
     run = _open_run(args, meta)
     run.write_manifest(dataset=meta.get("name"), spec=args.data, seed=args.seed)
+    # Cache on first contact, not at first embed: every later stage reads the matrix
+    # from the run rather than from the source, which is what makes a run
+    # self-contained and lets prepare-reference run before any candidate has.
+    ensure_cache(run, X, labels, meta)
 
     profile = profile_dataset(X, labels, meta)
     profile["run_id"] = run.id
@@ -259,6 +285,7 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
     X, labels, meta = _load(args)
     run = _open_run(args, meta)
 
+    ensure_cache(run, X, labels, meta)
     if run.profile_path.exists():
         profile = run.read_artifact("profile.json")
     else:
@@ -267,7 +294,13 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
         run.write_artifact("profile.json", profile)
 
     recon = reconnaissance(
-        X, labels, profile, seed=args.seed, max_samples=args.max_samples, k=args.k
+        X,
+        labels,
+        profile,
+        seed=args.seed,
+        max_samples=args.max_samples,
+        k=args.k,
+        thumbnail_path=run.path / "figures" / "recon_thumbnail.png",
     )
     recon["run_id"] = run.id
     run.write_artifact("recon.json", recon)
@@ -470,6 +503,136 @@ def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return {"op": args.op, "suggested": suggest(args.op, profile, recon)}
+
+
+def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
+    """Draw the standard set. The agent picks which of these to put in the report."""
+    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    figures_dir = run.path / "figures"
+    embeddings_dir = run.path / "embeddings"
+    drawn: dict[str, Any] = {}
+
+    _, labels, meta = read_cache(run)
+    names = meta.get("label_names")
+
+    successful = {}
+    for record_path in sorted(embeddings_dir.glob("*.json")):
+        record = jsonio.read(record_path)
+        if record.get("status") == "ok":
+            successful[record["id"]] = np.load(embeddings_dir / f"{record['id']}.npy")
+    # Panels read left to right, so the best candidate belongs first. Sorting by name
+    # would put the winner wherever its id happened to fall in the alphabet.
+    successful = _in_rank_order(run, successful)
+
+    if successful:
+        drawn["comparison"] = figure_comparison(
+            successful,
+            _labels_for(run, next(iter(successful)), labels),
+            names,
+            figures_dir / "comparison.png",
+            theme_name=args.theme,
+        )
+        for candidate_id, embedding in successful.items():
+            drawn[f"embedding_{candidate_id}"] = figure_embedding(
+                embedding,
+                _labels_for(run, candidate_id, labels),
+                names,
+                figures_dir / f"embedding_{candidate_id}.png",
+                title=candidate_id,
+                theme_name=args.theme,
+            )
+
+    winner = args.facet_candidate or _winner(run) or (
+        next(iter(successful)) if successful else None
+    )
+    if winner in successful and labels is not None:
+        drawn["class_facet"] = figure_class_facet(
+            successful[winner],
+            _labels_for(run, winner, labels),
+            names,
+            figures_dir / "class_facet.png",
+            title=f"Classes in {winner}",
+            theme_name=args.theme,
+        )
+
+    metrics_by_id = {
+        path.stem: jsonio.read(path) for path in sorted((run.path / "metrics").glob("*.json"))
+    }
+    if metrics_by_id:
+        first = next(iter(metrics_by_id.values()))
+        drawn["metrics"] = figure_metrics(
+            metrics_by_id,
+            figures_dir / "metrics.png",
+            reference_values=first.get("reference_values"),
+            theme_name=args.theme,
+        )
+
+    if run.recon_path.exists():
+        recon = run.read_artifact("recon.json")
+        spectrum = recon["spectrum"]["probe"]
+        drawn["scree"] = figure_scree(
+            spectrum["explained_variance_ratio"],
+            figures_dir / "scree.png",
+            elbow=spectrum.get("elbow"),
+            theme_name=args.theme,
+        )
+        if recon.get("thumbnail", {}).get("drawn"):
+            drawn["recon_thumbnail"] = recon["thumbnail"]
+
+    if winner in successful:
+        drawn["shepard"] = _draw_shepard(
+            run, winner, successful[winner], metrics_by_id.get(winner), args.theme
+        )
+
+    jsonio.write(figures_dir / "figures.json", drawn)
+    return drawn
+
+
+def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
+    """Distances before against distances after, on the same capped subsample."""
+    from sklearn.metrics import pairwise_distances
+
+    reference, _ = _reference_for(run, candidate_id)
+    n = min(reference.shape[0], 800)
+    rng = np.random.default_rng(0)
+    index = np.sort(rng.choice(reference.shape[0], size=n, replace=False))
+
+    before = pairwise_distances(reference[index])
+    after = pairwise_distances(np.asarray(embedding)[index])
+    upper = np.triu_indices_from(before, k=1)
+
+    return figure_shepard(
+        before[upper],
+        after[upper],
+        run.path / "figures" / "shepard.png",
+        correlation=(metrics or {}).get("values", {}).get("shepard_correlation"),
+        title=f"Shepard diagram — {candidate_id}",
+        theme_name=theme_name,
+    )
+
+
+def _labels_for(run: RunDir, candidate_id: str, labels):
+    """Labels subset to the rows a candidate kept, so colours line up with points."""
+    if labels is None:
+        return None
+    index_path = run.path / "embeddings" / f"{candidate_id}.index.npy"
+    return labels[np.load(index_path)] if index_path.exists() else labels
+
+
+def _in_rank_order(run: RunDir, embeddings: dict[str, Any]) -> dict[str, Any]:
+    """Order candidates by the ranking when one exists, keeping any extras at the end."""
+    path = run.path / "ranking.json"
+    if not path.exists():
+        return embeddings
+    order = [row["id"] for row in jsonio.read(path).get("ranking", [])]
+    ranked = {name: embeddings[name] for name in order if name in embeddings}
+    ranked.update({name: xy for name, xy in embeddings.items() if name not in ranked})
+    return ranked
+
+
+def _winner(run: RunDir) -> str | None:
+    path = run.path / "ranking.json"
+    return jsonio.read(path).get("winner") if path.exists() else None
 
 
 # ----------------------------------------------------------------------- helpers

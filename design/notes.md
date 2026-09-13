@@ -578,3 +578,55 @@ day 14.
   Also settled: no prose `docs/` tree. An architecture page would be a third copy of
   what the README, the four-page report and these notes already carry between them.
   `docs/adr/` is created on day 13 for ADR-0001 alone.
+
+- **Day 6** — The figure house style, and a colour constraint that changed the design.
+
+  The categorical palette was checked with a validator rather than by eye, and the
+  result forced a decision. For scatter-like forms — where any two colours can end up
+  adjacent — only **three** slots clear the separation floors. At eight slots the worst
+  pair measures Delta E 7.1 to normal vision and 3.2 under simulated protanopia: red and
+  orange that nobody can reliably tell apart. PBMC3k will have roughly eight clusters and
+  PathMNIST has nine classes, so the conventional nine-colour UMAP was not available.
+
+  Above three classes, identity is therefore carried by **a printed class name at each
+  centroid**, and by the class facet — one panel per class, one series per panel, where
+  the colour question does not arise at all. Verified at the hard case: 60,000 points and
+  nine classes renders as a legible density field with nine named clusters. The
+  single-cell convention is a nine-colour scatter; the convention is not readable and a
+  label is. Expect a reader to ask why the figures are not colour-coded, so the reason
+  belongs in the four-page report.
+
+  Rendering adapts to sample count in three regimes — ringed markers to 2,000, small
+  translucent rasterised points to 20,000, a hexbin density field above that — and the
+  chosen regime is recorded in the figure's metadata so a reader knows whether they are
+  looking at points or at a histogram.
+
+- **Day 6** — Two figure bugs, the second of which I caused while fixing the first.
+
+  *Outliers destroyed the view.* A collapsed diffusion map puts almost every point in one
+  spot and a handful decades away, and on full extent that renders as an empty panel with
+  two dots — indistinguishable from a broken figure. Views are now clipped to a high
+  quantile, and the number of points left outside is printed on the panel so nothing is
+  quietly cropped.
+
+  *Then the labels left the building.* Class labels were positioned by a repulsion pass
+  measured in full data span, while the axes showed the clipped view — so for the
+  collapsed embedding they were pushed enormous distances outside the axes, and
+  `bbox="tight"` expanded the canvas to reach them. The saved figure went from 1842 x 489
+  to 8849 x 6722: four tiny panels marooned in white space. Labels are now positioned
+  within the clipped view, clamped inside it, and drawn with clipping on. There is a
+  regression test asserting the figure stays under 1200px when a point sits at 1e6.
+
+  Both were caught by looking at the rendered file. Neither would have been caught by a
+  test of the plotting code, and the second was introduced by the fix for the first —
+  which is the argument for rendering and looking every time, not only when something
+  seems wrong.
+
+- **Day 6** — The dataset is cached into the run on first contact rather than at first
+  embed. `prepare-reference` needs the matrix and can legitimately run before any
+  candidate has, so `profile` and `recon` — whichever touches the data first — now write
+  the cache. This is what the run directory being self-contained was supposed to mean:
+  every later stage reads the matrix from the run rather than from the source.
+
+- **Day 6** — Candidate panels are ordered by rank rather than by name. Alphabetical
+  order put the winner wherever its id happened to fall.
