@@ -282,7 +282,9 @@ dataset caching and `.gitignore` handling.
 Public GitHub repo as the front door. `.claude/` for zero-install use (clone, install
 requirements, open Claude Code, type `/analyze`) plus a plugin manifest so it can be
 installed elsewhere. Project-local `.venv` with a curated pinned `requirements.txt`.
-Docs kept lean: `README.md`, `CONTEXT.md`, this file, and one ADR.
+Docs kept lean: `README.md`, `CONTEXT.md`, this file, and one ADR. No prose `docs/`
+tree: an architecture page would be a third copy of what the README, the four-page
+report and these notes already carry between them.
 
 Submitted: source, `generated_report_1`, `generated_report_2`, and a manually written
 `report.pdf` of at most four pages.
@@ -298,14 +300,14 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 3 | Registry YAML, pipeline engine, linear and spectral executors |
 | 4 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
 | 5 | Metrics battery, rank, pre-registered weighting, plan validator |
-| 6 | Viz house style, size-adaptive rendering |
+| 6 | CONTEXT.md; viz house style, size-adaptive rendering |
 | 7 | The five skills, /analyze, decisions.jsonl |
 | 8 | Report template + pandoc render; first end-to-end run, dataset 1 |
 | 9 | Fix what day 8 broke; clean run on dataset 1 |
 | 10 | End-to-end on dataset 2 (large) |
 | 11 | GPLVM, timeboxed |
 | 12 | Rules-planner hedge + ablation run |
-| 13 | Agent-behaviour tests, ADR, README, CONTEXT.md |
+| 13 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
 | 14 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
@@ -549,3 +551,30 @@ day 14.
   noisy directions recovers structure the full-dimensional space obscured. The note now
   explains that rather than dividing through, and says the reference is a weak baseline
   for such a dataset rather than a ceiling.
+
+- **Day 6** — `CONTEXT.md` pulled forward from day 13, and a term collision resolved
+  before it could set into prose.
+
+  The reason for moving it is that days 7 and 8 write the five skills, which are prose
+  the agent reads *at runtime* to make decisions. A glossary written after them would
+  document whatever vocabulary the skills had drifted into rather than governing it.
+
+  The collision: `probe representation` (reconnaissance), `base preprocessing` (the
+  plan) and `reference` (the metrics) all name "the transform applied before the real
+  work", and nothing said how they relate. They are now distinguished on purpose rather
+  than by accident. A probe representation exists so that *measurements* mean something,
+  is chosen by a fixed published rule, and is discarded once the measuring is done — it
+  never produces an embedding. Base preprocessing is part of the *analysis*, is chosen
+  by the agent, and its output survives as the reference. So they are genuinely two
+  things, and collapsing them would have been the wrong fix.
+
+  What the distinction exposes is a connection worth building: both answer the same
+  question — what transform makes distances on this data meaningful — by different
+  mechanisms. Reconnaissance's rule is therefore the natural *default suggestion* for
+  base preprocessing, which the planner accepts or overrides with a logged reason.
+  Deferred to day 7 rather than done here, since it changes the planning skill's
+  behaviour rather than the vocabulary.
+
+  Also settled: no prose `docs/` tree. An architecture page would be a third copy of
+  what the README, the four-page report and these notes already carry between them.
+  `docs/adr/` is created on day 13 for ADR-0001 alone.
