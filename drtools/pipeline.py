@@ -131,7 +131,10 @@ def normalise_stages(stages: Any) -> list[Stage]:
 
 
 def validate_stages(
-    stages: list[Stage], registry: Registry | None = None
+    stages: list[Stage],
+    registry: Registry | None = None,
+    *,
+    require_terminal_reduction: bool = True,
 ) -> list[Stage]:
     """Structural checks that do not need the data: ops exist, order is possible.
 
@@ -163,7 +166,10 @@ def validate_stages(
                 "meaningful metric for a downstream method to consume."
             )
 
-    if not registry[stages[-1]["op"]].is_reduction:
+    # Base preprocessing is the exception: it is a stage list by construction made only
+    # of preprocessing, since its output is the common representation candidates are
+    # measured against rather than an embedding.
+    if require_terminal_reduction and not registry[stages[-1]["op"]].is_reduction:
         raise PipelineError(
             f"a candidate must end in a reduction; this one ends in "
             f"{stages[-1]['op']!r}, which is preprocessing and leaves the data in its "
@@ -179,10 +185,13 @@ def run_pipeline(
     *,
     seed: int = 0,
     registry: Registry | None = None,
+    require_terminal_reduction: bool = True,
 ) -> PipelineResult:
     """Apply `stages` in order. Raises `ExecutionError` with an actionable message."""
     registry = registry or load_registry()
-    stages = validate_stages(stages, registry)
+    stages = validate_stages(
+        stages, registry, require_terminal_reduction=require_terminal_reduction
+    )
 
     context = Context(
         labels=None if labels is None else np.asarray(labels).copy(),

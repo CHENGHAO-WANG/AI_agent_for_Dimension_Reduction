@@ -490,6 +490,59 @@ day 14.
   `init` in 1.10. Both now passed explicitly, which also removes a source of run-to-run
   variation.
 
+- **2026-09-16** — Day 5 closes the planning loop: `validate-plan`, `evaluate`, `rank`.
+
+  *Metrics are scored on an absolute scale, not min-max across candidates.* Min-max
+  always awards 1.0 to the best candidate, so a field of uniformly poor embeddings would
+  produce a winner that looks excellent. Runtime is the sole exception, because two
+  seconds is fast or slow only relative to the alternatives; that difference is recorded
+  rather than glossed.
+
+  *Where a ceiling exists it is computed and reported.* If the reference representation
+  only reaches 0.62 label agreement among neighbours, an embedding at 0.58 has lost
+  almost nothing, and reporting 0.58 alone invites the opposite conclusion.
+
+  *A metric available for only some candidates is dropped for all of them.* Scoring it
+  where convenient would make the comparison unfair, and silently dropping it would
+  change what the weighting means without saying so. When weight is redistributed, the
+  ranking says so and says how much.
+
+  *Failed candidates are excluded rather than scored as zero.* Zero would rank the
+  method; what failed was one configuration of it.
+
+- **2026-09-16** — The plan validator *simulates* the plan rather than pattern-matching
+  on it. Walking the stage list while tracking sample count, feature count, sparsity and
+  whether the values are still raw counts means it knows what each method will actually
+  receive. That is what distinguishes "Isomap on 107,000 points", which is hopeless, from
+  "subsample to 3,000, then Isomap", which is the correct way to do it — where a rule
+  keyed on the dataset's size alone would reject both. Both cases are in the test suite
+  precisely because getting that distinction wrong is the easy mistake.
+
+  One hard requirement: every plan must include a candidate ending in plain PCA. Without
+  a linear baseline there is nothing to measure the nonlinear methods against, and the
+  claim that the data needs a manifold method cannot be supported — if PCA does as well,
+  the extra machinery bought nothing.
+
+- **2026-09-16** — Two defects the first end-to-end run exposed, both worth recording.
+
+  `prepare-reference` failed silently. Base preprocessing is by construction a stage
+  list containing only preprocessing, but `run_pipeline` required every stage list to end
+  in a reduction, so the command exited non-zero and my driver script ignored the status.
+  Evaluation then fell back to the raw cached matrix, and the numbers were wrong in a way
+  that looked plausible: `pca_umap` scored 0.696 on trustworthiness against the raw counts
+  and 0.821 against the correct base-preprocessed reference. Nothing errored. The lesson
+  is about the shape of the mistake rather than the fix — a reference that silently
+  defaults to the wrong thing produces a full set of believable numbers, so the artefact
+  now records which reference it used, and evaluation says so in its output.
+
+  The label-preservation note asserted that an embedding "retained 117% of the label
+  structure", which is nonsense phrasing for a real phenomenon. An embedding can beat its
+  own input on neighbourhood label agreement: in high dimensions distances concentrate,
+  so the reference's own neighbourhoods are noisy, and a reduction that discards the
+  noisy directions recovers structure the full-dimensional space obscured. The note now
+  explains that rather than dividing through, and says the reference is a weak baseline
+  for such a dataset rather than a ceiling.
+
 - **2026-09-12** — torch installs as `2.14.0+cpu` from PyPI on Windows; the RTX 3060 Ti
   goes unused. Left as is. GPLVM is capped at a few thousand points by its own O(n^3)
   cost, where CPU is adequate, and a CUDA build is a 2.5 GB download to accelerate the

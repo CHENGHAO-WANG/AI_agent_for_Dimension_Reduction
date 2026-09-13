@@ -84,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
     np.save(embeddings / f"{candidate_id}.npy", result.embedding)
     if result.labels is not None:
         np.save(embeddings / f"{candidate_id}.labels.npy", result.labels)
+    # A candidate that subsampled has fewer rows than the reference. Persisting which
+    # rows survived is what lets evaluation subset the reference identically, rather
+    # than comparing an embedding against points it never saw.
+    if result.context.sample_index is not None:
+        np.save(embeddings / f"{candidate_id}.index.npy", result.context.sample_index)
 
     jsonio.write(
         record_path,
