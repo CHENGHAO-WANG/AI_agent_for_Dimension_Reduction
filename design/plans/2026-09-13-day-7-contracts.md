@@ -924,17 +924,108 @@ git commit -m "Derive the battery's neighbourhood by rule, and guard the label m
 
 ---
 
-### Task 7: `evaluate` loses its knobs; the Reference is the Base preprocessing
+### Task 7: Registration, and the Reference that follows from it
+
+Registration and the Reference are one task because neither is testable without the
+other: `prepare-reference` reads the registered Plan for its Base preprocessing, and
+nothing writes `plan.registered.json` until `validate-plan` registers.
 
 **Files:**
-- Modify: `drtools/cli.py:168-186` (`prepare-reference` and `evaluate` parsers), `drtools/cli.py:370-400` (`_cmd_prepare_reference`), `drtools/cli.py:410-433` (`_cmd_evaluate`)
-- Test: `tests/test_cli_reference.py`
+- Modify: `drtools/cli.py:168-186` (`prepare-reference` and `evaluate` parsers), `drtools/cli.py:370-400` (`_cmd_prepare_reference`), `drtools/cli.py:410-433` (`_cmd_evaluate`), `drtools/cli.py:470-497` (`_cmd_validate_plan`), `drtools/cli.py:436-468` (`_cmd_rank`)
+- Test: `tests/test_cli_registration.py`, `tests/test_cli_reference.py`
 
 **Interfaces:**
 - Consumes: `neighbourhood_size` from Task 6, `run_seed` from Task 5
-- Produces: `reference.json` gains `settings: {k, max_samples, seed}` and `n_rows`; `evaluate` takes only `--run-dir` and `--id`
+- Produces: `_registered_plan(run: RunDir) -> Plan`; `_require_run(args) -> RunDir`; `_plan_digest(plan: dict) -> str`; `plan.registered.json` and `plan_digest` in the manifest; a `register_plan` decision record carrying `plan_digest`, `weights` and `candidates`; `reference.json` gains `settings: {k, max_samples, seed}` and `n_rows`; `evaluate` takes only `--run-dir` and `--id`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
+
+Registration first, in `tests/test_cli_registration.py`:
+
+```python
+# tests/test_cli_registration.py
+import json
+
+PCA = [{"op": "pca", "params": {"n_components": 2}}]
+TSNE = [{"op": "tsne", "params": {"n_components": 2}}]
+
+
+def _plan(weights):
+    return {
+        "dataset": "d",
+        "candidates": [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}],
+        "evaluation": {"weights": weights, "justification": "declared up front"},
+    }
+
+
+def _prepared(cli, csv_dataset, tmp_path, weights):
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    (runs / "r1" / "plan.json").write_text(json.dumps(_plan(weights)), encoding="utf-8")
+    cli("validate-plan", "--run-dir", runs / "r1")
+    return runs / "r1"
+
+
+def test_validate_plan_writes_a_frozen_copy(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    assert (run / "plan.registered.json").exists()
+    assert json.loads((run / "run.json").read_text(encoding="utf-8"))["plan_digest"]
+
+
+def test_registration_is_recorded_with_its_weights(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    records = [json.loads(line) for line in
+               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
+    registrations = [r for r in records if r["stage"] == "register_plan"]
+    assert len(registrations) == 1
+    assert registrations[0]["weights"] == {"trustworthiness": 1.0}
+    assert sorted(registrations[0]["candidates"]) == ["a", "b"]
+
+
+def test_rank_refuses_a_plan_rewritten_after_the_fact(cli, csv_dataset, tmp_path):
+    """The reproduction: editing the weights after metrics exist used to flip the winner."""
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    for candidate in ("a", "b"):
+        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("rank", "--run-dir", run)
+
+    assert result.code == 2
+    assert "amendment" in result.stderr.lower()
+    assert not (run / "ranking.json").exists()
+
+
+def test_rank_stamps_the_digest_it_ranked_under(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    for candidate in ("a", "b"):
+        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+
+    result = cli("rank", "--run-dir", run)
+
+    assert result.code == 0
+    manifest = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert result.payload["plan_digest"] == manifest["plan_digest"]
+
+
+def test_no_rank_record_claims_pre_registration_it_cannot_know(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    for candidate in ("a", "b"):
+        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+    cli("rank", "--run-dir", run)
+
+    log = (run / "decisions.jsonl").read_text(encoding="utf-8")
+    assert "before any embedding was computed" not in log
+```
+
+Then the Reference, in `tests/test_cli_reference.py`:
 
 ```python
 # tests/test_cli_reference.py
@@ -1019,12 +1110,118 @@ def test_evaluate_rejects_a_neighbourhood_argument(cli, tmp_path):
     assert result.code != 0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run both files to verify they fail**
 
-Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_reference.py -q`
-Expected: FAIL — `prepare-reference` still demands `--stages`
+Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_registration.py tests/test_cli_reference.py -q`
+Expected: FAIL — no `plan.registered.json` is written, and `prepare-reference` still demands `--stages`
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Register the plan at validation**
+
+Add the registration helpers to `cli.py`:
+
+```python
+def _plan_digest(plan: dict[str, Any]) -> str:
+    """A digest over the plan as registered, so divergence is detectable."""
+    return hashlib.sha256(
+        json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _registered_plan(run: RunDir) -> Plan:
+    path = run.path / "plan.registered.json"
+    if not path.exists():
+        raise ContractError(
+            "this run has no registered plan. Run `drtools validate-plan` to register "
+            "one before embedding or ranking: the weighting has to be fixed before any "
+            "embedding exists for pre-registration to mean anything."
+        )
+    return Plan.model_validate(jsonio.read(path))
+```
+
+Add `import hashlib` and `import json` to `cli.py` if absent.
+
+Extend `_cmd_validate_plan` — after the existing `jsonio.write(... "plan_validation.json", report)` and the error-logging loop, register when there are no errors:
+
+```python
+    errors = [f for f in report["findings"] if f["severity"] == "error"]
+    if errors:
+        return report
+
+    registered = Plan.model_validate(plan)
+    digest = _plan_digest(registered.model_dump(mode="json"))
+    jsonio.write(run.path / "plan.registered.json", registered.model_dump(mode="json"))
+    run.update_manifest(plan_digest=digest)
+    run.log_decision(
+        stage="register_plan",
+        question="What will this run compare, and how will the results be judged?",
+        chosen=f"registered {len(registered.candidates)} candidates",
+        rationale=registered.evaluation.justification
+        or "the weighting was declared before this record was written",
+        evidence=["profile.shape.n_samples"],
+        plan_digest=digest,
+        weights=dict(registered.evaluation.weights),
+        candidates=[c.id for c in registered.candidates],
+    )
+    report["plan_digest"] = digest
+    return report
+```
+
+Rewrite `_cmd_rank` to read the registration rather than the live file, and delete the false fallback rationale:
+
+```python
+def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
+    run = _require_run(args)
+    plan = _registered_plan(run)
+
+    live = run.path / "plan.json"
+    if live.exists():
+        current = Plan.model_validate(run.read_artifact("plan.json"))
+        if _plan_digest(current.model_dump(mode="json")) != _plan_digest(
+            plan.model_dump(mode="json")
+        ):
+            raise ContractError(
+                "plan.json no longer matches the plan this run registered, so ranking "
+                "it would score results under a weighting chosen after they existed. "
+                "Restore the registered plan, or record an amendment — which this "
+                "toolbox does not yet implement, so a changed weighting means a new run."
+            )
+
+    metrics_by_id: dict[str, Any] = {}
+    failures: dict[str, Any] = {}
+    for candidate in plan.candidates:
+        record_path = run.path / "embeddings" / f"{candidate.id}.json"
+        metrics_path = run.path / "metrics" / f"{candidate.id}.json"
+        outcome = jsonio.read(record_path).get("status") if record_path.exists() else None
+        if outcome == "ok" and metrics_path.exists():
+            metrics_by_id[candidate.id] = jsonio.read(metrics_path)
+        elif record_path.exists():
+            failures[candidate.id] = jsonio.read(record_path).get("failure", {})
+
+    ranking = rank_candidates(
+        metrics_by_id,
+        plan.evaluation.weights,
+        justification=plan.evaluation.justification,
+        failures=failures,
+    )
+    ranking["plan_digest"] = jsonio.read(run.manifest_path)["plan_digest"]
+    run.write_artifact("ranking.json", ranking)
+    run.log_decision(
+        stage="rank",
+        question="Which candidate best serves the question this analysis is answering?",
+        chosen=ranking["winner"],
+        rationale=plan.evaluation.justification
+        or "scored under the weighting registered for this run",
+        evidence=[f"metrics.{candidate}" for candidate in metrics_by_id],
+        options_considered=sorted(metrics_by_id),
+        weights_applied=ranking["weights_applied"],
+        plan_digest=ranking["plan_digest"],
+    )
+    return ranking
+```
+
+The `outcome == "ok"` condition is the belt-and-braces half of Task 9: a Candidate whose current Outcome is not `ok` is never scored, whatever `metrics/` still holds.
+
+- [ ] **Step 4: Take the Reference from the registered plan**
 
 In the parser, drop `--stages` from `prepare-reference` and `--k`/`--max-samples` from `evaluate`:
 
@@ -1156,275 +1353,34 @@ def _require_run(args: argparse.Namespace) -> RunDir:
     return RunDir(path)
 ```
 
-Add `_registered_plan` here, since this is the first task that needs it — Task 8 writes the file it reads:
+- [ ] **Step 5: Run both files to verify they pass**
 
-```python
-def _registered_plan(run: RunDir) -> Plan:
-    """The plan as it was registered, which is the only plan that binds anything."""
-    path = run.path / "plan.registered.json"
-    if not path.exists():
-        raise ContractError(
-            "this run has no registered plan. Run `drtools validate-plan` to register "
-            "one before embedding or ranking: the weighting has to be fixed before any "
-            "embedding exists for pre-registration to mean anything."
-        )
-    return Plan.model_validate(jsonio.read(path))
-```
+Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_registration.py tests/test_cli_reference.py -q`
+Expected: PASS, 10 passed
 
-Until Task 8 lands nothing writes `plan.registered.json`, so this task's tests that call `validate-plan` fail. Implement Task 8 before running this file green, or run Tasks 7 and 8 as one commit.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_reference.py -q`
-Expected: PASS, 5 passed
-
-- [ ] **Step 5: Run the whole suite**
-
-Run: `.venv/Scripts/python.exe -m pytest -q`
-Expected: 217 passed
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add drtools/cli.py tests/test_cli_reference.py
-git commit -m "Take the reference from the plan and fix the battery's settings with it"
-```
-
----
-
-### Task 8: `validate-plan` registers, and `rank` reads the registration
-
-**Files:**
-- Modify: `drtools/cli.py:470-497` (`_cmd_validate_plan`), `drtools/cli.py:436-468` (`_cmd_rank`)
-- Test: `tests/test_cli_registration.py`
-
-**Interfaces:**
-- Consumes: `_require_run` from Task 7
-- Produces: `_registered_plan(run: RunDir) -> Plan`; `plan.registered.json` and `plan_digest` in the manifest; a `register_plan` decision record carrying `plan_digest`, `weights` and `candidates`
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_cli_registration.py
-import json
-
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
-TSNE = [{"op": "tsne", "params": {"n_components": 2}}]
-
-
-def _plan(weights):
-    return {
-        "dataset": "d",
-        "candidates": [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}],
-        "evaluation": {"weights": weights, "justification": "declared up front"},
-    }
-
-
-def _prepared(cli, csv_dataset, tmp_path, weights):
-    runs = tmp_path / "runs"
-    cli("profile", "--data", csv_dataset(rows=60, cols=8),
-        "--runs-root", runs, "--run-id", "r1")
-    (runs / "r1" / "plan.json").write_text(json.dumps(_plan(weights)), encoding="utf-8")
-    cli("validate-plan", "--run-dir", runs / "r1")
-    return runs / "r1"
-
-
-def test_validate_plan_writes_a_frozen_copy(cli, csv_dataset, tmp_path):
-    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
-    assert (run / "plan.registered.json").exists()
-    assert json.loads((run / "run.json").read_text(encoding="utf-8"))["plan_digest"]
-
-
-def test_registration_is_recorded_with_its_weights(cli, csv_dataset, tmp_path):
-    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
-    records = [json.loads(line) for line in
-               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
-    registrations = [r for r in records if r["stage"] == "register_plan"]
-    assert len(registrations) == 1
-    assert registrations[0]["weights"] == {"trustworthiness": 1.0}
-    assert sorted(registrations[0]["candidates"]) == ["a", "b"]
-
-
-def test_rank_refuses_a_plan_rewritten_after_the_fact(cli, csv_dataset, tmp_path):
-    """The reproduction: editing the weights after metrics exist used to flip the winner."""
-    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
-    for candidate in ("a", "b"):
-        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
-        cli("evaluate", "--run-dir", run, "--id", candidate)
-
-    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
-
-    result = cli("rank", "--run-dir", run)
-
-    assert result.code == 2
-    assert "amendment" in result.stderr.lower()
-    assert not (run / "ranking.json").exists()
-
-
-def test_rank_stamps_the_digest_it_ranked_under(cli, csv_dataset, tmp_path):
-    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
-    for candidate in ("a", "b"):
-        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
-        cli("evaluate", "--run-dir", run, "--id", candidate)
-
-    result = cli("rank", "--run-dir", run)
-
-    assert result.code == 0
-    manifest = json.loads((run / "run.json").read_text(encoding="utf-8"))
-    assert result.payload["plan_digest"] == manifest["plan_digest"]
-
-
-def test_no_rank_record_claims_pre_registration_it_cannot_know(cli, csv_dataset, tmp_path):
-    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
-    for candidate in ("a", "b"):
-        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
-        cli("evaluate", "--run-dir", run, "--id", candidate)
-    cli("rank", "--run-dir", run)
-
-    log = (run / "decisions.jsonl").read_text(encoding="utf-8")
-    assert "before any embedding was computed" not in log
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_registration.py -q`
-Expected: FAIL — no `plan.registered.json` is written
-
-- [ ] **Step 3: Write the implementation**
-
-Add the registration helpers to `cli.py`:
-
-```python
-def _plan_digest(plan: dict[str, Any]) -> str:
-    """A digest over the plan as registered, so divergence is detectable."""
-    return hashlib.sha256(
-        json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
-def _registered_plan(run: RunDir) -> Plan:
-    path = run.path / "plan.registered.json"
-    if not path.exists():
-        raise ContractError(
-            "this run has no registered plan. Run `drtools validate-plan` to register "
-            "one before embedding or ranking: the weighting has to be fixed before any "
-            "embedding exists for pre-registration to mean anything."
-        )
-    return Plan.model_validate(jsonio.read(path))
-```
-
-Add `import hashlib` and `import json` to `cli.py` if absent.
-
-Extend `_cmd_validate_plan` — after the existing `jsonio.write(... "plan_validation.json", report)` and the error-logging loop, register when there are no errors:
-
-```python
-    errors = [f for f in report["findings"] if f["severity"] == "error"]
-    if errors:
-        return report
-
-    registered = Plan.model_validate(plan)
-    digest = _plan_digest(registered.model_dump(mode="json"))
-    jsonio.write(run.path / "plan.registered.json", registered.model_dump(mode="json"))
-    run.update_manifest(plan_digest=digest)
-    run.log_decision(
-        stage="register_plan",
-        question="What will this run compare, and how will the results be judged?",
-        chosen=f"registered {len(registered.candidates)} candidates",
-        rationale=registered.evaluation.justification
-        or "the weighting was declared before this record was written",
-        evidence=["profile.shape.n_samples"],
-        plan_digest=digest,
-        weights=dict(registered.evaluation.weights),
-        candidates=[c.id for c in registered.candidates],
-    )
-    report["plan_digest"] = digest
-    return report
-```
-
-Rewrite `_cmd_rank` to read the registration rather than the live file, and delete the false fallback rationale:
-
-```python
-def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
-    run = _require_run(args)
-    plan = _registered_plan(run)
-
-    live = run.path / "plan.json"
-    if live.exists():
-        current = Plan.model_validate(run.read_artifact("plan.json"))
-        if _plan_digest(current.model_dump(mode="json")) != _plan_digest(
-            plan.model_dump(mode="json")
-        ):
-            raise ContractError(
-                "plan.json no longer matches the plan this run registered, so ranking "
-                "it would score results under a weighting chosen after they existed. "
-                "Restore the registered plan, or record an amendment — which this "
-                "toolbox does not yet implement, so a changed weighting means a new run."
-            )
-
-    metrics_by_id: dict[str, Any] = {}
-    failures: dict[str, Any] = {}
-    for candidate in plan.candidates:
-        record_path = run.path / "embeddings" / f"{candidate.id}.json"
-        metrics_path = run.path / "metrics" / f"{candidate.id}.json"
-        outcome = jsonio.read(record_path).get("status") if record_path.exists() else None
-        if outcome == "ok" and metrics_path.exists():
-            metrics_by_id[candidate.id] = jsonio.read(metrics_path)
-        elif record_path.exists():
-            failures[candidate.id] = jsonio.read(record_path).get("failure", {})
-
-    ranking = rank_candidates(
-        metrics_by_id,
-        plan.evaluation.weights,
-        justification=plan.evaluation.justification,
-        failures=failures,
-    )
-    ranking["plan_digest"] = jsonio.read(run.manifest_path)["plan_digest"]
-    run.write_artifact("ranking.json", ranking)
-    run.log_decision(
-        stage="rank",
-        question="Which candidate best serves the question this analysis is answering?",
-        chosen=ranking["winner"],
-        rationale=plan.evaluation.justification
-        or "scored under the weighting registered for this run",
-        evidence=[f"metrics.{candidate}" for candidate in metrics_by_id],
-        options_considered=sorted(metrics_by_id),
-        weights_applied=ranking["weights_applied"],
-        plan_digest=ranking["plan_digest"],
-    )
-    return ranking
-```
-
-The `outcome == "ok"` condition is the belt-and-braces half of Task 9: a Candidate whose current Outcome is not `ok` is never scored, whatever `metrics/` still holds.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `.venv/Scripts/python.exe -m pytest tests/test_cli_registration.py -q`
-Expected: PASS, 5 passed
-
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 6: Run the whole suite**
 
 Run: `.venv/Scripts/python.exe -m pytest -q`
 Expected: 222 passed
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add drtools/cli.py tests/test_cli_registration.py
-git commit -m "Register the plan at validation and rank only what was registered"
+git add drtools/cli.py tests/test_cli_registration.py tests/test_cli_reference.py
+git commit -m "Register the plan at validation and derive the reference from it"
 ```
 
 ---
 
-### Task 9: `embed` binds to a registered Candidate
+
+### Task 8: `embed` binds to a registered Candidate
 
 **Files:**
 - Modify: `drtools/cli.py:130-166` (`embed` parser), `drtools/cli.py:336-369` (`_cmd_embed`)
 - Test: `tests/test_cli_embed_binding.py`
 
 **Interfaces:**
-- Consumes: `_registered_plan` from Task 8
+- Consumes: `_registered_plan` from Task 7
 - Produces: an `embed` decision record per attempt carrying `candidate`, `outcome` and `plan_digest`
 
 - [ ] **Step 1: Write the failing test**
@@ -1558,10 +1514,10 @@ git commit -m "Bind embed to the registered plan and record every attempt"
 
 ---
 
-### Task 10: The retry loop, and invalidation before every attempt
+### Task 9: The retry loop, and invalidation before every attempt
 
 **Files:**
-- Modify: `drtools/cli.py` (`_cmd_embed` from Task 9, `_cmd_validate_plan` from Task 8)
+- Modify: `drtools/cli.py` (`_cmd_embed` from Task 8, `_cmd_validate_plan` from Task 7)
 - Test: `tests/test_cli_retry.py`
 
 **Interfaces:**
