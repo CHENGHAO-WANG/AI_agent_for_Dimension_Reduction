@@ -42,8 +42,9 @@ METRIC_SAMPLE_CAP = 2000
 MAX_K = 15
 
 #: Below this many rows the local metrics are reported as unavailable rather than
-#: computed. The rule would still satisfy scikit-learn here, but trustworthiness over
-#: one or two neighbours is noise, and `rank` would weight it at face value.
+#: computed. Trustworthiness over one or two neighbours is noise, and `rank` would
+#: weight it at face value; below n=3 the rule's own guarantee (k < n/2) also stops
+#: holding, since neighbourhood_size floors at 1.
 LOCAL_METRIC_FLOOR = 20
 
 
@@ -229,7 +230,6 @@ def evaluate_embedding(
     return {
         "values": values,
         "reference_values": reference_values,
-        "k": k,
         "n_used": int(n_used),
         "n_total": int(n_total),
         "subsampled": bool(n_used < n_total),
