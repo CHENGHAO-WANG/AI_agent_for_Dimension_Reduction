@@ -15,7 +15,8 @@ import numpy as np
 import scipy.sparse as sp
 
 from drtools import jsonio
-from drtools.contract import Matrix
+from drtools.contract import ContractError, Matrix
+from drtools.digest import content_hash
 from drtools.runs import RunDir
 
 
@@ -49,6 +50,7 @@ def write_cache(
         "cached_shape": list(X.shape),
         "cached_dtype": str(X.dtype),
         "has_labels": labels is not None,
+        "dataset_digest": content_hash(X, labels),
     }
     jsonio.write(directory / "meta.json", descriptor)
     return descriptor
@@ -72,6 +74,22 @@ def read_cache(run: RunDir) -> tuple[Matrix, np.ndarray | None, dict[str, Any]]:
 def ensure_cache(
     run: RunDir, X: Matrix, labels: np.ndarray | None, meta: dict[str, Any]
 ) -> dict[str, Any]:
-    if is_cached(run):
-        return jsonio.read(run.path / "data" / "meta.json")
-    return write_cache(run, X, labels, meta)
+    """Cache on first contact; on every later contact, verify rather than trust.
+
+    The old behaviour was to return the existing cache untouched whenever one existed,
+    which let a repaired loader produce a profile of one matrix and candidates of
+    another under a single run id.
+    """
+    if not is_cached(run):
+        return write_cache(run, X, labels, meta)
+
+    cached = jsonio.read(run.path / "data" / "meta.json")
+    incoming = content_hash(X, labels)
+    if cached.get("dataset_digest") != incoming:
+        raise ContractError(
+            f"this run was created from a different dataset. The cache holds "
+            f"{cached.get('dataset_digest', 'no digest')[:12]} and the data just "
+            f"loaded is {incoming[:12]}. A run describes one dataset, so analyse the "
+            f"changed data in a new run rather than reusing this one."
+        )
+    return cached
