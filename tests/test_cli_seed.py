@@ -37,18 +37,29 @@ def test_omitting_the_seed_keeps_the_recorded_one(cli, csv_dataset, tmp_path):
 
 
 def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_path):
+    """`evaluate` no longer takes --k/--max-samples: the neighbourhood and the sample
+    cap are both fixed by rule. Above METRIC_SAMPLE_CAP is what makes that a real
+    check rather than a vacuous one — the metric subsample is then a strict subset of
+    the rows, drawn under the run's recorded seed, so two evaluations only agree if
+    that seed was actually held fixed rather than redrawn each time.
+    """
     runs = tmp_path / "runs"
-    data = csv_dataset(rows=60, cols=8)
+    data = csv_dataset(rows=2500, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 0)
+    plan = {
+        "dataset": "d",
+        "candidates": [
+            {"id": "c1", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+        ],
+        "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
+    }
+    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    cli("validate-plan", "--run-dir", runs / "r1")
     cli("embed", "--run-dir", runs / "r1", "--id", "c1",
         "--stages", '[{"op":"pca","params":{"n_components":2}}]', "--in-process")
 
-    first = cli(
-        "evaluate", "--run-dir", runs / "r1", "--id", "c1", "--k", 3, "--max-samples", 20
-    )
-    second = cli(
-        "evaluate", "--run-dir", runs / "r1", "--id", "c1", "--k", 3, "--max-samples", 20
-    )
+    first = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
+    second = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
 
     assert first.code == 0
     assert second.code == 0

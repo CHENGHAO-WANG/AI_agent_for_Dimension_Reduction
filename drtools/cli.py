@@ -13,6 +13,7 @@ should tell it what to fix.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -27,7 +28,7 @@ from drtools.executors import ExecutionError
 from drtools.heuristics import suggest
 from drtools.isolation import run_candidate
 from drtools.loaders import available, load
-from drtools.metrics import evaluate_embedding
+from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
 from drtools.pipeline import PipelineError, run_pipeline
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
@@ -52,7 +53,14 @@ EXIT_PLAN_ERROR = 5
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as error:
+        # A malformed invocation (an unknown flag, a missing required one) is refused by
+        # argparse itself, before any handler runs. It already wrote its message to
+        # stderr; the contract for `main` is that a refusal returns rather than raises,
+        # so that holds here too instead of only for errors raised past this point.
+        return error.code if isinstance(error.code, int) else EXIT_USAGE_ERROR
     if not hasattr(args, "handler"):
         parser.print_help()
         return EXIT_USAGE_ERROR
@@ -166,7 +174,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "representation every candidate is measured against",
     )
     _add_run_arguments(reference)
-    reference.add_argument("--stages", required=True, help="base stages as JSON, or @path")
     reference.set_defaults(handler=_cmd_prepare_reference)
 
     evaluate = subparsers.add_parser(
@@ -174,15 +181,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(evaluate)
     evaluate.add_argument("--id", required=True, help="candidate to score")
-    evaluate.add_argument(
-        "--k", type=int, default=15, help="neighbourhood size for the local metrics"
-    )
-    evaluate.add_argument(
-        "--max-samples",
-        type=int,
-        default=2000,
-        help="cap for the quadratic metrics; recorded with the results",
-    )
     evaluate.set_defaults(handler=_cmd_evaluate)
 
     rank = subparsers.add_parser(
@@ -382,58 +380,107 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     return record
 
 
+def _plan_digest(plan: dict[str, Any]) -> str:
+    """A digest over the plan as registered, so divergence is detectable."""
+    return hashlib.sha256(
+        json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _registered_plan(run: RunDir) -> Plan:
+    path = run.path / "plan.registered.json"
+    if not path.exists():
+        raise ContractError(
+            "this run has no registered plan. Run `drtools validate-plan` to register "
+            "one before embedding or ranking: the weighting has to be fixed before any "
+            "embedding exists for pre-registration to mean anything."
+        )
+    return Plan.model_validate(jsonio.read(path))
+
+
 def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     """Compute the representation every candidate is scored against.
 
     Candidates differ in their own stages but share a base, and comparing each one
     against its *own* input would measure different things under the same name. The
     shared base output is the common ground that makes the comparison mean something.
+    The base stages are read from the registered plan rather than taken as an argument,
+    so the reference always reflects what was pre-registered rather than whatever was
+    typed at the command line that day.
     """
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    run = _require_run(args)
+    plan = _registered_plan(run)
+    stages = [stage.model_dump() for stage in plan.base_preprocessing]
+    X, labels, _ = read_cache(run)
     seed = run_seed(run, args.seed)
-    stages = _read_stages(args.stages)
-    X, labels, meta = read_cache(run)
-
-    result = (
-        run_pipeline(
-            X, labels, stages, seed=seed, require_terminal_reduction=False
-        )
-        if stages
-        else None
-    )
-    reference = result.embedding if result is not None else X
 
     directory = run.path / "data"
-    np.save(directory / "reference.npy", np.asarray(reference))
+    if stages:
+        result = run_pipeline(
+            X, labels, stages, seed=seed, require_terminal_reduction=False
+        )
+        reference = result.embedding
+        np.save(directory / "reference.npy", np.asarray(reference))
+        stage_records = result.as_dict()["stages"]
+    else:
+        # No base preprocessing means the reference *is* the cache. Writing a copy would
+        # add a second artefact to keep honest, and np.asarray on a sparse matrix writes
+        # an unloadable 0-d object array.
+        reference = X
+        stage_records = []
+
+    n_rows = int(reference.shape[0])
     record = {
         "stages": stages,
         "shape": list(np.shape(reference)),
-        "path": str(directory / "reference.npy"),
-        "stage_records": result.as_dict()["stages"] if result is not None else [],
+        "n_rows": n_rows,
+        "is_cache": not stages,
+        "settings": {
+            "k": neighbourhood_size(min(n_rows, METRIC_SAMPLE_CAP)),
+            "max_samples": METRIC_SAMPLE_CAP,
+            "seed": seed,
+        },
+        "stage_records": stage_records,
     }
     jsonio.write(directory / "reference.json", record)
     return record
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    embeddings = run.path / "embeddings"
+    run = _require_run(args)
+    plan = _registered_plan(run)
+    reference_record = run.path / "data" / "reference.json"
 
-    candidate = jsonio.read(embeddings / f"{args.id}.json")
-    if candidate.get("status") != "ok":
-        raise FileNotFoundError(
-            f"candidate {args.id!r} has status {candidate.get('status')!r} and produced "
-            "no embedding to evaluate"
+    if plan.base_preprocessing and not reference_record.exists():
+        raise ContractError(
+            "the registered plan declares base preprocessing, so candidates must be "
+            "scored against its output rather than against the raw cache. Run "
+            "`drtools prepare-reference` before evaluating."
         )
-    embedding = np.load(embeddings / f"{args.id}.npy")
 
+    if reference_record.exists():
+        settings = jsonio.read(reference_record)["settings"]
+    else:
+        # No base preprocessing: the reference is the cache, and the same rule applies
+        # to its row count.
+        rows = min(jsonio.read(run.path / "data" / "meta.json")["cached_shape"][0],
+                   METRIC_SAMPLE_CAP)
+        settings = {
+            "k": neighbourhood_size(rows),
+            "max_samples": METRIC_SAMPLE_CAP,
+            "seed": run_seed(run, None),
+        }
+
+    candidate = jsonio.read(run.path / "embeddings" / f"{args.id}.json")
+    embedding = np.load(run.path / "embeddings" / f"{args.id}.npy")
     reference, labels = _reference_for(run, args.id)
+
     metrics = evaluate_embedding(
         reference,
         embedding,
         labels,
-        seed=run_seed(run, args.seed),
-        max_samples=args.max_samples,
+        seed=settings["seed"],
+        max_samples=settings["max_samples"],
         runtime_s=candidate.get("total_duration_s"),
     )
     metrics["id"] = args.id
@@ -447,15 +494,29 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    plan = Plan.model_validate(run.read_artifact("plan.json"))
+    run = _require_run(args)
+    plan = _registered_plan(run)
+
+    live = run.path / "plan.json"
+    if live.exists():
+        current = Plan.model_validate(run.read_artifact("plan.json"))
+        if _plan_digest(current.model_dump(mode="json")) != _plan_digest(
+            plan.model_dump(mode="json")
+        ):
+            raise ContractError(
+                "plan.json no longer matches the plan this run registered, so ranking "
+                "it would score results under a weighting chosen after they existed. "
+                "Restore the registered plan, or record an amendment — which this "
+                "toolbox does not yet implement, so a changed weighting means a new run."
+            )
 
     metrics_by_id: dict[str, Any] = {}
     failures: dict[str, Any] = {}
     for candidate in plan.candidates:
         record_path = run.path / "embeddings" / f"{candidate.id}.json"
         metrics_path = run.path / "metrics" / f"{candidate.id}.json"
-        if metrics_path.exists():
+        outcome = jsonio.read(record_path).get("status") if record_path.exists() else None
+        if outcome == "ok" and metrics_path.exists():
             metrics_by_id[candidate.id] = jsonio.read(metrics_path)
         elif record_path.exists():
             failures[candidate.id] = jsonio.read(record_path).get("failure", {})
@@ -466,16 +527,18 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         justification=plan.evaluation.justification,
         failures=failures,
     )
+    ranking["plan_digest"] = jsonio.read(run.manifest_path)["plan_digest"]
     run.write_artifact("ranking.json", ranking)
     run.log_decision(
         stage="rank",
         question="Which candidate best serves the question this analysis is answering?",
         chosen=ranking["winner"],
         rationale=plan.evaluation.justification
-        or "weights were declared in the plan before any embedding was computed",
+        or "scored under the weighting registered for this run",
         evidence=[f"metrics.{candidate}" for candidate in metrics_by_id],
         options_considered=sorted(metrics_by_id),
         weights_applied=ranking["weights_applied"],
+        plan_digest=ranking["plan_digest"],
     )
     return ranking
 
@@ -508,6 +571,30 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
                 op=finding["op"],
                 fix=finding["fix"],
             )
+
+    errors = [f for f in report["findings"] if f["severity"] == "error"]
+    if errors:
+        return report
+
+    # Registration is the moment the weighting becomes fixed: a plan that passes
+    # validation is frozen here, before any embedding exists, so that ranking has
+    # something pre-registered to hold itself to.
+    registered = Plan.model_validate(plan)
+    digest = _plan_digest(registered.model_dump(mode="json"))
+    jsonio.write(run.path / "plan.registered.json", registered.model_dump(mode="json"))
+    run.update_manifest(plan_digest=digest)
+    run.log_decision(
+        stage="register_plan",
+        question="What will this run compare, and how will the results be judged?",
+        chosen=f"registered {len(registered.candidates)} candidates",
+        rationale=registered.evaluation.justification
+        or "the weighting was declared before this record was written",
+        evidence=["profile.shape.n_samples"],
+        plan_digest=digest,
+        weights=dict(registered.evaluation.weights),
+        candidates=[c.id for c in registered.candidates],
+    )
+    report["plan_digest"] = digest
     return report
 
 
@@ -649,6 +736,16 @@ def _winner(run: RunDir) -> str | None:
 
 
 # ----------------------------------------------------------------------- helpers
+
+
+def _require_run(args: argparse.Namespace) -> RunDir:
+    """The run a command must be given, rather than one it may create."""
+    if not args.run_dir:
+        raise ContractError("--run-dir is required: this command reads an existing run.")
+    path = Path(args.run_dir)
+    if not path.exists():
+        raise ContractError(f"no run at {path}.")
+    return RunDir(path)
 
 
 def _reference_for(run: RunDir, candidate_id: str):
