@@ -158,6 +158,7 @@ def evaluate_embedding(
     embedding: np.ndarray,
     labels: np.ndarray | None = None,
     *,
+    k: int,
     seed: int = 0,
     max_samples: int = METRIC_SAMPLE_CAP,
     runtime_s: float | None = None,
@@ -168,6 +169,15 @@ def evaluate_embedding(
     caller is responsible for having subset the reference the same way — the sample
     index is recorded by the pipeline precisely so that this alignment is possible
     rather than assumed.
+
+    `k` is required and has no default. It is derived once from the reference's row
+    count — by `neighbourhood_size`, at the moment the reference is fixed — and passed
+    in, rather than computed here from whatever rows this particular candidate kept.
+    Deriving it per candidate is how two candidates that subsample differently end up
+    measured at different neighbourhoods and ranked together anyway. A default would
+    reopen that door for the next caller, and an optional override would leave it open
+    on purpose, so there is neither: the caller must say which k this cohort is being
+    measured at, and every member of the cohort is handed the same one.
     """
     # The reference is left in whatever storage it arrived in. Every metric below
     # reaches scikit-learn through pairwise_distances or NearestNeighbors, both of
@@ -187,7 +197,6 @@ def evaluate_embedding(
     reference, embedding = reference[index], embedding[index]
     labels = None if labels is None else np.asarray(labels)[index]
     n_used = reference.shape[0]
-    k = neighbourhood_size(n_used)
     values: dict[str, float | None] = {}
 
     if n_used < LOCAL_METRIC_FLOOR:
