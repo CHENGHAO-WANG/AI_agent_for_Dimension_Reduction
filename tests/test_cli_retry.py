@@ -1,0 +1,211 @@
+import json
+
+import pytest
+
+PCA = [{"op": "pca", "params": {"n_components": 2}}]
+# perplexity must stay well below n/3 for the 60-row fixture dataset, or validate-plan
+# refuses the candidate outright (see validate_plan's perplexity_too_large finding).
+TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
+
+
+def _plan(candidates, weights={"trustworthiness": 1.0}):
+    return {
+        "dataset": "d",
+        "candidates": candidates,
+        "evaluation": {"weights": weights, "justification": "up front"},
+    }
+
+
+def _append_embed_decision(run, candidate_id, outcome):
+    """Simulate a later embed attempt ending unsuccessfully.
+
+    The re-registration freeze reads `run.decisions()`, not the embeddings artefact's
+    `status` field (an artefact can be edited or deleted; the decision log is
+    append-only), so a test exercising the revision rule must add a record here, not
+    just rewrite the artefact file.
+    """
+    with (run / "decisions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "stage": "embed",
+            "question": f"What did candidate {candidate_id} produce?",
+            "options_considered": [],
+            "chosen": candidate_id,
+            "rationale": "simulated retry for the test",
+            "evidence": [],
+            "actor": "agent",
+            "candidate": candidate_id,
+            "outcome": outcome,
+        }) + "\n")
+
+
+def _prepared(cli, csv_dataset, tmp_path, candidates):
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    (runs / "r1" / "plan.json").write_text(json.dumps(_plan(candidates)), encoding="utf-8")
+    cli("validate-plan", "--run-dir", runs / "r1")
+    return runs / "r1"
+
+
+def test_re_embedding_a_successful_candidate_is_refused(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    assert result.code == 2
+    assert "already" in result.stderr
+
+
+def test_rank_ignores_metrics_for_a_candidate_that_did_not_succeed(
+    cli, csv_dataset, tmp_path
+):
+    """The reproduction, in the only shape it can still take.
+
+    A candidate that succeeded can no longer be re-embedded at all, so the original
+    route to stale scores is closed upstream. This asserts the belt-and-braces half:
+    even with a metrics file sitting there, a candidate whose outcome is not ok is not
+    ranked. That is what stopped `rank` reporting a timed-out candidate as a winner.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path,
+                    [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}])
+    for candidate in ("a", "b"):
+        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+
+    # Exactly what a timed-out retry used to leave behind: a stale metrics file beside
+    # an outcome that is no longer ok.
+    record = json.loads((run / "embeddings" / "b.json").read_text(encoding="utf-8"))
+    record["status"] = "timeout"
+    (run / "embeddings" / "b.json").write_text(json.dumps(record), encoding="utf-8")
+    assert (run / "metrics" / "b.json").exists()
+
+    ranked = cli("rank", "--run-dir", run)
+
+    assert [r["id"] for r in ranked.payload["ranking"]] == ["a"]
+    assert "b" in ranked.payload["failed_candidates"]
+
+
+def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path,
+                    [{"id": "a", "stages": [{"op": "subsample", "params": {"n_samples": 30}},
+                                            *PCA]}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    assert (run / "embeddings" / "a.index.npy").exists()
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"][0]["stages"] = PCA
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    # a succeeded, so revising it is refused; a failed attempt is the retry path. The
+    # freeze reads the decision log, so the retry needs a decision recorded, not just
+    # the artefact file rewritten.
+    record = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
+    record["status"] = "failed"
+    (run / "embeddings" / "a.json").write_text(json.dumps(record), encoding="utf-8")
+    _append_embed_decision(run, "a", "failed")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+    assert cli("embed", "--run-dir", run, "--id", "a", "--in-process").code == 0
+
+    # The subsample index from the first attempt must not survive to subset a reference
+    # the second attempt never subsampled.
+    assert not (run / "embeddings" / "a.index.npy").exists()
+
+
+@pytest.mark.parametrize("outcome", ["failed", "timeout", "crashed"])
+def test_any_unsuccessful_outcome_may_be_revised(cli, csv_dataset, tmp_path, outcome):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    record = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
+    record["status"] = outcome
+    (run / "embeddings" / "a.json").write_text(json.dumps(record), encoding="utf-8")
+    _append_embed_decision(run, "a", outcome)
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+
+def test_a_failed_candidate_can_be_revised_and_retried(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--timeout", "0.01")
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+    assert cli("embed", "--run-dir", run, "--id", "a", "--in-process").code == 0
+
+
+def test_a_successful_candidates_stages_cannot_be_revised(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+    assert result.code == 2
+    assert "succeeded" in result.stderr
+
+
+def test_the_weighting_can_never_be_revised(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+    assert result.code == 2
+    assert "amendment" in result.stderr.lower()
+
+
+def test_adding_a_candidate_is_allowed_after_embedding(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"].append({"id": "b", "stages": TSNE})
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+
+def _decision_lines(run):
+    path = run / "decisions.jsonl"
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def test_a_refused_embed_appends_no_decision_lines(cli, csv_dataset, tmp_path):
+    """A refused attempt must not look like an attempt.
+
+    `_recorded_outcome` treats any logged embed decision as evidence the candidate ran.
+    If a refusal appended a line anyway, an unregistered or unknown candidate would
+    read as `crashed` on the next try instead of never having been attempted.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    before = _decision_lines(run)
+
+    # Unknown candidate id against a registered plan.
+    result = cli("embed", "--run-dir", run, "--id", "not-a-candidate", "--in-process")
+    assert result.code == 2
+    assert _decision_lines(run) == before
+
+    # No registered plan at all.
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8, seed=1),
+        "--runs-root", runs, "--run-id", "r2")
+    unregistered = runs / "r2"
+    before_unregistered = _decision_lines(unregistered)
+    result = cli("embed", "--run-dir", unregistered, "--id", "a", "--in-process")
+    assert result.code == 2
+    assert _decision_lines(unregistered) == before_unregistered
