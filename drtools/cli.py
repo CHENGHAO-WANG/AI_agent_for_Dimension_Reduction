@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 
 from drtools import jsonio
-from drtools.cache import ensure_cache, read_cache
+from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
 from drtools.heuristics import suggest
@@ -232,8 +232,9 @@ def _build_parser() -> argparse.ArgumentParser:
 def _add_data_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--data",
-        required=True,
-        help="built-in name (see `drtools datasets`) or a path to a data file",
+        default=None,
+        help="built-in name (see `drtools datasets`) or a path to a data file; "
+        "optional when --run-dir names a run that already holds a cached dataset",
     )
     parser.add_argument(
         "--adapter",
@@ -267,30 +268,36 @@ def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
-    run.write_manifest(dataset=meta.get("name"), spec=args.data, seed=args.seed)
-    # Cache on first contact, not at first embed: every later stage reads the matrix
-    # from the run rather than from the source, which is what makes a run
-    # self-contained and lets prepare-reference run before any candidate has.
-    ensure_cache(run, X, labels, meta)
+    run, X, labels, meta = _resolve_run(args)
+    # The manifest is written only now: a refused re-profile must not have overwritten
+    # the command, spec and timestamp of the run it just declined to touch.
+    # `spec` falls back to the cached source, so omitting --data records where the data
+    # came from rather than recording null.
+    run.write_manifest(
+        dataset=meta.get("name"),
+        spec=args.data or meta.get("source"),
+        seed=args.seed,
+    )
 
     profile = profile_dataset(X, labels, meta)
     profile["run_id"] = run.id
+    # Which matrix this describes, so a loader repair that changed nothing is visible as
+    # having changed nothing rather than looking like it was never read.
+    profile["dataset_digest"] = meta.get("dataset_digest")
     run.write_artifact("profile.json", profile)
     return profile
 
 
 def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
+    run, X, labels, meta = _resolve_run(args)
 
-    ensure_cache(run, X, labels, meta)
     if run.profile_path.exists():
         profile = run.read_artifact("profile.json")
     else:
         profile = profile_dataset(X, labels, meta)
-        run.write_manifest(dataset=meta.get("name"), spec=args.data, seed=args.seed)
+        run.write_manifest(
+            dataset=meta.get("name"), spec=args.data or meta.get("source"), seed=args.seed
+        )
         run.write_artifact("profile.json", profile)
 
     recon = reconnaissance(
@@ -335,9 +342,7 @@ def _cmd_methods(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     stages = _read_stages(args.stages)
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
-    ensure_cache(run, X, labels, meta)
+    run, X, labels, meta = _resolve_run(args)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
@@ -691,6 +696,48 @@ def _open_run(args: argparse.Namespace, meta: dict[str, Any]) -> RunDir:
     return RunDir.create(
         Path(args.runs_root), meta.get("name", args.data), run_id=args.run_id
     )
+
+
+def _resolve_run(args: argparse.Namespace) -> tuple[RunDir, Any, Any, dict[str, Any]]:
+    """The run and the matrix every handler should work from.
+
+    A run holds one dataset. When it already has a cache that is the dataset, and
+    `--data` becomes a verification rather than a second source of truth: it is loaded,
+    digested, and refused if it disagrees. Nothing is written before that check.
+    """
+    spec = getattr(args, "data", None)
+
+    if args.run_dir:
+        path = Path(args.run_dir)
+        if not path.exists():
+            raise ContractError(
+                f"no run at {path}. Omit --run-dir to create one, or correct the path."
+            )
+        run = RunDir(path)
+        if is_cached(run):
+            if spec is None:
+                X, labels, meta = read_cache(run)
+                return run, X, labels, meta
+            X, labels, meta = _load(args)
+            meta = ensure_cache(run, X, labels, meta)   # refuses before anything writes
+            X, labels, _ = read_cache(run)
+            return run, X, labels, meta
+        if spec is None:
+            raise ContractError(
+                f"the run at {path} holds no cached dataset yet, so --data is needed "
+                "to say which dataset this run is of."
+            )
+        X, labels, meta = _load(args)
+        return run, X, labels, ensure_cache(run, X, labels, meta)
+
+    if spec is None:
+        raise ContractError(
+            "--data is required when no --run-dir is given: there is no run to read a "
+            "cached dataset from."
+        )
+    X, labels, meta = _load(args)
+    run = _open_run(args, meta)
+    return run, X, labels, ensure_cache(run, X, labels, meta)
 
 
 if __name__ == "__main__":  # pragma: no cover
