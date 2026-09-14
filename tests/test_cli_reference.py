@@ -51,10 +51,10 @@ def test_evaluate_refuses_when_the_plan_declares_a_base_and_none_was_prepared(
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
     (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
-    # The candidate's registered stages are the base plus its own, since prepare-reference
-    # (below) has not run yet to give `embed` anything else to key on.
-    cli("embed", "--run-dir", runs / "r1", "--id", "a",
-        "--stages", json.dumps(STANDARDISE + PCA), "--in-process")
+    # embed derives the candidate's stages (base plus its own) from the registered
+    # plan, since prepare-reference (below) has not run yet to give it anything else
+    # to key on.
+    cli("embed", "--run-dir", runs / "r1", "--id", "a", "--in-process")
 
     result = cli("evaluate", "--run-dir", runs / "r1", "--id", "a")
 
@@ -72,8 +72,7 @@ def test_evaluate_needs_no_reference_when_the_plan_declares_no_base(
         json.dumps(_plan([], [{"id": "a", "stages": PCA}])), encoding="utf-8"
     )
     cli("validate-plan", "--run-dir", runs / "r1")
-    cli("embed", "--run-dir", runs / "r1", "--id", "a",
-        "--stages", json.dumps(PCA), "--in-process")
+    cli("embed", "--run-dir", runs / "r1", "--id", "a", "--in-process")
 
     result = cli("evaluate", "--run-dir", runs / "r1", "--id", "a")
     assert result.code == 0

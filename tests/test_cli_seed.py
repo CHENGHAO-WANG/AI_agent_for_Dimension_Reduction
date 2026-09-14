@@ -55,8 +55,7 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
     }
     (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
-    cli("embed", "--run-dir", runs / "r1", "--id", "c1",
-        "--stages", '[{"op":"pca","params":{"n_components":2}}]', "--in-process")
+    cli("embed", "--run-dir", runs / "r1", "--id", "c1", "--in-process")
 
     first = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
     second = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
@@ -83,8 +82,7 @@ def test_evaluating_with_a_conflicting_seed_is_refused(cli, csv_dataset, tmp_pat
     }
     (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
-    cli("embed", "--run-dir", runs / "r1", "--id", "c1",
-        "--stages", '[{"op":"pca","params":{"n_components":2}}]', "--in-process")
+    cli("embed", "--run-dir", runs / "r1", "--id", "c1", "--in-process")
 
     result = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1", "--seed", 7)
 

@@ -149,12 +149,6 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_data_arguments(embed)
     _add_run_arguments(embed)
     embed.add_argument(
-        "--stages",
-        required=True,
-        help='ordered stages as JSON, e.g. \'[{"op":"pca","params":{"n_components":2}}]\''
-        ", or @path to read that JSON from a file",
-    )
-    embed.add_argument(
         "--id", default="candidate", help="name for this candidate's artefacts"
     )
     embed.add_argument(
@@ -350,38 +344,46 @@ def _cmd_methods(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
-    stages = _read_stages(args.stages)
-    run, X, labels, meta = _resolve_run(args)
+    run, X, labels, _ = _resolve_run(args)
+    plan = _registered_plan(run)
+
+    candidate = next((c for c in plan.candidates if c.id == args.id), None)
+    if candidate is None:
+        registered = ", ".join(c.id for c in plan.candidates)
+        raise ContractError(
+            f"{args.id} is not a candidate in the registered plan. The plan registered "
+            f"[{registered}]; add the candidate by re-registering, or embed one of those."
+        )
+
+    stages = plan.stages_for(candidate)
     seed = run_seed(run, args.seed)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
         # process, so by default it runs somewhere that can be killed.
-        return run_candidate(
-            run, args.id, stages, seed=seed, timeout_s=args.timeout
-        )
+        outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=args.timeout)
+    else:
+        result = run_pipeline(X, labels, stages, seed=seed)
+        embeddings = run.path / "embeddings"
+        np.save(embeddings / f"{args.id}.npy", result.embedding)
+        if result.labels is not None:
+            np.save(embeddings / f"{args.id}.labels.npy", result.labels)
+        if result.context.sample_index is not None:
+            np.save(embeddings / f"{args.id}.index.npy", result.context.sample_index)
+        outcome = {"id": args.id, "status": "ok", **result.as_dict()}
+        jsonio.write(embeddings / f"{args.id}.json", outcome)
 
-    result = run_pipeline(X, labels, stages, seed=seed)
-
-    embeddings = run.path / "embeddings"
-    np.save(embeddings / f"{args.id}.npy", result.embedding)
-    if result.labels is not None:
-        np.save(embeddings / f"{args.id}.labels.npy", result.labels)
-    if result.context.sample_index is not None:
-        np.save(embeddings / f"{args.id}.index.npy", result.context.sample_index)
-
-    record = {
-        "id": args.id,
-        "status": "ok",
-        "run_id": run.id,
-        "dataset": meta.get("name"),
-        "stages_requested": stages,
-        "seed": seed,
-        "embedding_path": str(embeddings / f"{args.id}.npy"),
-        **result.as_dict(),
-    }
-    jsonio.write(embeddings / f"{args.id}.json", record)
-    return record
+    run.log_decision(
+        stage="embed",
+        question=f"What did candidate {args.id} produce?",
+        chosen=args.id,
+        rationale=candidate.rationale or "the candidate as registered",
+        evidence=["plan.registered.candidates"],
+        candidate=args.id,
+        outcome=outcome.get("status"),
+        plan_digest=jsonio.read(run.manifest_path)["plan_digest"],
+    )
+    return outcome
 
 
 def _plan_digest(plan: dict[str, Any]) -> str:

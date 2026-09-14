@@ -6,11 +6,6 @@ PCA = [{"op": "pca", "params": {"n_components": 2}}]
 # would never reach registration, which is incidental to what this file tests.
 TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
 
-# The candidates in `_plan` declare no base_preprocessing, so a candidate's registered
-# stages are just its own — this is what `--stages` must carry until Task 8 drops the
-# flag from `embed`.
-STAGES_BY_ID = {"a": PCA, "b": TSNE}
-
 
 def _plan(weights):
     return {
@@ -30,8 +25,7 @@ def _prepared(cli, csv_dataset, tmp_path, weights):
 
 
 def _embed(cli, run, candidate):
-    cli("embed", "--run-dir", run, "--id", candidate,
-        "--stages", json.dumps(STAGES_BY_ID[candidate]), "--in-process")
+    cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
 
 
 def test_validate_plan_writes_a_frozen_copy(cli, csv_dataset, tmp_path):
