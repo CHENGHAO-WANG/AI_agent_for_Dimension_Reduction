@@ -355,6 +355,16 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
             f"[{registered}]; add the candidate by re-registering, or embed one of those."
         )
 
+    outcome_so_far = _recorded_outcome(run, args.id)
+    if outcome_so_far == "ok":
+        raise ContractError(
+            f"candidate {args.id} has already produced an embedding. Its stages are "
+            "fixed once it has succeeded, and replacing the result would leave the "
+            "embedding disagreeing with the record of how it was produced. Register a "
+            "new candidate id to try something different."
+        )
+    _invalidate_candidate(run, args.id)
+
     stages = plan.stages_for(candidate)
     seed = run_seed(run, args.seed)
 
@@ -386,6 +396,39 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     return outcome
 
 
+def _recorded_outcome(run: RunDir, candidate_id: str) -> str | None:
+    """How this candidate last ended according to the decision log.
+
+    The freeze anchors here rather than on files, because files can be deleted: an
+    agent that removes `embeddings/` would otherwise be free to re-register a different
+    weighting and re-run. An attempt that began but recorded no outcome — the process
+    died, the machine rebooted — reads as `crashed`, which is revisable, so an
+    interrupted run is recoverable rather than wedged.
+    """
+    attempts = [
+        record
+        for record in run.decisions()
+        if record.get("stage") == "embed" and record.get("candidate") == candidate_id
+    ]
+    if not attempts:
+        return None
+    return attempts[-1].get("outcome") or "crashed"
+
+
+def _invalidate_candidate(run: RunDir, candidate_id: str) -> None:
+    """Clear everything derived from a previous attempt at this candidate.
+
+    The toolbox does this rather than the agent, and does it before *every* attempt
+    rather than only when stages change: the commonest retry of all is the same stages
+    with a bigger budget, and leaving the old metrics in place lets a candidate that has
+    just timed out be ranked on the scores of the run before it.
+    """
+    for path in (run.path / "embeddings").glob(f"{candidate_id}.*"):
+        path.unlink()
+    metrics = run.path / "metrics" / f"{candidate_id}.json"
+    metrics.unlink(missing_ok=True)
+
+
 def _plan_digest(plan: dict[str, Any]) -> str:
     """A digest over the plan as registered, so divergence is detectable."""
     return hashlib.sha256(
@@ -404,16 +447,16 @@ def _registered_plan(run: RunDir) -> Plan:
     return Plan.model_validate(jsonio.read(path))
 
 
-def _check_reregistration(existing: Plan, proposed: Plan) -> None:
+def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
     """What a plan may still change once a run has already registered one.
 
     Re-registering an identical plan stays legal, and so does adding a new candidate
     id — an agent revising a failed candidate depends on that. What it cannot do is
-    move the weighting, move the shared base every candidate is scored against, or
-    make a candidate that already ran disappear from the record. This is the
-    unconditional half of the rule; a candidate whose *stages* changed is not checked
-    here, since whether that is allowed depends on whether it has a successful
-    attempt on record, which is outcome-dependent and not this function's job.
+    move the weighting, move the shared base every candidate is scored against, make
+    a candidate that already ran disappear from the record, or revise the stages of a
+    candidate that has already succeeded. Everything else — adding a candidate,
+    revising one that failed, timed out or crashed — is the one diagnose-and-retry the
+    design promises, and is the clearest evidence of agency the run can produce.
     """
     if dict(proposed.evaluation.weights) != dict(existing.evaluation.weights):
         raise ContractError(
@@ -443,6 +486,16 @@ def _check_reregistration(existing: Plan, proposed: Plan) -> None:
             "the record and cannot be made to disappear by re-registering; add it "
             "back, or start a new run to drop it."
         )
+
+    proposed_by_id = {candidate.id: candidate for candidate in proposed.candidates}
+    for candidate in existing.candidates:
+        if proposed_by_id[candidate.id].stages == candidate.stages:
+            continue
+        if _recorded_outcome(run, candidate.id) == "ok":
+            raise ContractError(
+                f"candidate {candidate.id} has already succeeded, so its stages cannot "
+                "be revised. Register a new candidate id for the variant."
+            )
 
 
 def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
@@ -643,7 +696,7 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     registered = Plan.model_validate(plan)
     registered_path = run.path / "plan.registered.json"
     if registered_path.exists():
-        _check_reregistration(Plan.model_validate(jsonio.read(registered_path)), registered)
+        _check_reregistration(run, Plan.model_validate(jsonio.read(registered_path)), registered)
     digest = _plan_digest(registered.model_dump(mode="json"))
     jsonio.write(registered_path, registered.model_dump(mode="json"))
     run.update_manifest(plan_digest=digest)
@@ -837,19 +890,6 @@ def _read_json_argument(argument: str) -> Any:
         else argument
     )
     return json.loads(text)
-
-
-def _read_stages(argument: str) -> list[Any]:
-    """Stages come as inline JSON, or as @path for anything long enough to want a file."""
-    text = (
-        Path(argument[1:]).read_text(encoding="utf-8")
-        if argument.startswith("@")
-        else argument
-    )
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as error:
-        raise PipelineError(f"--stages is not valid JSON: {error}") from None
 
 
 def _load(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:
