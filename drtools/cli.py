@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
 from drtools import jsonio
 from drtools.cache import ensure_cache, is_cached, read_cache
@@ -391,7 +392,12 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         evidence=["plan.registered.candidates"],
         candidate=args.id,
         outcome=outcome.get("status"),
-        plan_digest=jsonio.read(run.manifest_path)["plan_digest"],
+        # Recomputed from the registration rather than read off the manifest. The
+        # manifest is rewritten by `profile`, so a re-profile after registering used to
+        # drop the key and leave every later `embed` dying on a KeyError with no
+        # message and no route. `plan.registered.json` is the authority for what was
+        # registered; the manifest only ever held a copy of it.
+        plan_digest=_plan_digest(plan.model_dump(mode="json")),
     )
     return outcome
 
@@ -436,6 +442,30 @@ def _plan_digest(plan: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+def _plan_from(document: Any, source: str) -> Plan:
+    """Parse a plan document, refusing a malformed one rather than raising out of `main`.
+
+    `plan.json` is the artefact the agent edits most often, and pydantic's own
+    `ValidationError` is neither a `ContractError` nor a `FileNotFoundError`, so a typo
+    in it used to escape as a traceback with no exit code the agent could read and no
+    route out. The detail pydantic produces already names the offending field, which is
+    exactly what the agent needs, so it is carried through rather than summarised away.
+    """
+    try:
+        return Plan.model_validate(document)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc']) or 'plan'}: {item['msg']}"
+            for item in error.errors()
+        )
+        raise ContractError(
+            f"{source} is not a valid plan — {problems}. Correct the fields named "
+            "above and re-run: a plan needs `dataset`, an `evaluation` with `weights`, "
+            "and `candidates`, each with an `id` and at least one stage. "
+            "`drtools methods` lists the ops a stage may name."
+        ) from error
+
+
 def _registered_plan(run: RunDir) -> Plan:
     path = run.path / "plan.registered.json"
     if not path.exists():
@@ -444,7 +474,7 @@ def _registered_plan(run: RunDir) -> Plan:
             "one before embedding or ranking: the weighting has to be fixed before any "
             "embedding exists for pre-registration to mean anything."
         )
-    return Plan.model_validate(jsonio.read(path))
+    return _plan_from(jsonio.read(path), "plan.registered.json")
 
 
 def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
@@ -563,19 +593,29 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     if reference_record.exists():
-        settings = jsonio.read(reference_record)["settings"]
+        record = jsonio.read(reference_record)
+        settings = record["settings"]
+        reference_rows = int(record["n_rows"])
     else:
         # No base preprocessing: the reference is the cache, and the same rule applies
         # to its row count.
-        rows = min(jsonio.read(run.path / "data" / "meta.json")["cached_shape"][0],
-                   METRIC_SAMPLE_CAP)
+        reference_rows = int(
+            jsonio.read(run.path / "data" / "meta.json")["cached_shape"][0]
+        )
         settings = {
-            "k": neighbourhood_size(rows),
+            "k": neighbourhood_size(min(reference_rows, METRIC_SAMPLE_CAP)),
             "max_samples": METRIC_SAMPLE_CAP,
             "seed": run_seed(run, None),
         }
 
-    candidate = jsonio.read(run.path / "embeddings" / f"{args.id}.json")
+    record_path = run.path / "embeddings" / f"{args.id}.json"
+    if not record_path.exists():
+        raise ContractError(
+            f"candidate {args.id!r} has no embedding in this run — `embed` has not run "
+            f"for it, so there is nothing to score. Run `drtools embed --run-dir "
+            f"{run.path} --id {args.id}` first, or evaluate a candidate that has."
+        )
+    candidate = jsonio.read(record_path)
     if candidate.get("status") != "ok":
         raise ContractError(
             f"candidate {args.id!r} has status {candidate.get('status')!r} and produced "
@@ -584,11 +624,13 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
         )
     embedding = np.load(run.path / "embeddings" / f"{args.id}.npy")
     reference, labels = _reference_for(run, args.id)
+    _check_rows_support_k(run, args.id, reference.shape[0], reference_rows, settings)
 
     metrics = evaluate_embedding(
         reference,
         embedding,
         labels,
+        k=settings["k"],
         seed=settings["seed"],
         max_samples=settings["max_samples"],
         runtime_s=candidate.get("total_duration_s"),
@@ -603,21 +645,107 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
     return metrics
 
 
+def _check_registration_is_recorded(run: RunDir, plan: Plan) -> None:
+    """Check the registration against the append-only log that witnessed it.
+
+    `plan.registered.json` is a file, and a file can be overwritten — one `cp` of
+    `plan.json` over it makes the divergence check pass and lets a weighting chosen
+    after the results were in look pre-registered. The decision log is what makes that
+    more than a copy: `validate-plan` appends a `register_plan` record carrying the
+    digest and the full weighting, so the registration has to agree with something that
+    was written before any embedding existed. Tampering is thereby raised from editing
+    one JSON file to forging a consistent log — which is the guarantee the design
+    claimed and, until now, did not check anywhere.
+    """
+    digest = _plan_digest(plan.model_dump(mode="json"))
+    weights = dict(plan.evaluation.weights)
+    registrations = [
+        record for record in run.decisions() if record.get("stage") == "register_plan"
+    ]
+    if not registrations:
+        raise ContractError(
+            "this run's decision log records no plan registration, so there is nothing "
+            "showing the weighting was fixed before the results existed. Run `drtools "
+            "validate-plan` to register the plan, or start a new run: a ranking whose "
+            "pre-registration cannot be checked is not one the report can claim."
+        )
+
+    last = registrations[-1]
+    if last.get("plan_digest") == digest and last.get("weights") == weights:
+        return
+    raise ContractError(
+        "plan.registered.json does not match what this run's decision log recorded "
+        f"being registered. The log's last registration is {last.get('weights')} under "
+        f"digest {str(last.get('plan_digest'))[:12]}; the registration on disk is "
+        f"{weights} under {digest[:12]}. The log is append-only and was written before "
+        "any embedding existed, so it is the authority here and the file is not. "
+        "Restore plan.registered.json from a backup if one exists, or start a new run "
+        "and register the plan you actually mean to be judged by."
+    )
+
+
+def _check_rows_support_k(
+    run: RunDir,
+    candidate_id: str,
+    candidate_rows: int,
+    reference_rows: int,
+    settings: dict[str, Any],
+) -> None:
+    """Refuse a candidate whose rows cannot carry the neighbourhood the run is fixed at.
+
+    The battery's k is derived once, from the reference's row count, so that every
+    candidate's trustworthiness is a measurement of the same thing. A candidate that
+    subsampled has fewer rows than the reference, and scikit-learn needs `k < n / 2`;
+    the tempting repair is to fall back to a smaller k for that one candidate, which is
+    precisely how two candidates come to be scored at different neighbourhoods and
+    ranked together with no caveat. So this refuses instead, and names the subsample as
+    the reason rather than leaving the agent to infer it from an arithmetic error.
+    """
+    k = int(settings["k"])
+    n_used = min(int(candidate_rows), int(settings["max_samples"]))
+    if k < n_used / 2:
+        return
+
+    subsampled = (run.path / "embeddings" / f"{candidate_id}.index.npy").exists()
+    kept = (
+        f"candidate {candidate_id!r} subsampled to {candidate_rows} of the "
+        f"reference's {reference_rows} rows"
+        if subsampled
+        else f"candidate {candidate_id!r} has {candidate_rows} rows against the "
+        f"reference's {reference_rows}"
+    )
+    raise ContractError(
+        f"{kept}, which cannot support this run's neighbourhood of k={k}: "
+        f"scikit-learn needs k < n/2, so {n_used} rows admit at most "
+        f"k={neighbourhood_size(n_used)}. k is fixed once from the reference so that "
+        "every candidate is measured at the same neighbourhood, and scoring this one "
+        "at a smaller k would make its numbers incomparable with the rest — which is "
+        "the whole reason this refuses rather than adjusting. Drop the subsample stage "
+        "and re-register this candidate under a new id, or start a new run whose "
+        "dataset is the smaller sample so the reference is fixed to it."
+    )
+
+
 def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
     plan = _registered_plan(run)
+    _check_registration_is_recorded(run, plan)
 
     live = run.path / "plan.json"
     if live.exists():
-        current = Plan.model_validate(run.read_artifact("plan.json"))
+        current = _plan_from(run.read_artifact("plan.json"), "plan.json")
         if _plan_digest(current.model_dump(mode="json")) != _plan_digest(
             plan.model_dump(mode="json")
         ):
             raise ContractError(
                 "plan.json no longer matches the plan this run registered, so ranking "
                 "it would score results under a weighting chosen after they existed. "
-                "Restore the registered plan, or record an amendment — which this "
-                "toolbox does not yet implement, so a changed weighting means a new run."
+                "Either copy plan.registered.json back over plan.json to restore what "
+                "was registered, or start a new run for the changed plan. Copying the "
+                "other way round is not a route: the registration is checked against "
+                "the decision log, so overwriting it only makes `rank` refuse for a "
+                "second reason. The sanctioned way to move a weighting is an "
+                "amendment, which this toolbox does not yet implement."
             )
 
     metrics_by_id: dict[str, Any] = {}
@@ -657,12 +785,17 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    plan = (
+    run = _require_run(args)
+    source = args.plan if args.plan else "plan.json"
+    document = (
         _read_json_argument(args.plan)
         if args.plan
         else run.read_artifact("plan.json")
     )
+    # Parsed before anything else reads it, so a malformed plan is one refusal naming
+    # the bad field rather than a pydantic traceback out of the validator's own
+    # `model_validate`.
+    plan = _plan_from(document, source)
     profile = run.read_artifact("profile.json")
     recon = (
         run.read_artifact("recon.json") if run.recon_path.exists() else None
@@ -693,10 +826,12 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     # validation is frozen here, before any embedding exists, so that ranking has
     # something pre-registered to hold itself to. A run that already registered a
     # plan may register again — but not to move what was already fixed.
-    registered = Plan.model_validate(plan)
+    registered = plan
     registered_path = run.path / "plan.registered.json"
     if registered_path.exists():
-        _check_reregistration(run, Plan.model_validate(jsonio.read(registered_path)), registered)
+        _check_reregistration(
+            run, _plan_from(jsonio.read(registered_path), "plan.registered.json"), registered
+        )
     digest = _plan_digest(registered.model_dump(mode="json"))
     jsonio.write(registered_path, registered.model_dump(mode="json"))
     run.update_manifest(plan_digest=digest)
@@ -716,7 +851,7 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    run = _require_run(args)
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return {"op": args.op, "suggested": suggest(args.op, profile, recon)}
@@ -724,11 +859,17 @@ def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     """Draw the standard set. The agent picks which of these to put in the report."""
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    run = _require_run(args)
     figures_dir = run.path / "figures"
     embeddings_dir = run.path / "embeddings"
     drawn: dict[str, Any] = {}
 
+    if not is_cached(run):
+        raise ContractError(
+            f"the run at {run.path} holds no cached dataset, so there is nothing to "
+            "draw labels or a reference from. Run `drtools profile --data ... "
+            f"--run-dir {run.path}` first; that is the step that caches the dataset."
+        )
     _, labels, meta = read_cache(run)
     names = meta.get("label_names")
 

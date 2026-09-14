@@ -174,3 +174,74 @@ def test_adding_a_new_candidate_to_the_registration_stays_legal(cli, csv_dataset
     assert result.code == 0
     registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
     assert sorted(c["id"] for c in registered["candidates"]) == ["a", "b", "c"]
+
+
+def test_copying_the_live_plan_over_the_registration_does_not_launder_it(
+    cli, csv_dataset, tmp_path
+):
+    """The file copy that defeated pre-registration.
+
+    `rank` refused when plan.json diverged from plan.registered.json and told the agent
+    to "restore the registered plan" — which an autonomous agent can read as "make the
+    registration match". One `cp plan.json plan.registered.json` then ranked cleanly
+    under a weighting no register_plan record ever authorised. The decision log is the
+    anchor the design claimed and did not check: `rank` now verifies the registration
+    against it, so overwriting the file only moves the refusal.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    for candidate in ("a", "b"):
+        _embed(cli, run, candidate)
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    assert cli("rank", "--run-dir", run).code == 2
+
+    # The bypass: make the registration agree with the edited plan.
+    (run / "plan.registered.json").write_text(
+        (run / "plan.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    result = cli("rank", "--run-dir", run)
+
+    assert result.code == 2
+    assert "decision log" in result.stderr
+    assert not (run / "ranking.json").exists()
+    log = (run / "decisions.jsonl").read_text(encoding="utf-8")
+    assert "runtime_s" not in log
+
+
+def test_the_divergence_message_does_not_offer_overwriting_the_registration(
+    cli, csv_dataset, tmp_path
+):
+    """The message is the agent's only instruction, so it must not name the bypass."""
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("rank", "--run-dir", run)
+
+    assert result.code == 2
+    assert "copy plan.registered.json back over plan.json" in result.stderr
+    assert "start a new run" in result.stderr
+
+
+def test_rank_refuses_a_registration_the_log_never_witnessed(cli, csv_dataset, tmp_path):
+    """A registration with no record at all, not merely one that disagrees."""
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    _embed(cli, run, "a")
+    cli("evaluate", "--run-dir", run, "--id", "a")
+    records = [
+        line
+        for line in (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(line)["stage"] != "register_plan"
+    ]
+    (run / "decisions.jsonl").write_text("\n".join(records) + "\n", encoding="utf-8")
+
+    result = cli("rank", "--run-dir", run)
+
+    assert result.code == 2
+    assert "no plan registration" in result.stderr
+    assert not (run / "ranking.json").exists()
