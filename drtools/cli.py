@@ -257,7 +257,10 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--runs-root", default="runs", help="where new run directories are created"
     )
     parser.add_argument("--run-id", default=None, help="name for a new run directory")
-    parser.add_argument("--seed", type=int, default=0, help="random seed")
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="random seed; fixed when the run is created and immutable afterwards",
+    )
 
 
 # ---------------------------------------------------------------------- handlers
@@ -269,6 +272,9 @@ def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
     run, X, labels, meta = _resolve_run(args)
+    # The seed is resolved — and a mismatched request refused — before anything is
+    # written, the same discipline _resolve_run applies to the dataset digest.
+    seed = run_seed(run, args.seed)
     # The manifest is written only now: a refused re-profile must not have overwritten
     # the command, spec and timestamp of the run it just declined to touch.
     # `spec` falls back to the cached source, so omitting --data records where the data
@@ -276,7 +282,7 @@ def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
     run.write_manifest(
         dataset=meta.get("name"),
         spec=args.data or meta.get("source"),
-        seed=args.seed,
+        seed=seed,
     )
 
     profile = profile_dataset(X, labels, meta)
@@ -290,13 +296,14 @@ def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
     run, X, labels, meta = _resolve_run(args)
+    seed = run_seed(run, args.seed)
 
     if run.profile_path.exists():
         profile = run.read_artifact("profile.json")
     else:
         profile = profile_dataset(X, labels, meta)
         run.write_manifest(
-            dataset=meta.get("name"), spec=args.data or meta.get("source"), seed=args.seed
+            dataset=meta.get("name"), spec=args.data or meta.get("source"), seed=seed
         )
         run.write_artifact("profile.json", profile)
 
@@ -304,7 +311,7 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
         X,
         labels,
         profile,
-        seed=args.seed,
+        seed=seed,
         max_samples=args.max_samples,
         k=args.k,
         thumbnail_path=run.path / "figures" / "recon_thumbnail.png",
@@ -343,15 +350,16 @@ def _cmd_methods(args: argparse.Namespace) -> dict[str, Any]:
 def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     stages = _read_stages(args.stages)
     run, X, labels, meta = _resolve_run(args)
+    seed = run_seed(run, args.seed)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
         # process, so by default it runs somewhere that can be killed.
         return run_candidate(
-            run, args.id, stages, seed=args.seed, timeout_s=args.timeout
+            run, args.id, stages, seed=seed, timeout_s=args.timeout
         )
 
-    result = run_pipeline(X, labels, stages, seed=args.seed)
+    result = run_pipeline(X, labels, stages, seed=seed)
 
     embeddings = run.path / "embeddings"
     np.save(embeddings / f"{args.id}.npy", result.embedding)
@@ -366,7 +374,7 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         "run_id": run.id,
         "dataset": meta.get("name"),
         "stages_requested": stages,
-        "seed": args.seed,
+        "seed": seed,
         "embedding_path": str(embeddings / f"{args.id}.npy"),
         **result.as_dict(),
     }
@@ -382,12 +390,13 @@ def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     shared base output is the common ground that makes the comparison mean something.
     """
     run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    seed = run_seed(run, args.seed)
     stages = _read_stages(args.stages)
     X, labels, meta = read_cache(run)
 
     result = (
         run_pipeline(
-            X, labels, stages, seed=args.seed, require_terminal_reduction=False
+            X, labels, stages, seed=seed, require_terminal_reduction=False
         )
         if stages
         else None
@@ -738,6 +747,28 @@ def _resolve_run(args: argparse.Namespace) -> tuple[RunDir, Any, Any, dict[str, 
     X, labels, meta = _load(args)
     run = _open_run(args, meta)
     return run, X, labels, ensure_cache(run, X, labels, meta)
+
+
+def run_seed(run: RunDir, requested: int | None) -> int:
+    """The run's seed, which is fixed when the run is created.
+
+    Every metric subsample is drawn from this. Letting a re-profile move it would let
+    two candidates be measured on different rows without the registered plan changing,
+    which is the comparability guarantee defeated by a route that looks compliant.
+    """
+    if not run.manifest_path.exists():
+        return 0 if requested is None else requested
+
+    recorded = jsonio.read(run.manifest_path).get("seed")
+    if recorded is None:
+        return 0 if requested is None else requested
+    if requested is not None and requested != recorded:
+        raise ContractError(
+            f"this run was created with seed {recorded} and every measurement in it "
+            f"is drawn from that seed, so it cannot be re-run with seed {requested}. "
+            "Use the recorded seed, or start a new run for the new one."
+        )
+    return recorded
 
 
 if __name__ == "__main__":  # pragma: no cover
