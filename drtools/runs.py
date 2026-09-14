@@ -104,10 +104,22 @@ class RunDir:
     # ------------------------------------------------------------------- manifest
 
     def write_manifest(self, **extra: Any) -> Path:
-        """Record everything needed to reproduce this run, or to explain why it differs."""
+        """Record everything needed to reproduce this run, or to explain why it differs.
+
+        Rewriting rather than replacing: fields another stage recorded on the manifest
+        are carried over instead of being dropped. `profile` calls this every time it
+        runs, and a rebuild-from-scratch quietly deleted the `plan_digest` that
+        `validate-plan` had written, so an ordinary `profile → validate-plan → profile`
+        sequence left the run wedged. `created` is likewise the moment the run was
+        created, not the moment it was last profiled.
+        """
+        previous = (
+            jsonio.read(self.manifest_path) if self.manifest_path.exists() else {}
+        )
         manifest = {
+            **previous,
             "run_id": self.id,
-            "created": _timestamp(),
+            "created": previous.get("created") or _timestamp(),
             "command": " ".join(sys.argv),
             "python": sys.version.split()[0],
             "platform": platform.platform(),
