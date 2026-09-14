@@ -44,12 +44,17 @@ breaks.
 `write_cache` computes a digest and stores it in `meta.json` as `dataset_digest`.
 
 Sparse input **must be canonicalised first** — `.tocsr()`, `.sum_duplicates()`,
-`.sort_indices()`, `.eliminate_zeros()` — and the digest folds in shape, value dtype
-and index dtype. Without this the digest refuses matrices it must accept: measured in
-this venv, the same matrix built with unsorted indices, with an explicitly stored
-zero, or with int64 rather than int32 indices produces three different digests, and
-`sp.csr_matrix()` does not sort. Canonicalisation happens inside `content_hash()`, so
-the write path and the check path cannot drift apart.
+`.sort_indices()`, `.eliminate_zeros()` — and `indices`/`indptr` must then be hashed at
+a **fixed width and fixed endianness** (`astype('<i8')`), independent of how they were
+stored. The digest folds in shape and the *value* dtype; it must not fold in the index
+dtype. Measured in this venv, the same matrix built with unsorted indices, with an
+explicitly stored zero, or with int64 rather than int32 indices gives three different
+digests, and `sp.csr_matrix()` does not sort — and index width is not a property of the
+data, so a Loader that switches to int64 must not invalidate a Run. With the fixed-width
+cast all three constructions agree while genuinely different data still differs.
+
+Canonicalisation happens inside `content_hash()`, so the write path and the check path
+cannot drift apart.
 
 The digest covers the matrix and the label codes only. `name`, `source` and
 `label_names` stay out — they must be free to change — but are recorded in cache meta
@@ -106,21 +111,44 @@ Changeable by re-registering, which bumps a sequence number and appends a record
 - changing the stages of a Candidate with no Embedding, or whose Outcome is `failed`,
   `timeout` or `crashed`
 
-On such a change the **toolbox** deletes that Candidate's stale artefacts —
-`embeddings/<id>.*` and `metrics/<id>.json` — rather than leaving it to the agent.
-This also closes the queued day-9 defect where a reused Candidate id dropped only its
-Outcome record, letting `rank` score a failed retry on the previous run's numbers.
-
 Removing a Candidate refuses: the Rejections are evidence, and a Candidate that ran
 and lost is part of the record.
 
-**The freeze anchors in the Decision log, not in the filesystem.** `embed` gains a
-decision record per Candidate, and re-registration refuses on the presence of an
-`embed` record rather than on files under `embeddings/`. Anchoring in files is
-defeated by deleting them; anchoring in an append-only log raises tampering from
-editing one JSON to forging a consistent log. It also fixes an ambiguity: a timeout
-writes `embeddings/<id>.json` but produces no Embedding, so a file-based test would
-freeze the Plan on a Candidate that never ran.
+**Invalidation happens before every embed attempt, not at re-registration.** Tying
+cleanup to a stage change misses the commonest retry of all — re-running a Candidate
+whose stages are fine but whose Budget was too small. Reproduced: a Candidate that had
+succeeded and been evaluated, re-embedded with a 1s timeout, ends with Outcome
+`timeout` while `metrics/<id>.json` survives; `rank` then lists it among the ranked
+Candidates on its previous scores and does not even report it as failed.
+
+So:
+
+- Re-embedding a Candidate whose Outcome is `ok` **refuses**. Its stages are immutable
+  and its result already exists; there is nothing to gain and a replacement would make
+  the Embedding disagree with the record.
+- Re-embedding a Candidate whose Outcome is `failed`, `timeout` or `crashed` is the
+  retry loop, and the **toolbox** deletes every dependent artefact first —
+  `embeddings/<id>.*` and `metrics/<id>.json` — rather than leaving it to the agent.
+- `rank` additionally excludes any Candidate whose current Outcome is not `ok`,
+  whatever `metrics/` holds. Belt and braces, because the ordering above is the kind of
+  invariant that a later refactor quietly breaks.
+
+Together these close the queued day-9 defect where a reused Candidate id dropped only
+its Outcome record.
+
+**The freeze anchors in the Decision log, not in the filesystem.** `embed` appends an
+outcome-bearing record per attempt, and re-registration refuses only where that
+Candidate has a recorded **successful** attempt — not on the presence of any `embed`
+record, which would freeze exactly the failed Candidates the retry loop exists to
+revise. Anchoring in files is defeated by deleting them; anchoring in an append-only
+log raises tampering from editing one JSON to forging a consistent log. It also fixes
+an ambiguity: a timeout writes `embeddings/<id>.json` but produces no Embedding, so a
+file-based test would freeze the Plan on a Candidate that never ran.
+
+An attempt killed before it could record an Outcome — the run died, the machine
+rebooted — leaves a started record with no completion. Treat it as `crashed`: the
+Candidate is revisable and re-embeddable, which is the same state the isolation layer
+already calls "died without recording anything".
 
 `embed` requires a registered Plan, `--id` must name a registered Candidate, and the
 stages come from `plan.stages_for(candidate)` rather than `--stages`. This is a
@@ -161,7 +189,19 @@ so its settings are too. When `base_preprocessing` is empty the Reference is the
 and k derives from the cache's row count. `evaluate` reads those settings and refuses
 a Candidate whose row count cannot support the recorded k, naming the subsample.
 
-`evaluate` loses `--k` and `--max-samples`; the seed comes from the manifest. The
+**The Run's seed is fixed when the Run is created and never moves.** Reading it from
+the manifest is not the same as freezing it: `_cmd_profile` rewrites the manifest with
+`args.seed`, and re-profiling *identical* data passes the digest check, so an agent can
+evaluate one Candidate, re-profile with a different seed, and evaluate the next on a
+different metric subsample without the registered Plan changing. Reproduced: re-profile
+moved the seed 0 → 7, and the 2000-row metric subsample of a 3000-row dataset kept only
+1347 rows in common. `profile` therefore preserves the recorded seed and refuses a
+`--seed` that differs from it, and every evaluation setting derives from that immutable
+state — including on the empty-base path, where the Reference is the cache and no
+`reference.json` records them.
+
+`evaluate` loses `--k` and `--max-samples`; the seed comes from that immutable Run
+state. The
 `k=` parameter leaves `evaluate_embedding`'s signature rather than becoming an
 override — an override leaves the incomparability open for the next caller. Five call
 sites in `tests/test_metrics_rank_plan.py` change; all four scenarios were re-checked
@@ -225,9 +265,20 @@ One regression test per contract, each built from its reproduction:
 - register, embed, retry a failed Candidate with new stages; assert the retry is
   allowed, the stale metrics are gone, and the weights could not be touched
 
+And four more, each from a hole the design review found rather than from a reproduction
+of the original three:
+
+- re-embed an evaluated Candidate with a Budget too small to finish; assert the stale
+  metrics are gone and that `rank` does not score it
+- re-embed a Candidate whose Outcome is `ok`; assert refusal
+- evaluate a Candidate, re-profile with a different `--seed`, evaluate another; assert
+  the seed did not move
+- re-register after a `failed`, a `timeout` and a `crashed` Outcome; assert each is
+  revisable, and that a Candidate with a successful attempt is not
+
 Plus unit tests for `content_hash` canonicality — the three constructions that
-currently differ — and for the k rule and the two guards at n = 2, 3, 4, 5, 19, 20,
-30, 31.
+currently differ, including int32 against int64 indices, which must now agree — and for
+the k rule and the two guards at n = 2, 3, 4, 5, 19, 20, 30, 31.
 
 ## Ordering
 
