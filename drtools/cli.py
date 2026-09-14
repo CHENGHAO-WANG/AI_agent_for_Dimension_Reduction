@@ -60,7 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         # argparse itself, before any handler runs. It already wrote its message to
         # stderr; the contract for `main` is that a refusal returns rather than raises,
         # so that holds here too instead of only for errors raised past this point.
-        return error.code if isinstance(error.code, int) else EXIT_USAGE_ERROR
+        # argparse's own exit code for a usage error is 2, which collides with
+        # EXIT_CONTRACT_ERROR — an agent reading 2 would go looking for a
+        # "contract error:" sentence that was never printed. `--help` exits 0 and
+        # should still mean success; every other argparse exit means a usage error.
+        return EXIT_USAGE_ERROR if error.code else 0
     if not hasattr(args, "handler"):
         parser.print_help()
         return EXIT_USAGE_ERROR
@@ -398,6 +402,47 @@ def _registered_plan(run: RunDir) -> Plan:
     return Plan.model_validate(jsonio.read(path))
 
 
+def _check_reregistration(existing: Plan, proposed: Plan) -> None:
+    """What a plan may still change once a run has already registered one.
+
+    Re-registering an identical plan stays legal, and so does adding a new candidate
+    id — an agent revising a failed candidate depends on that. What it cannot do is
+    move the weighting, move the shared base every candidate is scored against, or
+    make a candidate that already ran disappear from the record. This is the
+    unconditional half of the rule; a candidate whose *stages* changed is not checked
+    here, since whether that is allowed depends on whether it has a successful
+    attempt on record, which is outcome-dependent and not this function's job.
+    """
+    if dict(proposed.evaluation.weights) != dict(existing.evaluation.weights):
+        raise ContractError(
+            "this run already registered a plan, and the weighting cannot move once "
+            "registered — that is the entire guarantee registration exists to make. "
+            "The sanctioned route is an amendment, which this toolbox does not "
+            "implement yet, so a changed weighting means starting a new run."
+        )
+
+    existing_base = [stage.model_dump() for stage in existing.base_preprocessing]
+    proposed_base = [stage.model_dump() for stage in proposed.base_preprocessing]
+    if proposed_base != existing_base:
+        raise ContractError(
+            "this run already registered a plan with different base preprocessing. "
+            "Every candidate is scored against its output, so moving it would "
+            "invalidate every metric already computed against the old one. Start a "
+            "new run for the changed base."
+        )
+
+    existing_ids = {candidate.id for candidate in existing.candidates}
+    proposed_ids = {candidate.id for candidate in proposed.candidates}
+    dropped = sorted(existing_ids - proposed_ids)
+    if dropped:
+        raise ContractError(
+            f"this run already registered candidate(s) {dropped}, which are absent "
+            "from the plan just submitted. A candidate that ran and lost is part of "
+            "the record and cannot be made to disappear by re-registering; add it "
+            "back, or start a new run to drop it."
+        )
+
+
 def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     """Compute the representation every candidate is scored against.
 
@@ -448,6 +493,10 @@ def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
+    # A seed that conflicts with the run's recorded one is still refused here, the same
+    # discipline every other command follows — even though the value actually used
+    # below always comes from the recorded settings, not from this call's return.
+    run_seed(run, args.seed)
     plan = _registered_plan(run)
     reference_record = run.path / "data" / "reference.json"
 
@@ -472,6 +521,12 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     candidate = jsonio.read(run.path / "embeddings" / f"{args.id}.json")
+    if candidate.get("status") != "ok":
+        raise ContractError(
+            f"candidate {args.id!r} has status {candidate.get('status')!r} and produced "
+            "no embedding to evaluate. Fix what made it fail and re-run `embed` for "
+            "this id, or evaluate a different candidate."
+        )
     embedding = np.load(run.path / "embeddings" / f"{args.id}.npy")
     reference, labels = _reference_for(run, args.id)
 
@@ -527,7 +582,10 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         justification=plan.evaluation.justification,
         failures=failures,
     )
-    ranking["plan_digest"] = jsonio.read(run.manifest_path)["plan_digest"]
+    # Recomputed from the plan actually ranked, rather than read back off the
+    # manifest: a hand-edited manifest would otherwise make the stamp lie, and the
+    # manifest lookup has no guarantee the key is even there.
+    ranking["plan_digest"] = _plan_digest(plan.model_dump(mode="json"))
     run.write_artifact("ranking.json", ranking)
     run.log_decision(
         stage="rank",
@@ -578,10 +636,14 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
 
     # Registration is the moment the weighting becomes fixed: a plan that passes
     # validation is frozen here, before any embedding exists, so that ranking has
-    # something pre-registered to hold itself to.
+    # something pre-registered to hold itself to. A run that already registered a
+    # plan may register again — but not to move what was already fixed.
     registered = Plan.model_validate(plan)
+    registered_path = run.path / "plan.registered.json"
+    if registered_path.exists():
+        _check_reregistration(Plan.model_validate(jsonio.read(registered_path)), registered)
     digest = _plan_digest(registered.model_dump(mode="json"))
-    jsonio.write(run.path / "plan.registered.json", registered.model_dump(mode="json"))
+    jsonio.write(registered_path, registered.model_dump(mode="json"))
     run.update_manifest(plan_digest=digest)
     run.log_decision(
         stage="register_plan",

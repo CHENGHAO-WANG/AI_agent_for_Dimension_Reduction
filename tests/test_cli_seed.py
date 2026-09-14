@@ -64,3 +64,30 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
     assert first.code == 0
     assert second.code == 0
     assert first.payload["values"] == second.payload["values"]
+
+
+def test_evaluating_with_a_conflicting_seed_is_refused(cli, csv_dataset, tmp_path):
+    """`evaluate` takes its metric settings from reference.json, not from --seed, but
+    a --seed that disagrees with the run's recorded one must still be refused rather
+    than silently discarded — the same discipline every other command follows.
+    """
+    runs = tmp_path / "runs"
+    data = csv_dataset(rows=60, cols=8)
+    cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 0)
+    plan = {
+        "dataset": "d",
+        "candidates": [
+            {"id": "c1", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+        ],
+        "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
+    }
+    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    cli("validate-plan", "--run-dir", runs / "r1")
+    cli("embed", "--run-dir", runs / "r1", "--id", "c1",
+        "--stages", '[{"op":"pca","params":{"n_components":2}}]', "--in-process")
+
+    result = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1", "--seed", 7)
+
+    assert result.code == 2
+    assert "seed" in result.stderr
+    assert not (runs / "r1" / "metrics" / "c1.json").exists()

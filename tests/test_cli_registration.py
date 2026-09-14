@@ -90,3 +90,93 @@ def test_no_rank_record_claims_pre_registration_it_cannot_know(cli, csv_dataset,
 
     log = (run / "decisions.jsonl").read_text(encoding="utf-8")
     assert "before any embedding was computed" not in log
+
+
+def test_rereg_after_tampering_refuses(cli, csv_dataset, tmp_path):
+    """The full reproduction: register, embed, evaluate, rank — then rewrite the
+    weights and re-register, rather than only rewriting and ranking. A run whose
+    winner was already computed under the registered weighting must not be able to
+    launder a changed weighting back into the record through validate-plan.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    for candidate in ("a", "b"):
+        _embed(cli, run, candidate)
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+    first_rank = cli("rank", "--run-dir", run)
+    assert first_rank.code == 0
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["evaluation"]["weights"] = {"runtime_s": 1.0}
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 2
+    assert "amendment" in result.stderr.lower()
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert registered["evaluation"]["weights"] == {"trustworthiness": 1.0}
+    manifest = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    assert manifest["plan_digest"] == first_rank.payload["plan_digest"]
+    records = [json.loads(line) for line in
+               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len([r for r in records if r["stage"] == "register_plan"]) == 1
+
+    # And ranking still refuses, exactly as before the tampered re-registration
+    # attempt — the attempt changed nothing about what is on record.
+    second_rank = cli("rank", "--run-dir", run)
+    assert second_rank.code == 2
+
+
+def test_rereg_with_different_base_preprocessing_refuses(cli, csv_dataset, tmp_path):
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    plan = {
+        "dataset": "d",
+        "base_preprocessing": [{"op": "standardise", "params": {}}],
+        "candidates": [{"id": "a", "stages": PCA}],
+        "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "declared"},
+    }
+    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    cli("validate-plan", "--run-dir", runs / "r1")
+
+    plan["base_preprocessing"] = []
+    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    result = cli("validate-plan", "--run-dir", runs / "r1")
+
+    assert result.code == 2
+    assert "base preprocessing" in result.stderr
+
+
+def test_rereg_dropping_a_candidate_refuses(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})  # registers a, b
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"] = [c for c in plan["candidates"] if c["id"] != "b"]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 2
+    assert "'b'" in result.stderr
+
+
+def test_reregistering_an_identical_plan_stays_legal(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    result = cli("validate-plan", "--run-dir", run)
+    assert result.code == 0
+    records = [json.loads(line) for line in
+               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len([r for r in records if r["stage"] == "register_plan"]) == 2
+
+
+def test_adding_a_new_candidate_to_the_registration_stays_legal(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"].append({"id": "c", "stages": PCA})
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 0
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert sorted(c["id"] for c in registered["candidates"]) == ["a", "b", "c"]
