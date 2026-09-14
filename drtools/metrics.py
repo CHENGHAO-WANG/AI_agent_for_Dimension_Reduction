@@ -22,6 +22,7 @@ a ceiling exists, it is computed on the reference representation and reported al
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,7 +37,24 @@ from drtools.contract import Matrix
 # Quadratic metrics are capped, since trustworthiness on a hundred thousand points is
 # its own analysis project. The cap is recorded with the results.
 METRIC_SAMPLE_CAP = 2000
-DEFAULT_K = 15
+
+#: Largest neighbourhood the battery ever uses.
+MAX_K = 15
+
+#: Below this many rows the local metrics are reported as unavailable rather than
+#: computed. The rule would still satisfy scikit-learn here, but trustworthiness over
+#: one or two neighbours is noise, and `rank` would weight it at face value.
+LOCAL_METRIC_FLOOR = 20
+
+
+def neighbourhood_size(n: int) -> int:
+    """The battery's neighbourhood, chosen by rule rather than by the agent.
+
+    scikit-learn requires `k < n / 2` for trustworthiness. The published rule is the
+    largest k that satisfies it, capped at MAX_K: n=30 gives 14 against a limit of
+    15.0, n=31 gives 15 against 15.5.
+    """
+    return max(1, min(MAX_K, math.ceil(n / 2) - 1))
 
 
 @dataclass(frozen=True)
@@ -139,7 +157,6 @@ def evaluate_embedding(
     embedding: np.ndarray,
     labels: np.ndarray | None = None,
     *,
-    k: int = DEFAULT_K,
     seed: int = 0,
     max_samples: int = METRIC_SAMPLE_CAP,
     runtime_s: float | None = None,
@@ -169,29 +186,43 @@ def evaluate_embedding(
     reference, embedding = reference[index], embedding[index]
     labels = None if labels is None else np.asarray(labels)[index]
     n_used = reference.shape[0]
-
-    k = int(min(k, max(2, n_used - 1)))
+    k = neighbourhood_size(n_used)
     values: dict[str, float | None] = {}
 
-    values["trustworthiness"] = float(
-        trustworthiness(reference, embedding, n_neighbors=k)
-    )
-    # Continuity is trustworthiness with the two spaces exchanged: intrusions in one
-    # direction are extrusions in the other.
-    values["continuity"] = float(trustworthiness(embedding, reference, n_neighbors=k))
-    values["shepard_correlation"] = _shepard(reference, embedding)
+    if n_used < LOCAL_METRIC_FLOOR:
+        values["trustworthiness"] = None
+        values["continuity"] = None
+        values["shepard_correlation"] = None
+    else:
+        values["trustworthiness"] = float(
+            trustworthiness(reference, embedding, n_neighbors=k)
+        )
+        # Continuity is trustworthiness with the two spaces exchanged: intrusions in one
+        # direction are extrusions in the other.
+        values["continuity"] = float(
+            trustworthiness(embedding, reference, n_neighbors=k)
+        )
+        values["shepard_correlation"] = _shepard(reference, embedding)
 
     reference_values: dict[str, float | None] = {}
-    if labels is not None and np.unique(labels).size > 1:
+    n_classes = 0 if labels is None else int(np.unique(labels).size)
+
+    # scikit-learn wants 1 < n_classes < n_used for silhouette, which is a separate
+    # constraint from the neighbourhood: n=4 with 4 classes raises whatever k is.
+    if labels is not None and 1 < n_classes < n_used:
+        values["silhouette"] = float(silhouette_score(embedding, labels))
+        reference_values["silhouette"] = float(silhouette_score(reference, labels))
+    else:
+        values["silhouette"] = None
+
+    # The kNN agreement needs k + 1 rows to have k neighbours besides the point itself.
+    if labels is not None and n_classes > 1 and k + 1 <= n_used:
         values["knn_label_preservation"] = _label_agreement(embedding, labels, k)
         reference_values["knn_label_preservation"] = _label_agreement(
             reference, labels, k
         )
-        values["silhouette"] = float(silhouette_score(embedding, labels))
-        reference_values["silhouette"] = float(silhouette_score(reference, labels))
     else:
         values["knn_label_preservation"] = None
-        values["silhouette"] = None
 
     values["runtime_s"] = runtime_s
 
@@ -203,6 +234,7 @@ def evaluate_embedding(
         "n_total": int(n_total),
         "subsampled": bool(n_used < n_total),
         "seed": seed,
+        "settings": {"k": k, "max_samples": max_samples, "seed": seed},
         "notes": _notes(values, reference_values, n_used, n_total),
     }
 

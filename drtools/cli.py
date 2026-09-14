@@ -432,7 +432,6 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
         reference,
         embedding,
         labels,
-        k=args.k,
         seed=run_seed(run, args.seed),
         max_samples=args.max_samples,
         runtime_s=candidate.get("total_duration_s"),

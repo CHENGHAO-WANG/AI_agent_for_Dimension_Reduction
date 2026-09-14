@@ -49,7 +49,7 @@ def test_a_faithful_embedding_scores_well_on_both_local_metrics(blobs) -> None:
     X, labels, _ = blobs
     embedding = run_pipeline(X, labels, [{"op": "pca", "params": {"n_components": 5}}]).embedding
 
-    metrics = evaluate_embedding(X, embedding, labels, k=10)
+    metrics = evaluate_embedding(X, embedding, labels)
 
     assert metrics["values"]["trustworthiness"] > 0.9
     assert metrics["values"]["continuity"] > 0.9
@@ -61,7 +61,7 @@ def test_a_random_embedding_scores_badly(blobs) -> None:
     X, labels, _ = blobs
     noise = np.random.default_rng(0).standard_normal((X.shape[0], 2))
 
-    metrics = evaluate_embedding(X, noise, labels, k=10)
+    metrics = evaluate_embedding(X, noise, labels)
 
     assert metrics["values"]["trustworthiness"] < 0.7
     assert abs(metrics["values"]["shepard_correlation"]) < 0.2
@@ -81,7 +81,7 @@ def test_label_metrics_report_the_reference_value_as_context(blobs) -> None:
     X, labels, _ = blobs
     embedding = run_pipeline(X, labels, [{"op": "pca", "params": {"n_components": 2}}]).embedding
 
-    metrics = evaluate_embedding(X, embedding, labels, k=10)
+    metrics = evaluate_embedding(X, embedding, labels)
 
     assert metrics["reference_values"]["knn_label_preservation"] is not None
     assert metrics["reference_values"]["silhouette"] is not None
@@ -91,7 +91,7 @@ def test_unlabelled_data_leaves_the_supervised_metrics_absent_not_zero(blobs) ->
     X, _, _ = blobs
     embedding = np.asarray(X)[:, :2]
 
-    metrics = evaluate_embedding(X, embedding, None, k=10)
+    metrics = evaluate_embedding(X, embedding, None)
 
     assert metrics["values"]["knn_label_preservation"] is None
     assert metrics["values"]["silhouette"] is None
@@ -102,7 +102,7 @@ def test_metrics_work_on_a_sparse_reference_without_densifying_it() -> None:
     dense = (rng.random((200, 60)) < 0.2) * rng.random((200, 60))
     X = sp.csr_array(dense.astype(np.float64))
 
-    metrics = evaluate_embedding(X, np.asarray(dense[:, :2]), None, k=8)
+    metrics = evaluate_embedding(X, np.asarray(dense[:, :2]), None)
 
     assert 0.0 <= metrics["values"]["trustworthiness"] <= 1.0
 
