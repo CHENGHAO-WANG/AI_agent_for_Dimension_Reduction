@@ -750,3 +750,61 @@ day 14.
   exist. Also rejected: treating 2.3 as a defect — the overstatement is in the notes, and
   the fix is to describe the mechanism accurately rather than to build something larger
   than the deadline allows.
+
+- **Day 7** — The three contracts, and what it took to make them hold.
+
+  Days 5 and 6 left three guarantees the design claims and the code did not enforce.
+  All three are now enforced, and each was verified by re-running the reproduction that
+  found it rather than by trusting a passing suite. The suite went from 178 to 272.
+
+  *Dataset identity.* `ensure_cache` verified instead of trusting, and `profile`, `recon`
+  and `embed` stopped reloading the source when the run already holds a cache. Identity is
+  a content digest of the matrix and label codes. Sparse input is canonicalised first, and
+  `indices`/`indptr` are hashed at fixed width — measured here, one matrix built with
+  unsorted indices, with a stored zero, or with int64 rather than int32 indices gives three
+  different digests, and index width is storage, not data. Storage *kind* does stay part of
+  identity: normalising sparse against dense would mean densifying to hash, 707 MB for
+  pbmc3k, which defeats the representation the cache exists to preserve.
+
+  *Pre-registration.* `validate-plan` is the registration event; `rank` reads the frozen
+  copy. The false rationale that asserted "weights were declared in the plan before any
+  embedding was computed" is deleted — it was a fallback string the toolbox emitted while
+  the guarantee was being broken. Two bypasses were found only by attacking the fix. Running
+  `validate-plan` a second time re-registered unconditionally, so the whole contract fell to
+  one extra command; and copying `plan.json` over `plan.registered.json` satisfied the
+  digest check, which the refusal message had all but suggested by saying "restore the
+  registered plan". The freeze now refuses weight changes, base-preprocessing changes and
+  candidate removal, and `rank` cross-checks the registration against the last
+  `register_plan` record in the decision log. The log is append-only and predates every
+  embedding, so it is the authority and the file is not.
+
+  *Comparability.* The neighbourhood is chosen by published rule from the Reference's row
+  count, `k = max(1, min(15, ceil(n/2) - 1))`, which holds against scikit-learn for every
+  n >= 3 with the boundary tight at 30 and 31. `--k` and `--max-samples` are gone from
+  `evaluate`; `k` is a required argument of the battery with no default, because an optional
+  override leaves the incomparability available to the next caller. A candidate that
+  subsampled below what the registered k can support is refused, naming the subsample,
+  rather than quietly scored at a smaller k.
+
+  The retry loop survives all of this, which was the constraint that shaped the freeze.
+  A candidate that failed, timed out or crashed can still be diagnosed, revised,
+  re-registered and re-run; one that succeeded is frozen and must be re-registered under a
+  new id. Invalidation happens before every attempt rather than only when stages change,
+  because the commonest retry is the same stages with a bigger budget — reproduced, that
+  left a timed-out candidate ranked on the scores of the run before it.
+
+  Rejected: warning instead of refusing, which would have put a caveat in the report where
+  a guarantee belongs. Rejected: implementing Amendment now — it stays a defined term with
+  no mechanism, and every refusal that would need one says so plainly.
+
+  Two things worth recording because they were only caught late. Five of the nine tasks
+  had a fix that reintroduced the class of defect it was closing, which is why every task
+  got an independent review. And the mixed-k hole survived all nine of those reviews: the
+  reference recorded `settings.k`, `evaluate` read it, and nothing passed it on. Each task
+  matched its own brief, so only the whole-branch review could see it. The plan contained
+  the hole, not the implementations.
+
+  Day 9 inherits: `rank`'s status check reads the artefact rather than the decision log,
+  `prepare-reference` has no freeze, `write_cache` converts twice, `_invalidate_candidate`
+  globs an unsanitised candidate id on a delete path, and `recon` still carries its own
+  `--k` so the agent can still tune the evidence that justifies its own plan.
