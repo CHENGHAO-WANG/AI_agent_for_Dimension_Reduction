@@ -301,7 +301,7 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 4 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
 | 5 | Metrics battery, rank, pre-registered weighting, plan validator |
 | 6 | CONTEXT.md; viz house style, size-adaptive rendering |
-| 7 | The five skills, /analyze, decisions.jsonl |
+| 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol; then the five skills, /analyze, decisions.jsonl |
 | 8 | Report template + pandoc render; first end-to-end run, dataset 1 |
 | 9 | Fix what day 8 broke; clean run on dataset 1 |
 | 10 | End-to-end on dataset 2 (large) |
@@ -630,3 +630,123 @@ day 14.
 
 - **Day 6** — Candidate panels are ordered by rank rather than by name. Alphabetical
   order put the winner wherever its id happened to fall.
+
+- **Day 6** — An external review of everything written so far, and the decision to fix
+  it on day 9 rather than now.
+
+  The whole tree was put through Codex's reviewer as a single diff against the root
+  commit — 43 files, 9,290 lines, the only excluded file being `LICENSE`. It returned
+  nine defects. All nine are real: six reproduce as outright failures, and I confirmed
+  the other three by reading. None of them is missing work. There are no stubs and no
+  `TODO`s in `drtools/`, and the 178 tests pass; every defect sits in a finished path
+  the tests do not exercise.
+
+  The useful split is not by severity but by whether the thing *announces itself*.
+
+  *Four crash.* Small-dataset evaluation raises rather than scoring, because the
+  neighbour clamp allows `k` up to `n-1` while `trustworthiness` demands `k < n/2` —
+  the default `k=15` fails for every dataset of 30 rows or fewer. A sparse reference
+  saved with `--stages '[]'` writes a scalar object array that cannot be loaded back.
+  Candidate indices are applied to a reference that base preprocessing already
+  subsampled. The comparison figure hands the first candidate's labels to every panel.
+  These four would have surfaced on day 8 anyway, which is what day 8 is for.
+
+  *Four are silent, and they are the reason this was worth running.* When the base
+  subsample happens to be large enough to contain every candidate index, the reference
+  is subset by the wrong rows with no error at all. Equally sized candidates drawn from
+  different samples receive each other's labels. A reused candidate id deletes only its
+  outcome JSON, so `rank` — which prefers a metrics file over a failure record — can
+  rank a failed retry on the previous run's numbers. A CSV with missing labels
+  factorizes to `-1`, passes the integer-label contract, and is plotted as the last
+  named class. Day 9 fixes what day 8 *broke*; none of these break anything visibly, so
+  they would have travelled intact into the day 14 graded runs.
+
+  *One is deployment-only.* `registry.yaml` is not in the built wheel — package
+  discovery finds the modules and nothing includes the data file — so `load_registry()`
+  raises outside a source checkout. Invisible here because the venv is editable.
+
+  Deferred to day 9 rather than fixed on the spot. Day 9 already exists for exactly this
+  and the fixes want the end-to-end run of day 8 to check them against; fixing blind
+  today would mean touching the same paths twice. What changes is day 9's brief: it was
+  "fix what day 8 broke", and it is now that plus a list that day 8 will not produce on
+  its own. The four silent ones need regression tests, not just repairs — each was
+  invisible precisely because nothing asserted on it.
+
+  Rejected: running the fixes now. Also rejected: treating the clean test suite as
+  evidence of health. 178 passing tests coexisted with nine real defects, because the
+  tests exercise each unit on the shapes it expects and none of these defects live
+  there — they live where two components disagree about what a row index means.
+
+- **Day 6** — The four commitments of section 2, attacked deliberately, and what survived.
+
+  The defect review above answers "is the code right". It cannot answer "is the design
+  right", so the same tree went through a second, adversarial pass aimed squarely at
+  2.1–2.4 — while they are still cheap to change. Days 7 and 8 turn this CLI surface
+  into five skills and a report template; after that, a contract change is a rewrite of
+  everything built on it. The verdict was *needs-attention*, on all four commitments.
+  I verified every finding, and reproduced two as live failures.
+
+  **2.4 pre-registration is not currently enforced, and the log says otherwise.** This is
+  the serious one. Nothing marks the moment a plan becomes registered: `embed` takes
+  `--stages` directly without reference to a plan, and `rank` reads whatever
+  `plan.json` holds at the instant it runs. I edited the weights *after* the metrics
+  existed and re-ranked: the winner flipped from `tsne2` to `pca2`, no amendment was
+  written, nothing warned. The decision record for that rank reads *"weights were
+  declared in the plan before any embedding was computed"* — the fallback rationale at
+  `cli.py:462`, asserting as fact the exact guarantee it had just broken. The
+  hallucination-control mechanism is presently emitting the falsehood itself. Chronology
+  cannot be inferred from a file existing; it needs a registration event the toolbox owns.
+
+  **And fixing the weights would not be enough.** `EvaluationSpec` carries `weights` and
+  `justification` under `extra="forbid"`, so the schema cannot express `k`, the seed, or
+  the sample cap — while `evaluate` accepts `--k` and `--max-samples` as free flags. I
+  scored one candidate at k=5 and another at k=30 and ranked them together; the ranking
+  mentions no protocol, no comparability, no caveat. Freezing the weights while leaving
+  the measurement adjustable freezes the wrong half. What has to be pre-registered is the
+  whole evaluation protocol, not the weighting of it.
+
+  **2.1's escape hatch is wider than one loader.** A CSV with a missing measurement makes
+  three of our own files mutually unsatisfiable: the table loader refuses to impute
+  ("a preprocessing decision for the agent to make explicitly"), the contract demands
+  missingness be "resolved or explicitly encoded by the loader", and the registry has
+  eighteen ops and no imputation among them. The only path left open is an adapter
+  quietly doing it, after which audited metrics treat fabricated zeros as observations.
+  `nan_to_num` passes the contract with nothing recorded; `meta` requires only `name` and
+  `source`, so there is nowhere for provenance to live. The contract also accepts
+  `labels[::-1]` — equal length is not alignment. Loading is not the only place an unseen
+  dataset bites, and imputation is the counter-example that proves it.
+
+  **2.2 holds files, not identities.** Re-running `profile` in an existing run after an
+  adapter repair writes a profile of the new matrix while `ensure_cache` keeps the old
+  one: measured at 4 features in `profile.json` against 8 in the cache. Planning reads
+  the profile, execution reads the cache, and the run id says they agree. Same root cause
+  as the `ensure_cache` defect above, but the blast radius is the planning input rather
+  than one command. A shared directory is not a shared dataset without an identity
+  covering matrix, labels, adapter and options.
+
+  **2.3 was overstated rather than wrong.** No evidence resolver exists yet and the
+  report generator is day 8, so nothing here is broken code. But the claim that citation
+  pinning means the agent "structurally cannot claim a decision it did not make" is more
+  than key validation can carry. A real key with a false reading passes — silhouette 0.7
+  *is* 0.7, and "confirms distinct biological cell types" is not thereby supported — and
+  `log_decision` validates nothing, so `chosen` is bound to no executed outcome. The
+  mechanism buys citation integrity. That is worth having and worth claiming; it is not
+  proof of a rationale, and the report should not imply it is. The rank falsehood above
+  is this gap already occurring.
+
+  What survives intact: file-based state and deterministic scoring over a declared
+  weighting are sound, and picking weights after fixed profile and recon probes is
+  legitimate exploratory planning. The problem is never that the agent chooses; it is
+  that nothing currently stops it choosing twice.
+
+  **Day 7 is therefore contract work first, skills second.** Ingestion identity, a
+  registration transition, and a registered evaluation protocol. Writing the skills
+  against contracts known to be broken would mean writing them twice, and every one of
+  these failures is silent — a grader who edits weights and re-ranks gets a system that
+  certifies its own pre-registration, and the run looks clean. The schedule cost is real
+  and lands on the cut list: GPLVM goes first, as already agreed.
+
+  Rejected: carrying on to day 7 as scheduled and repairing contracts after the skills
+  exist. Also rejected: treating 2.3 as a defect — the overstatement is in the notes, and
+  the fix is to describe the mechanism accurately rather than to build something larger
+  than the deadline allows.
