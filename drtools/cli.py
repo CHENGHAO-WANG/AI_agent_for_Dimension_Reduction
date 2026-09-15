@@ -37,6 +37,7 @@ from drtools.recon import reconnaissance
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import RunDir
+from drtools.status import run_status
 from drtools.viz import (
     figure_class_facet,
     figure_comparison,
@@ -104,6 +105,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "datasets", help="list the dataset specs that load without an adapter"
     )
     datasets.set_defaults(handler=_cmd_datasets)
+
+    status = subparsers.add_parser(
+        "status", help="where this run stands: what has run, what is outstanding"
+    )
+    _add_run_arguments(status)
+    status.set_defaults(handler=_cmd_status)
 
     profile = subparsers.add_parser(
         "profile", help="measure a dataset and state what the measurements imply"
@@ -265,6 +272,11 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
     return available()
+
+
+def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
+    """Read-only, so the agent may ask as often as it likes."""
+    return run_status(_require_run(args))
 
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
