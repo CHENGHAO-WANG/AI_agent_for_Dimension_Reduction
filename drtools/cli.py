@@ -276,7 +276,7 @@ def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
 
 def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     """Read-only, so the agent may ask as often as it likes."""
-    return run_status(_require_run(args))
+    return run_status(_require_run(args, create=False))
 
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
@@ -1008,14 +1008,19 @@ def _winner(run: RunDir) -> str | None:
 # ----------------------------------------------------------------------- helpers
 
 
-def _require_run(args: argparse.Namespace) -> RunDir:
-    """The run a command must be given, rather than one it may create."""
+def _require_run(args: argparse.Namespace, *, create: bool = True) -> RunDir:
+    """The run a command must be given, rather than one it may create.
+
+    `create=False` is for commands that only report: constructing a RunDir otherwise
+    makes the run's subdirectories, which is a side effect a read-only command has no
+    business having.
+    """
     if not args.run_dir:
         raise ContractError("--run-dir is required: this command reads an existing run.")
     path = Path(args.run_dir)
     if not path.exists():
         raise ContractError(f"no run at {path}.")
-    return RunDir(path)
+    return RunDir(path, create=create)
 
 
 def _reference_for(run: RunDir, candidate_id: str):
