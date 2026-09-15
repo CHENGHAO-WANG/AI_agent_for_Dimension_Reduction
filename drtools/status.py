@@ -66,12 +66,39 @@ def run_status(run: RunDir) -> dict[str, Any]:
         "reconnoitred": run.recon_path.exists(),
         "registered": registered,
         "reference_prepared": (run.path / "data" / "reference.json").exists(),
-        "ranked": (run.path / "ranking.json").exists(),
+        "ranked": _ranked(run, decisions),
         "replan_round_spent": _replan_spent(decisions),
         "candidates": candidates,
     }
     state["next"] = _next_stage(state)
     return state
+
+
+def _ranked(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
+    """Whether a *current* ranking exists — the artefact, and no registration since.
+
+    The file alone is not enough. `_invalidate_candidate` clears a candidate's own
+    embedding and metrics before every attempt, but nothing clears `ranking.json`, so
+    a re-plan round that adds a candidate leaves the previous ranking sitting there.
+    Reading the file's existence would then report the run as finished once the added
+    candidate had metrics, skipping the re-rank that is the whole point of having
+    added it.
+
+    Position in the append-only log settles it: a ranking computed before the latest
+    registration was computed over a different portfolio.
+    """
+    if not (run.path / "ranking.json").exists():
+        return False
+    stages = [record.get("stage") for record in decisions]
+    if "rank" not in stages:
+        return False
+    if "register_plan" not in stages:
+        return True
+    return _last_index(stages, "rank") > _last_index(stages, "register_plan")
+
+
+def _last_index(stages: list[Any], stage: str) -> int:
+    return len(stages) - 1 - stages[::-1].index(stage)
 
 
 def _replan_spent(decisions: list[dict[str, Any]]) -> bool:

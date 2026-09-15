@@ -50,8 +50,18 @@ def _slug(text: str) -> str:
 class RunDir:
     """A single analysis run, addressed by its directory."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, create: bool = True) -> None:
+        """Open a run, creating its subdirectories unless asked not to.
+
+        Creating on construction is right for a command about to write one. It is
+        wrong for a read-only command: pointing `status` at a directory that is not a
+        run would otherwise scatter empty `embeddings/`, `metrics/` and `figures/`
+        into it, so a command that only reports would quietly modify what it reported
+        on.
+        """
         self.path = Path(path)
+        if not create:
+            return
         self.path.mkdir(parents=True, exist_ok=True)
         for child in ("embeddings", "metrics", "figures"):
             (self.path / child).mkdir(exist_ok=True)
