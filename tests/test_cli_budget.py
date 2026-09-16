@@ -124,3 +124,45 @@ def test_an_unchanged_budget_still_re_registers(cli, csv_dataset, tmp_path):
     re-registration."""
     run = _registered(cli, csv_dataset, tmp_path, budget="fast")
     assert cli("validate-plan", "--run-dir", run).code == 0
+
+
+def test_in_process_is_refused_without_the_developer_gate(
+    cli, csv_dataset, tmp_path, monkeypatch
+):
+    """No wall-clock cap can bind an in-process run, so a skill may not reach it.
+
+    The flag exists for the test harness, which is fast because it skips process
+    spawning. Prose telling the agent not to use it is not enforcement — the lesson
+    day 7 paid for — and this is the one route by which a registered budget could be
+    ignored entirely.
+    """
+    monkeypatch.delenv("DRTOOLS_ALLOW_IN_PROCESS", raising=False)
+    run = _registered(cli, csv_dataset, tmp_path, budget="fast")
+
+    result = cli("embed", "--run-dir", run, "--id", "pca2", "--in-process")
+
+    assert result.code == 2
+    assert "DRTOOLS_ALLOW_IN_PROCESS" in result.stderr
+    assert "isolated process" in result.stderr
+
+
+def test_the_isolated_route_needs_no_gate(cli, csv_dataset, tmp_path, monkeypatch):
+    """The gate must bound the bypass, not the ordinary path."""
+    monkeypatch.delenv("DRTOOLS_ALLOW_IN_PROCESS", raising=False)
+    run = _registered(cli, csv_dataset, tmp_path, budget="fast")
+
+    result = cli("embed", "--run-dir", run, "--id", "pca2")
+
+    assert result.code == 0, result.stderr
+    assert result.payload["status"] == "ok"
+
+
+def test_a_gated_refusal_does_not_count_as_an_attempt(
+    cli, csv_dataset, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("DRTOOLS_ALLOW_IN_PROCESS", raising=False)
+    run = _registered(cli, csv_dataset, tmp_path, budget="fast")
+
+    cli("embed", "--run-dir", run, "--id", "pca2", "--in-process")
+
+    assert cli("status", "--run-dir", run).payload["candidates"]["pca2"]["attempts"] == 0
