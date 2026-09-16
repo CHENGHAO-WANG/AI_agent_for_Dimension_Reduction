@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -170,8 +171,9 @@ def _build_parser() -> argparse.ArgumentParser:
     embed.add_argument(
         "--in-process",
         action="store_true",
-        help="run in this process instead of an isolated one. Faster, but a method that "
-        "exhausts memory takes the whole command down with it and leaves no record",
+        help="run in this process instead of an isolated one. Faster, but uncapped and "
+        "unrecorded if a method exhausts memory, so it is gated behind the "
+        "DRTOOLS_ALLOW_IN_PROCESS environment variable that the test harness sets",
     )
     embed.set_defaults(handler=_cmd_embed)
 
@@ -363,6 +365,15 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
 
     # Refused before anything is invalidated or attempted: a request the run cannot
     # honour must leave the run exactly as it found it.
+    if args.in_process and not os.environ.get("DRTOOLS_ALLOW_IN_PROCESS"):
+        raise ContractError(
+            "--in-process runs with no wall-clock cap, so no budget can bind it and a "
+            "method that exhausts memory takes the toolbox down with it, leaving no "
+            "record of the attempt. It exists for the test harness, which sets "
+            "DRTOOLS_ALLOW_IN_PROCESS. Drop the flag to run this candidate in an "
+            "isolated process under the budget this run registered."
+        )
+
     cap = budget_timeout(plan.budget)
     if args.timeout is not None and args.timeout > cap:
         raise ContractError(

@@ -50,3 +50,14 @@ def csv_dataset(tmp_path):
         return path
 
     return make
+
+
+@pytest.fixture(autouse=True)
+def allow_in_process(monkeypatch):
+    """The suite drives candidates in-process for speed; the agent may not.
+
+    Autouse rather than opt-in, because the flag is how nearly every CLI test avoids
+    spawning a subprocess per candidate. A test that wants to see the gate refuse
+    deletes the variable itself.
+    """
+    monkeypatch.setenv("DRTOOLS_ALLOW_IN_PROCESS", "1")
