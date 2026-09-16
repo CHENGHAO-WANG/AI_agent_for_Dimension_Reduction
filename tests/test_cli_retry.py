@@ -298,3 +298,80 @@ def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
     # Nothing left to execute: the one candidate is out of attempts and the reference
     # is prepared, so the run proceeds to evaluation rather than retrying forever.
     assert status["next"] == "evaluate"
+
+
+def test_an_in_process_failure_is_counted_as_an_attempt(cli, csv_dataset, tmp_path):
+    """A route that runs a candidate without recording one is a route that evades.
+
+    The in-process path let `run_pipeline` raise past the decision record, so the
+    attempt was never counted: repeating the same failing command bypassed the
+    two-attempt allowance while `status` reported no attempts at all.
+    """
+    run = _prepared(
+        cli,
+        csv_dataset,
+        tmp_path,
+        # 60 rows, so asking PCA for 80 components cannot be satisfied.
+        [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 80}}]}],
+    )
+    first = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    assert first.payload["status"] == "failed", first.stderr
+
+    status = cli("status", "--run-dir", run).payload
+    assert status["candidates"]["a"]["attempts"] == 1
+    assert status["candidates"]["a"]["outcome"] == "failed"
+    assert status["candidates"]["a"]["retry_available"] is True
+
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    third = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    assert third.code == 2
+    assert "two attempts" in third.stderr
+
+
+def test_revalidating_an_unchanged_plan_does_not_spend_the_replan_round(
+    cli, csv_dataset, tmp_path
+):
+    """Re-registering an identical plan is legal and appends a record either way.
+
+    Testing position alone would let merely revalidating after a ranking consume the
+    run's one opportunity to extend the portfolio, and mark a perfectly current
+    ranking stale.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("prepare-reference", "--run-dir", run)
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    cli("evaluate", "--run-dir", run, "--id", "a")
+    assert cli("rank", "--run-dir", run).code == 0
+
+    before = cli("status", "--run-dir", run).payload
+    assert before["ranked"] is True
+    assert before["replan_round_spent"] is False
+
+    # The same plan, registered again. Nothing about the portfolio changed.
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+    after = cli("status", "--run-dir", run).payload
+    assert after["replan_round_spent"] is False, "an identical re-registration is not a round"
+    assert after["ranked"] is True, "the ranking still describes this plan"
+    assert after["next"] == "report"
+
+
+def test_a_changed_registration_after_ranking_does_spend_the_round(
+    cli, csv_dataset, tmp_path
+):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("prepare-reference", "--run-dir", run)
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    cli("evaluate", "--run-dir", run, "--id", "a")
+    cli("rank", "--run-dir", run)
+
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"].append(
+        {"id": "b", "stages": [{"op": "pca", "params": {"n_components": 3}}]}
+    )
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+    after = cli("status", "--run-dir", run).payload
+    assert after["replan_round_spent"] is True
+    assert after["ranked"] is False

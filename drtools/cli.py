@@ -395,7 +395,28 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         # process, so by default it runs somewhere that can be killed.
         outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=args.timeout)
     else:
-        result = run_pipeline(X, labels, stages, seed=seed)
+        try:
+            result = run_pipeline(X, labels, stages, seed=seed)
+        except (ExecutionError, PipelineError) as error:
+            # An in-process failure has to become a record like any other. Letting it
+            # propagate skipped the decision below, so the attempt was never counted
+            # and the same failing command could be repeated past the two-attempt
+            # allowance while `status` still reported no attempts at all. The isolated
+            # path has always turned a failure into an outcome; this one now agrees.
+            outcome = {
+                "id": args.id,
+                "status": "failed",
+                "stages_requested": stages,
+                "failure": {
+                    "op": getattr(error, "op", None),
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            }
+            jsonio.write(run.path / "embeddings" / f"{args.id}.json", outcome)
+            _log_embed_outcome(run, args.id, candidate, plan, outcome)
+            return outcome
+
         embeddings = run.path / "embeddings"
         np.save(embeddings / f"{args.id}.npy", result.embedding)
         if result.labels is not None:
@@ -405,13 +426,26 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         outcome = {"id": args.id, "status": "ok", **result.as_dict()}
         jsonio.write(embeddings / f"{args.id}.json", outcome)
 
+    _log_embed_outcome(run, args.id, candidate, plan, outcome)
+    return outcome
+
+
+def _log_embed_outcome(
+    run: RunDir, candidate_id: str, candidate: Any, plan: Plan, outcome: dict[str, Any]
+) -> None:
+    """Record one attempt. Every path that runs a candidate ends here.
+
+    Shared rather than duplicated because the attempt count is derived from these
+    records: a route that runs a candidate without writing one is a route that does
+    not count, which is how the in-process path escaped the retry allowance.
+    """
     run.log_decision(
         stage="embed",
-        question=f"What did candidate {args.id} produce?",
-        chosen=args.id,
+        question=f"What did candidate {candidate_id} produce?",
+        chosen=candidate_id,
         rationale=candidate.rationale or "the candidate as registered",
         evidence=["plan.registered.candidates"],
-        candidate=args.id,
+        candidate=candidate_id,
         outcome=outcome.get("status"),
         # Recomputed from the registration rather than read off the manifest. The
         # manifest is rewritten by `profile`, so a re-profile after registering used to
@@ -420,7 +454,6 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         # registered; the manifest only ever held a copy of it.
         plan_digest=_plan_digest(plan.model_dump(mode="json")),
     )
-    return outcome
 
 
 def _recorded_outcome(run: RunDir, candidate_id: str) -> str | None:
