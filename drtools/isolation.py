@@ -25,6 +25,19 @@ from drtools.runs import RunDir
 DEFAULT_TIMEOUT_S = 600.0
 STDERR_TAIL_LINES = 8
 
+BUDGET_TIMEOUTS_S = {"fast": 120.0, "standard": 600.0, "thorough": 3600.0}
+"""Per-candidate wall-clock caps. `standard` keeps what the default has always been."""
+
+
+def budget_timeout(budget: str) -> float:
+    """The wall-clock one candidate may spend under this Budget.
+
+    The mapping lives here rather than in skill prose so that the Budget reaches the
+    command that spends it. A table in a skill would be a number the agent retypes,
+    and a number the agent retypes is a number the agent can get wrong.
+    """
+    return BUDGET_TIMEOUTS_S[budget]
+
 # Signals worth naming, because the remedy differs. A process killed by the OS for
 # memory needs a smaller problem; one that aborted needs a different method.
 KILLED_BY_MEMORY = {137, -9}
