@@ -309,6 +309,23 @@ RESERVED_DECISION_FIELDS = frozenset(
     }
 )
 
+LIFECYCLE_STAGES = frozenset(
+    {"recon", "embed", "rank", "validate_plan", "register_plan"}
+)
+"""Stages only the toolbox may write.
+
+The decision log is the authority the freeze anchors on: `rank` cross-checks
+registration against it, attempts are counted from it, and `status` derives the whole
+state machine from it. That holds only while these records are produced by the command
+that did the thing. A generic write route that could emit them would let a plan be
+"registered" without validation, an attempt be spent without running, or a ranking be
+claimed without scoring -- which is the pre-registration guarantee defeated by the
+mechanism built to record it.
+"""
+
+LIFECYCLE_FIELDS = frozenset({"plan_digest", "outcome", "weights", "candidates"})
+"""Fields the freeze reads off lifecycle records. Refused for the same reason."""
+
 
 def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
     """The agent's only route into the decision log.
@@ -342,6 +359,25 @@ def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
             "report to be generated from."
         )
 
+    stage = document["stage"]
+    if stage in LIFECYCLE_STAGES:
+        raise ContractError(
+            f"'{stage}' records are written by the command that performs that step, "
+            "and the freeze reads them as evidence it happened: registration, "
+            "attempts and ranking are all checked against this log. Recording one "
+            "here would assert something the run did not do. Use a stage of your own "
+            f"-- profile, plan, execute, evaluate -- and run `drtools {stage.replace('_', '-')}` "
+            "to produce the real record."
+        )
+
+    forbidden = sorted(LIFECYCLE_FIELDS & set(document))
+    if forbidden:
+        raise ContractError(
+            f"{', '.join(forbidden)} belong to the records the toolbox writes for "
+            "itself, and the freeze reads them to decide what this run has already "
+            "done. Describe the decision in `chosen` and `rationale` instead."
+        )
+
     evidence = list(document.get("evidence") or [])
     artifacts = _artifacts_for_evidence(run)
     resolved = resolve_evidence(evidence, artifacts)
@@ -355,7 +391,7 @@ def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
         if key not in RESERVED_DECISION_FIELDS
     }
     run.log_decision(
-        stage=document["stage"],
+        stage=stage,
         question=document["question"],
         chosen=document["chosen"],
         rationale=document["rationale"],

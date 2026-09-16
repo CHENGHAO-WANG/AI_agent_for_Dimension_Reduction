@@ -218,3 +218,78 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
     assert status["candidates"]["a"]["abandoned"] is True
     assert status["candidates"]["a"]["retry_available"] is False
     assert status["next"] == "evaluate", "the run proceeds with what it has"
+
+
+import pytest
+
+
+@pytest.mark.parametrize(
+    "stage", ["register_plan", "embed", "rank", "validate_plan", "recon"]
+)
+def test_lifecycle_stages_cannot_be_written_by_hand(cli, csv_dataset, tmp_path, stage):
+    """The freeze anchors on these records, so a generic route must not emit them.
+
+    `rank` cross-checks registration against the log, attempts are counted from it,
+    and status derives the whole state machine from it. A forged register_plan record
+    would let a plan be "registered" without ever being validated -- the
+    pre-registration guarantee defeated by the mechanism built to record it.
+    """
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+
+    result = cli(
+        "log-decision", "--run-dir", run,
+        "--json", _write(tmp_path, _decision(stage=stage, evidence=[])),
+    )
+
+    assert result.code == 2
+    assert stage in result.stderr
+    assert _lines(run) == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("plan_digest", "deadbeef"), ("outcome", "ok"), ("weights", {"t": 1.0}),
+     ("candidates", ["a", "b"])],
+)
+def test_lifecycle_fields_cannot_be_written_by_hand(
+    cli, csv_dataset, tmp_path, field, value
+):
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+
+    result = cli(
+        "log-decision", "--run-dir", run,
+        "--json", _write(tmp_path, _decision(evidence=[], **{field: value})),
+    )
+
+    assert result.code == 2
+    assert field in result.stderr
+    assert _lines(run) == []
+
+
+def test_a_forged_registration_cannot_satisfy_rank(cli, csv_dataset, tmp_path):
+    """The reproduction, end to end: the route must not be able to fake the freeze."""
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+
+    result = cli(
+        "log-decision", "--run-dir", run,
+        "--json", _write(tmp_path, {
+            "stage": "register_plan",
+            "question": "What will this run compare?",
+            "chosen": "registered 2 candidates",
+            "rationale": "asserting a registration that never happened",
+            "evidence": [],
+        }),
+    )
+
+    assert result.code == 2
+    assert not (run / "plan.registered.json").exists()
+    assert cli("status", "--run-dir", run).payload["registered"] is False
