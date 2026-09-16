@@ -872,6 +872,19 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     # the bad field rather than a pydantic traceback out of the validator's own
     # `model_validate`.
     plan = _plan_from(document, source)
+
+    # The freeze is checked before anything is written. A refusal that has already
+    # overwritten `plan_validation.json` has left the run describing a plan it never
+    # registered, which is the "refuse and write nothing" contract broken by the
+    # command that exists to enforce contracts.
+    registered_path = run.path / "plan.registered.json"
+    if registered_path.exists():
+        _check_reregistration(
+            run,
+            _plan_from(jsonio.read(registered_path), "plan.registered.json"),
+            plan,
+        )
+
     profile = run.read_artifact("profile.json")
     recon = (
         run.read_artifact("recon.json") if run.recon_path.exists() else None
@@ -903,11 +916,6 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     # something pre-registered to hold itself to. A run that already registered a
     # plan may register again — but not to move what was already fixed.
     registered = plan
-    registered_path = run.path / "plan.registered.json"
-    if registered_path.exists():
-        _check_reregistration(
-            run, _plan_from(jsonio.read(registered_path), "plan.registered.json"), registered
-        )
     digest = _plan_digest(registered.model_dump(mode="json"))
     jsonio.write(registered_path, registered.model_dump(mode="json"))
     run.update_manifest(plan_digest=digest)
