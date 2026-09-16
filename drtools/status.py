@@ -75,44 +75,58 @@ def run_status(run: RunDir) -> dict[str, Any]:
 
 
 def _ranked(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
-    """Whether a *current* ranking exists — the artefact, and no registration since.
+    """Whether a ranking exists *for the plan currently registered*.
 
     The file alone is not enough. `_invalidate_candidate` clears a candidate's own
     embedding and metrics before every attempt, but nothing clears `ranking.json`, so
     a re-plan round that adds a candidate leaves the previous ranking sitting there.
-    Reading the file's existence would then report the run as finished once the added
-    candidate had metrics, skipping the re-rank that is the whole point of having
-    added it.
+    Reading the file's existence would report the run finished once the added
+    candidate had metrics, skipping the re-rank that was the whole reason for adding
+    it.
 
-    Position in the append-only log settles it: a ranking computed before the latest
-    registration was computed over a different portfolio.
+    Position in the log is the wrong test, because re-registering an identical plan is
+    legal and appends a record. `rank` already stamps the ranking with the digest of
+    the plan it ranked, so ask the question directly: is this ranking the one this
+    plan would produce?
     """
-    if not (run.path / "ranking.json").exists():
+    ranking_path = run.path / "ranking.json"
+    if not ranking_path.exists():
         return False
-    stages = [record.get("stage") for record in decisions]
-    if "rank" not in stages:
-        return False
-    if "register_plan" not in stages:
+    registered = _registered_digests(decisions)
+    if not registered:
+        # A ranking with no registration recorded predates the freeze; nothing to
+        # compare it against, so take the artefact at its word.
         return True
-    return _last_index(stages, "rank") > _last_index(stages, "register_plan")
+    return jsonio.read(ranking_path).get("plan_digest") == registered[-1]
 
 
-def _last_index(stages: list[Any], stage: str) -> int:
-    return len(stages) - 1 - stages[::-1].index(stage)
+def _registered_digests(decisions: list[dict[str, Any]]) -> list[str | None]:
+    return [
+        record.get("plan_digest")
+        for record in decisions
+        if record.get("stage") == "register_plan"
+    ]
 
 
 def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
-    """A registration recorded after a ranking is the one re-plan round, spent.
+    """Whether the one post-evaluation round of plan changes has been used.
 
-    The log is append-only and ordered, so position is the whole test. Before any
-    ranking exists a re-registration is an ordinary diagnose-and-retry, not a round:
-    the round is defined by happening after results, which is what makes it bounded.
+    A *changed* registration recorded after a ranking is the round. Re-registering the
+    identical plan is not: `validate-plan` permits it and appends a record either way,
+    so a position-only test would let merely revalidating a plan consume the run's
+    single opportunity to extend the portfolio.
     """
     stages = [record.get("stage") for record in decisions]
     if "rank" not in stages:
         return False
     first_rank = stages.index("rank")
-    return "register_plan" in stages[first_rank + 1 :]
+
+    before = _registered_digests(decisions[:first_rank])
+    if not before:
+        return False
+    ranked_under = before[-1]
+    after = _registered_digests(decisions[first_rank + 1 :])
+    return any(digest != ranked_under for digest in after)
 
 
 def _next_stage(state: dict[str, Any]) -> str:
