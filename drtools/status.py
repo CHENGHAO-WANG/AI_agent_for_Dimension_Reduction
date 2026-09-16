@@ -143,24 +143,36 @@ def _registered_digests(decisions: list[dict[str, Any]]) -> list[str | None]:
 
 
 def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
-    """Whether the one post-evaluation round of plan changes has been used.
+    """Whether the one bounded round of extending the portfolio has been used.
 
-    A *changed* registration recorded after a ranking is the round. Re-registering the
-    identical plan is not: `validate-plan` permits it and appends a record either way,
-    so a position-only test would let merely revalidating a plan consume the run's
-    single opportunity to extend the portfolio.
+    The round is a registration that *adds* candidate ids once something has been
+    attempted. Three things have to be told apart, and each of the simpler tests gets
+    one of them wrong:
+
+    Re-registering an identical plan is not a round. `validate-plan` permits it and
+    appends a record either way, so counting registrations would let merely
+    revalidating consume the run's single opportunity.
+
+    Revising a candidate that failed is not a round either — it is the diagnose-and-
+    retry, and it changes the plan's digest. So a digest comparison would spend the
+    round on an ordinary retry. Only a grown set of ids is an extended portfolio.
+
+    And anchoring on a ranking, which an earlier version did, cannot work: ranking
+    needs metrics from a candidate that succeeded, so a run where everything failed
+    would never record one and would be offered the round forever.
     """
-    stages = [record.get("stage") for record in decisions]
-    if "rank" not in stages:
-        return False
-    first_rank = stages.index("rank")
-
-    before = _registered_digests(decisions[:first_rank])
-    if not before:
-        return False
-    ranked_under = before[-1]
-    after = _registered_digests(decisions[first_rank + 1 :])
-    return any(digest != ranked_under for digest in after)
+    attempted = False
+    previous_ids: set[str] | None = None
+    for record in decisions:
+        stage = record.get("stage")
+        if stage == "embed":
+            attempted = True
+        elif stage == "register_plan":
+            ids = set(record.get("candidates") or [])
+            if attempted and previous_ids is not None and ids > previous_ids:
+                return True
+            previous_ids = ids
+    return False
 
 
 def _next_stage(state: dict[str, Any]) -> str:

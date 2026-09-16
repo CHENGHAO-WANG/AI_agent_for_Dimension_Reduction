@@ -237,3 +237,68 @@ def test_a_refused_re_registration_writes_nothing(cli, csv_dataset, tmp_path):
 
     assert validation.read_text(encoding="utf-8") == '{"sentinel": true}'
     assert (run / "decisions.jsonl").read_text(encoding="utf-8") == log_before
+
+
+def test_an_all_failed_run_does_not_offer_the_replan_round_forever(
+    cli, csv_dataset, tmp_path
+):
+    """Ranking needs a candidate that succeeded, so an all-failed run never records
+    one. Anchoring the round on a ranking left such a run offered `plan` for ever."""
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
+    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+
+    assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
+    cli("prepare-reference", "--run-dir", run)
+    _mark(run, "a", "failed")
+    _mark(run, "a", "failed")
+    assert cli("status", "--run-dir", run).payload["next"] == "plan"
+
+    # The round: one added candidate. It fails too.
+    assert _register(cli, run, [{"id": "a", "stages": pca2}, {"id": "b", "stages": pca3}]).code == 0
+    _mark(run, "b", "failed")
+    _mark(run, "b", "failed")
+
+    status = cli("status", "--run-dir", run).payload
+    assert status["replan_round_spent"] is True
+    assert status["next"] == "report", "the round is spent; every candidate failing is a finding"
+
+
+def test_revising_a_failed_candidate_does_not_spend_the_replan_round(
+    cli, csv_dataset, tmp_path
+):
+    """A retry changes the plan's digest without extending the portfolio.
+
+    A digest comparison would spend the round on the ordinary diagnose-and-retry,
+    which is the opposite of what the round is for.
+    """
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}]).code == 0
+    _mark(run, "a", "failed")
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 3}}]}]).code == 0
+
+    assert cli("status", "--run-dir", run).payload["replan_round_spent"] is False
+
+
+def test_adding_a_candidate_before_anything_ran_is_not_the_round(
+    cli, csv_dataset, tmp_path
+):
+    """Planning iteration before execution is not the post-results round."""
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
+    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+
+    assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
+    assert _register(cli, run, [{"id": "a", "stages": pca2}, {"id": "b", "stages": pca3}]).code == 0
+
+    assert cli("status", "--run-dir", run).payload["replan_round_spent"] is False
