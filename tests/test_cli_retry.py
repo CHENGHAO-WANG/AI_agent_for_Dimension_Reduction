@@ -39,6 +39,27 @@ def _append_embed_decision(run, candidate_id, outcome):
         }) + "\n")
 
 
+def _rewrite_last_embed_outcome(run, candidate_id, outcome):
+    """Restate how the last attempt at this candidate ended, without adding one.
+
+    Appending a second record would leave the run reading as two attempts, which is
+    the whole allowance, so a test wanting the state after *one* unsuccessful attempt
+    has to edit rather than append. That state is real: a candidate can write its
+    artefacts and then time out.
+    """
+    path = run / "decisions.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for record in reversed(records):
+        if record.get("stage") == "embed" and record.get("candidate") == candidate_id:
+            record["outcome"] = outcome
+            break
+    else:  # pragma: no cover - a test that reaches this has mis-set up
+        raise AssertionError(f"no embed record for {candidate_id}")
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+
 def _prepared(cli, csv_dataset, tmp_path, candidates):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
@@ -98,12 +119,13 @@ def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_pat
     plan["candidates"][0]["stages"] = PCA
     (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     # a succeeded, so revising it is refused; a failed attempt is the retry path. The
-    # freeze reads the decision log, so the retry needs a decision recorded, not just
-    # the artefact file rewritten.
+    # freeze reads the decision log, so the retry needs the recorded outcome changed,
+    # not just the artefact file rewritten — and changed rather than added to, or the
+    # run reads as two attempts and the retry allowance is already spent.
     record = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
     record["status"] = "failed"
     (run / "embeddings" / "a.json").write_text(json.dumps(record), encoding="utf-8")
-    _append_embed_decision(run, "a", "failed")
+    _rewrite_last_embed_outcome(run, "a", "failed")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("embed", "--run-dir", run, "--id", "a", "--in-process").code == 0
@@ -120,7 +142,7 @@ def test_any_unsuccessful_outcome_may_be_revised(cli, csv_dataset, tmp_path, out
     record = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
     record["status"] = outcome
     (run / "embeddings" / "a.json").write_text(json.dumps(record), encoding="utf-8")
-    _append_embed_decision(run, "a", outcome)
+    _rewrite_last_embed_outcome(run, "a", outcome)
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
@@ -209,3 +231,70 @@ def test_a_refused_embed_appends_no_decision_lines(cli, csv_dataset, tmp_path):
     result = cli("embed", "--run-dir", unregistered, "--id", "a", "--in-process")
     assert result.code == 2
     assert _decision_lines(unregistered) == before_unregistered
+
+
+def test_a_third_attempt_on_one_candidate_is_refused(cli, csv_dataset, tmp_path):
+    """One run plus one diagnose-and-retry is the whole allowance.
+
+    Nothing counted attempts before this. `_check_reregistration` permits revising a
+    candidate that failed any number of times, so a revise-and-retry loop could spend
+    unbounded compute while the design claimed a single retry.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    _append_embed_decision(run, "a", "failed")
+    _append_embed_decision(run, "a", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    assert result.code == 2
+    assert "two attempts" in result.stderr
+    assert "new candidate id" in result.stderr
+
+
+def test_a_second_attempt_is_still_allowed(cli, csv_dataset, tmp_path):
+    """The refusal must bite on the third try, not the second.
+
+    Day 7's lesson was that five of nine fixes reintroduced the class of defect they
+    closed. An off-by-one here would remove the retry entirely rather than bound it.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    _append_embed_decision(run, "a", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    assert result.code == 0, result.stderr
+
+
+def test_an_interrupted_run_still_offers_the_retry(cli, csv_dataset, tmp_path):
+    """A failed candidate has an Outcome, so "lacks an Outcome" would skip it.
+
+    The failure must become permanent because the diagnosis was exhausted, never
+    because the process died between the attempt and the retry.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    _append_embed_decision(run, "a", "failed")
+
+    status = cli("status", "--run-dir", run).payload
+
+    assert status["candidates"]["a"]["outcome"] == "failed"
+    assert status["candidates"]["a"]["attempts"] == 1
+    assert status["candidates"]["a"]["retry_available"] is True
+    assert status["next"] == "execute"
+
+
+def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
+    cli, csv_dataset, tmp_path
+):
+    """Once the allowance is spent the run moves on rather than stalling on it."""
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("prepare-reference", "--run-dir", run)
+    _append_embed_decision(run, "a", "failed")
+    _append_embed_decision(run, "a", "failed")
+
+    status = cli("status", "--run-dir", run).payload
+
+    assert status["candidates"]["a"]["attempts"] == 2
+    assert status["candidates"]["a"]["retry_available"] is False
+    # Nothing left to execute: the one candidate is out of attempts and the reference
+    # is prepared, so the run proceeds to evaluation rather than retrying forever.
+    assert status["next"] == "evaluate"
