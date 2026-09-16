@@ -27,7 +27,7 @@ from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
 from drtools.heuristics import suggest
-from drtools.isolation import run_candidate
+from drtools.isolation import budget_timeout, run_candidate
 from drtools.loaders import available, load
 from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
 from drtools.pipeline import PipelineError, run_pipeline
@@ -162,9 +162,10 @@ def _build_parser() -> argparse.ArgumentParser:
     embed.add_argument(
         "--timeout",
         type=float,
-        default=600.0,
-        help="wall-clock cap in seconds; the candidate is stopped and recorded as a "
-        "timeout rather than left running",
+        default=None,
+        help="wall-clock cap in seconds, defaulting to the registered plan's budget. "
+        "A value above that budget's cap is refused: a budget that can be exceeded on "
+        "request is not a resource the run was planned under",
     )
     embed.add_argument(
         "--in-process",
@@ -360,6 +361,18 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     run, X, labels, _ = _resolve_run(args)
     plan = _registered_plan(run)
 
+    # Refused before anything is invalidated or attempted: a request the run cannot
+    # honour must leave the run exactly as it found it.
+    cap = budget_timeout(plan.budget)
+    if args.timeout is not None and args.timeout > cap:
+        raise ContractError(
+            f"this run registered the {plan.budget} budget, which caps a candidate at "
+            f"{cap:g}s, and {args.timeout:g}s was requested. Lower the timeout, or "
+            "start a new run under a larger budget: the budget is frozen at "
+            "registration because every candidate was planned and rejected under it."
+        )
+    timeout_s = cap if args.timeout is None else args.timeout
+
     candidate = next((c for c in plan.candidates if c.id == args.id), None)
     if candidate is None:
         registered = ", ".join(c.id for c in plan.candidates)
@@ -393,7 +406,7 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
         # process, so by default it runs somewhere that can be killed.
-        outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=args.timeout)
+        outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=timeout_s)
     else:
         try:
             result = run_pipeline(X, labels, stages, seed=seed)
@@ -542,6 +555,15 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
     revising one that failed, timed out or crashed — is the one diagnose-and-retry the
     design promises, and is the clearest evidence of agency the run can produce.
     """
+    if proposed.budget != existing.budget:
+        raise ContractError(
+            f"this run registered the {existing.budget} budget and the plan just "
+            f"submitted declares {proposed.budget}. Every candidate was planned, "
+            "timed and rejected under the registered budget, so moving it after "
+            "results exist would describe a resource discipline the run did not keep. "
+            "Start a new run for the changed budget."
+        )
+
     if dict(proposed.evaluation.weights) != dict(existing.evaluation.weights):
         raise ContractError(
             "this run already registered a plan, and the weighting cannot move once "
