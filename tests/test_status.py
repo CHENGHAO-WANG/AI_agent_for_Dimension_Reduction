@@ -302,3 +302,72 @@ def test_adding_a_candidate_before_anything_ran_is_not_the_round(
     assert _register(cli, run, [{"id": "a", "stages": pca2}, {"id": "b", "stages": pca3}]).code == 0
 
     assert cli("status", "--run-dir", run).payload["replan_round_spent"] is False
+
+
+def _give_up(cli, run, tmp_path, candidate_id):
+    """Abandon a candidate through the toolbox, as execute-plan does."""
+    import json
+
+    document = tmp_path / f"give-up-{candidate_id}.json"
+    document.write_text(json.dumps({
+        "stage": "execute",
+        "question": f"Retry candidate {candidate_id}, or replace it?",
+        "chosen": "replace it",
+        "rationale": "the precondition fails, not the parameters, so the same stages "
+        "would fail the same way",
+        "evidence": [],
+        "candidate": candidate_id,
+        "abandoned": True,
+    }), encoding="utf-8")
+    return cli("log-decision", "--run-dir", run, "--json", f"@{document}")
+
+
+def test_replacing_a_failed_candidate_does_not_spend_the_replan_round(
+    cli, csv_dataset, tmp_path
+):
+    """A replacement id is the retry, not the round.
+
+    The two allowances are separate: one diagnose-and-retry per candidate, and one
+    post-evaluation round of extending the portfolio. Counting id growth alone spent
+    the round on the retry, so later evaluation would wrongly report no round left.
+    """
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
+    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+
+    assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
+    _mark(run, "a", "failed")
+    assert _give_up(cli, run, tmp_path, "a").code == 0
+
+    # The replacement, registered under a new id.
+    assert _register(cli, run, [{"id": "a", "stages": pca2}, {"id": "b", "stages": pca3}]).code == 0
+
+    status = cli("status", "--run-dir", run).payload
+    assert status["replan_round_spent"] is False, "replacing is retrying, not extending"
+
+
+def test_extending_beyond_a_replacement_does_spend_the_round(cli, csv_dataset, tmp_path):
+    """Growth net of replacements is the round. Two added for one abandoned is
+    extension."""
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
+    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+    pca4 = [{"op": "pca", "params": {"n_components": 4}}]
+
+    assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
+    _mark(run, "a", "failed")
+    assert _give_up(cli, run, tmp_path, "a").code == 0
+
+    assert _register(cli, run, [
+        {"id": "a", "stages": pca2},
+        {"id": "b", "stages": pca3},
+        {"id": "c", "stages": pca4},
+    ]).code == 0
+
+    assert cli("status", "--run-dir", run).payload["replan_round_spent"] is True

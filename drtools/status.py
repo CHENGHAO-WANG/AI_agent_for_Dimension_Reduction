@@ -160,18 +160,32 @@ def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
     And anchoring on a ranking, which an earlier version did, cannot work: ranking
     needs metrics from a candidate that succeeded, so a run where everything failed
     would never record one and would be offered the round forever.
+
+    Finally, replacing a failed candidate with a differently-shaped one under a new id
+    is a retry too, and it also grows the id set. What separates it from the round is
+    that it replaces rather than extends: the agent gave up on the old candidate in
+    the same breath. So growth is measured net of the candidates abandoned since the
+    previous registration, and only growth beyond those replacements is the round.
     """
     attempted = False
     previous_ids: set[str] | None = None
+    abandoned_since: set[str] = set()
+
     for record in decisions:
         stage = record.get("stage")
         if stage == "embed":
             attempted = True
-        elif stage == "register_plan":
+        if record.get("abandoned") and record.get("candidate"):
+            abandoned_since.add(record["candidate"])
+
+        if stage == "register_plan":
             ids = set(record.get("candidates") or [])
-            if attempted and previous_ids is not None and ids > previous_ids:
-                return True
+            if previous_ids is not None and attempted:
+                added = ids - previous_ids
+                if len(added) > len(abandoned_since & previous_ids):
+                    return True
             previous_ids = ids
+            abandoned_since = set()
     return False
 
 
