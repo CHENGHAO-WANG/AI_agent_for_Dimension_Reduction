@@ -37,7 +37,7 @@ from drtools.recon import reconnaissance
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import RunDir
-from drtools.status import run_status
+from drtools.status import MAX_ATTEMPTS, attempts as candidate_attempts, run_status
 from drtools.viz import (
     figure_class_facet,
     figure_comparison,
@@ -376,6 +376,15 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
             "embedding disagreeing with the record of how it was produced. Register a "
             "new candidate id to try something different."
         )
+
+    tries = candidate_attempts(run, args.id)
+    if len(tries) >= MAX_ATTEMPTS:
+        raise ContractError(
+            f"candidate {args.id} has already had two attempts, which is one run and "
+            "the one diagnose-and-retry the design allows. Register a new candidate id "
+            "for a further variant, so that what was already tried stays on the record."
+        )
+
     _invalidate_candidate(run, args.id)
 
     stages = plan.stages_for(candidate)

@@ -119,10 +119,12 @@ def _next_stage(state: dict[str, Any]) -> str:
     """The first stage that has work outstanding."""
     if not state["profiled"]:
         return "profile"
-    if not state["reconnoitred"]:
-        return "recon"
     if not state["registered"]:
-        return "plan"
+        # Reconnaissance is evidence for planning, and `validate-plan` accepts a plan
+        # without it. So it is only outstanding while a plan is still to be written:
+        # naming it as the next stage of a run that is already executing would send
+        # the agent back to re-probe evidence its registered plan was argued from.
+        return "recon" if not state["reconnoitred"] else "plan"
 
     outstanding = [
         candidate_id
