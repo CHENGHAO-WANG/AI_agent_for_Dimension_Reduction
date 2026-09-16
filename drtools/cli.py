@@ -27,7 +27,7 @@ from drtools import jsonio
 from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
-from drtools.heuristics import suggest
+from drtools.heuristics import suggest, suggest_base
 from drtools.isolation import budget_timeout, run_candidate
 from drtools.loaders import available, load
 from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
@@ -231,6 +231,13 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_run_arguments(suggest)
     suggest.add_argument("--op", required=True, help="the op to suggest parameters for")
     suggest.set_defaults(handler=_cmd_suggest_params)
+
+    suggest_base_parser = subparsers.add_parser(
+        "suggest-base",
+        help="base preprocessing the planner may adopt, from reconnaissance's rule",
+    )
+    _add_run_arguments(suggest_base_parser)
+    suggest_base_parser.set_defaults(handler=_cmd_suggest_base)
 
     figures = subparsers.add_parser(
         "figures", help="draw the standard figure set for a run"
@@ -1138,6 +1145,14 @@ def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return {"op": args.op, "suggested": suggest(args.op, profile, recon)}
+
+
+def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
+    """The default the planner accepts or overrides with a logged reason."""
+    run = _require_run(args)
+    profile = run.read_artifact("profile.json")
+    recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
+    return suggest_base(profile, recon)
 
 
 def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
