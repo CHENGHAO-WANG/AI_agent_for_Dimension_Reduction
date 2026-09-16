@@ -285,9 +285,18 @@ def test_an_interrupted_run_still_offers_the_retry(cli, csv_dataset, tmp_path):
 def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
     cli, csv_dataset, tmp_path
 ):
-    """Once the allowance is spent the run moves on rather than stalling on it."""
-    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    """Once the allowance is spent the run moves on rather than stalling on it.
+
+    Two candidates, because a run where *everything* failed has nowhere to go but the
+    re-plan round — `rank` raises with no successful metrics. The case under test here
+    is the ordinary one: something succeeded, something is out of attempts, and the
+    run proceeds to scoring what it has.
+    """
+    run = _prepared(
+        cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}]
+    )
     cli("prepare-reference", "--run-dir", run)
+    cli("embed", "--run-dir", run, "--id", "b", "--in-process")
     _append_embed_decision(run, "a", "failed")
     _append_embed_decision(run, "a", "failed")
 
@@ -295,8 +304,7 @@ def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
 
     assert status["candidates"]["a"]["attempts"] == 2
     assert status["candidates"]["a"]["retry_available"] is False
-    # Nothing left to execute: the one candidate is out of attempts and the reference
-    # is prepared, so the run proceeds to evaluation rather than retrying forever.
+    assert status["candidates"]["b"]["outcome"] == "ok"
     assert status["next"] == "evaluate"
 
 

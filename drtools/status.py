@@ -27,6 +27,17 @@ def attempts(run: RunDir, candidate_id: str) -> list[dict[str, Any]]:
     `_recorded_outcome` in the CLI reads the same records but returns only the last
     outcome, so the count has been derivable all along and derived nowhere. Without it
     the one-retry rule is a claim about conversation history rather than about the run.
+
+    An attempt is counted when it ends, not when it begins, and that is deliberate. A
+    candidate killed with the parent process — Ctrl-C, a reboot — records nothing and
+    gets its allowance back, which is the same reading `_recorded_outcome` already
+    takes of an attempt that died mid-flight: recoverable rather than wedged. The
+    unbounded-compute worry this leaves is a loop that kills the toolbox mid-candidate
+    and retries, and the two ways that happens by itself are both closed elsewhere —
+    a child that dies is turned into a `crashed` record by `run_candidate`, and the
+    in-process path that could take the interpreter down with it is not reachable from
+    a skill. Counting from a start record instead would trade that recoverability for
+    a case nothing in the agent loop produces.
     """
     return [
         record
@@ -43,6 +54,7 @@ def run_status(run: RunDir) -> dict[str, Any]:
     plan = jsonio.read(registered_path) if registered else None
     manifest = jsonio.read(run.manifest_path) if run.manifest_path.exists() else {}
 
+    abandoned = _abandoned(decisions)
     candidates: dict[str, Any] = {}
     for candidate in (plan or {}).get("candidates", []):
         candidate_id = candidate["id"]
@@ -54,7 +66,9 @@ def run_status(run: RunDir) -> dict[str, Any]:
             "outcome": outcome,
             "attempts": len(tries),
             "retry_available": outcome not in (None, "ok")
-            and len(tries) < MAX_ATTEMPTS,
+            and len(tries) < MAX_ATTEMPTS
+            and candidate_id not in abandoned,
+            "abandoned": candidate_id in abandoned,
             "metrics": (run.path / "metrics" / f"{candidate_id}.json").exists(),
         }
 
@@ -72,6 +86,26 @@ def run_status(run: RunDir) -> dict[str, Any]:
     }
     state["next"] = _next_stage(state)
     return state
+
+
+def _abandoned(decisions: list[dict[str, Any]]) -> set[str]:
+    """Candidates the agent has given up on rather than retried.
+
+    A retry need not reuse the failed candidate's id: the sanctioned repair for a
+    method that cannot run as configured is often a differently-shaped attempt under a
+    new id, and the old one then stays failed for the record. Counting attempts alone,
+    that candidate would keep offering a retry nobody intends to take, and a run
+    resuming from `status` would be told to execute forever.
+
+    So giving up is recorded rather than inferred. `execute-plan` writes it when the
+    allowance is spent or when it registers a replacement instead of a retry, which is
+    the permanent-failure record the design already asks for.
+    """
+    return {
+        record["candidate"]
+        for record in decisions
+        if record.get("abandoned") and record.get("candidate")
+    }
 
 
 def _ranked(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
@@ -152,10 +186,24 @@ def _next_stage(state: dict[str, Any]) -> str:
     if outstanding or not state["reference_prepared"]:
         return "execute"
 
-    scorable = [
+    succeeded = [
         candidate_id
         for candidate_id, record in state["candidates"].items()
-        if record["outcome"] == "ok" and not record["metrics"]
+        if record["outcome"] == "ok"
+    ]
+    if not succeeded:
+        # Nothing to rank, and `rank` raises rather than producing an empty ranking.
+        # Sending the run there would park it on a stage that cannot complete. While
+        # the re-plan round is unspent there is a real move available — register
+        # candidates that can run under this budget — and once it is spent, a run
+        # where every candidate failed is a finding the report should carry rather
+        # than an error to loop on.
+        return "plan" if not state["replan_round_spent"] else "report"
+
+    scorable = [
+        candidate_id
+        for candidate_id in succeeded
+        if not state["candidates"][candidate_id]["metrics"]
     ]
     if scorable or not state["ranked"]:
         return "evaluate"
