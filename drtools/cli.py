@@ -37,7 +37,7 @@ from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
-from drtools.runs import RunDir
+from drtools.runs import MISSING, RunDir, resolve_evidence
 from drtools.status import MAX_ATTEMPTS, attempts as candidate_attempts, run_status
 from drtools.viz import (
     figure_class_facet,
@@ -112,6 +112,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(status)
     status.set_defaults(handler=_cmd_status)
+
+    log_decision = subparsers.add_parser(
+        "log-decision",
+        help="append one decision, refusing any evidence key that does not resolve",
+    )
+    _add_run_arguments(log_decision)
+    log_decision.add_argument(
+        "--json",
+        required=True,
+        help="decision JSON, or @path. Requires stage, question, chosen and rationale; "
+        "evidence is a list of dotted keys, and may be empty",
+    )
+    log_decision.set_defaults(handler=_cmd_log_decision)
 
     profile = subparsers.add_parser(
         "profile", help="measure a dataset and state what the measurements imply"
@@ -280,6 +293,145 @@ def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
 def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
     """Read-only, so the agent may ask as often as it likes."""
     return run_status(_require_run(args, create=False))
+
+
+RESERVED_DECISION_FIELDS = frozenset(
+    {
+        "stage",
+        "question",
+        "chosen",
+        "rationale",
+        "evidence",
+        "options_considered",
+        "evidence_resolved",
+        "timestamp",
+        "actor",
+    }
+)
+
+
+def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
+    """The agent's only route into the decision log.
+
+    Every key is resolved before anything is written, and what it resolved to is
+    written beside it. Validating at write time and reading at report time are
+    different guarantees: artefacts are rewritten in place, so a key can resolve to
+    one value when a decision is logged and to another when the report reads it.
+    Keeping the reading makes that divergence detectable instead of invisible.
+
+    It does not make a rationale true. A real key with a false reading passes, and the
+    report must not imply otherwise.
+    """
+    run = _require_run(args)
+    document = _read_json_argument(args.json)
+    if not isinstance(document, dict):
+        raise ContractError(
+            "--json must be a JSON object describing one decision, with stage, "
+            "question, chosen and rationale."
+        )
+
+    missing = [
+        field
+        for field in ("stage", "question", "chosen", "rationale")
+        if not str(document.get(field) or "").strip()
+    ]
+    if missing:
+        raise ContractError(
+            f"this decision is missing {', '.join(missing)}. A decision records what "
+            "was asked, what was chosen and why; without them there is nothing for the "
+            "report to be generated from."
+        )
+
+    evidence = list(document.get("evidence") or [])
+    artifacts = _artifacts_for_evidence(run)
+    resolved = resolve_evidence(evidence, artifacts)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(_unresolved_message(unresolved, artifacts))
+
+    extra = {
+        key: value
+        for key, value in document.items()
+        if key not in RESERVED_DECISION_FIELDS
+    }
+    run.log_decision(
+        stage=document["stage"],
+        question=document["question"],
+        chosen=document["chosen"],
+        rationale=document["rationale"],
+        evidence=evidence,
+        options_considered=document.get("options_considered") or [],
+        evidence_resolved=jsonio.jsonable(resolved),
+        **extra,
+    )
+    return {
+        "logged": document["stage"],
+        "evidence_resolved": jsonio.jsonable(resolved),
+    }
+
+
+def _artifacts_for_evidence(run: RunDir) -> dict[str, Any]:
+    """Everything an evidence key may cite, keyed by its artefact-root name.
+
+    Keys are artefact-rooted — `profile.shape.n_samples`, not `shape.n_samples` — so
+    that a citation resolves identically from the decision log, the report or a test.
+    """
+    artifacts: dict[str, Any] = {}
+    for name, path in (
+        ("profile", run.profile_path),
+        ("recon", run.recon_path),
+        ("plan", run.plan_path),
+        ("ranking", run.path / "ranking.json"),
+    ):
+        if path.exists():
+            artifacts[name] = jsonio.read(path)
+
+    registered = run.path / "plan.registered.json"
+    if registered.exists():
+        # `plan.registered.*` is the authority a rationale should cite, so it is
+        # reachable whether or not an unregistered plan.json is also sitting there.
+        plan = dict(artifacts.get("plan") or {})
+        plan["registered"] = jsonio.read(registered)
+        artifacts["plan"] = plan
+
+    metrics_dir = run.path / "metrics"
+    if metrics_dir.exists():
+        metrics = {
+            path.stem: jsonio.read(path) for path in sorted(metrics_dir.glob("*.json"))
+        }
+        if metrics:
+            artifacts["metrics"] = metrics
+    return artifacts
+
+
+def _unresolved_message(unresolved: list[str], artifacts: dict[str, Any]) -> str:
+    """Name the broken key and the keys that do exist beside it.
+
+    An agent told only that something failed will guess again; told what is there, it
+    corrects.
+    """
+    lines = []
+    for key in unresolved:
+        parent, _, _ = key.rpartition(".")
+        if parent:
+            neighbour = resolve_evidence([parent], artifacts)[parent]
+        else:
+            neighbour = artifacts
+        if isinstance(neighbour, dict) and neighbour:
+            available = ", ".join(sorted(str(k) for k in neighbour))
+            # ASCII only. A console on a legacy codepage renders U+2014 as a literal
+            # "?", and this message exists to be read and acted on by the agent.
+            lines.append(f"  {key} -- {parent or 'the run'} holds: {available}")
+        else:
+            roots = ", ".join(sorted(artifacts)) or "nothing yet"
+            lines.append(f"  {key} — no such path. This run holds: {roots}")
+    return (
+        "these evidence keys do not resolve against this run's artefacts:\n"
+        + "\n".join(lines)
+        + "\nCite a key that exists, or drop it. An empty evidence list is allowed and "
+        "renders as unsupported, but a citation pointing at nothing is a broken "
+        "rationale rather than a missing measurement."
+    )
 
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
