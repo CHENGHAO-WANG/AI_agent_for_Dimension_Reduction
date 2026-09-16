@@ -18,6 +18,42 @@ from typing import Any
 import numpy as np
 
 
+def suggest_base(
+    profile: dict[str, Any], recon: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Base preprocessing the planner may adopt, from reconnaissance's own rule.
+
+    This is a suggestion crossing a boundary, not an identification. A Probe
+    representation exists so that measurements describe the data rather than an
+    artefact of scale; it is discarded once the measuring is done and never produces an
+    Embedding. Base preprocessing is part of the analysis, is chosen by the agent, and
+    its output survives as the Reference. Day 6 settled that these are genuinely two
+    things and that collapsing them would have been the wrong fix.
+
+    What they share is the question. Both answer "what transform makes distances on
+    this data meaningful", so the rule that settles one is the honest default for the
+    other -- and an override the report can describe needs something concrete to
+    override.
+    """
+    from drtools.recon import choose_probe_representation
+
+    transform, reason = choose_probe_representation(profile)
+    evidence = ["profile.values.suspected_kind", "profile.features.std_ratio_p95_p05"]
+    if recon is not None:
+        evidence.append("recon.probe_representation.reason")
+
+    return {
+        "stages": [{"op": step, "params": {}} for step in transform],
+        "rationale": reason,
+        "evidence": evidence,
+        "note": (
+            "A suggestion, derived from the same rule reconnaissance used to choose its "
+            "probe representation -- not that representation itself, which is discarded "
+            "once the measuring is done. Adopt it, or override it with a logged reason."
+        ),
+    }
+
+
 def suggest(
     op: str, profile: dict[str, Any], recon: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any]]:
