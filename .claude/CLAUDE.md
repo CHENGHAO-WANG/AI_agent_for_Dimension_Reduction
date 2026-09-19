@@ -24,3 +24,17 @@ it. Every day of this build is architectural by that rule's own test — a new p
 new pipeline, new interface functions — so applying it per session would mean keeping two
 records of the same decisions for fourteen days and reconciling them at the end. One pass
 at day 13 costs less and contradicts less.
+
+## Scoping a work day
+
+The global rule's `design/notes.md` branch applies here: a work day whose design the
+notes already carry is bounded. Implement it, and append to the decision log as the day
+closes — what was decided, why, what was rejected.
+
+The global default is one implementer working in order. Beyond its trigger for splitting
+work across subagents, escalate to a spec under `design/specs/` when the design needs
+review before any code exists. Day 7's spec earned its cost that way: an adversarial pass
+caught a plan freeze that contradicted this project's own documented diagnose-and-retry
+loop, and a content digest that would have rejected byte-identical matrices.
+
+Days 7 and 8 keep the files they have; this governs from day 9.
