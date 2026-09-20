@@ -1132,3 +1132,94 @@ what a further slip costs. Never the tests, never the last day.
   injected, because the flag pattern matched only contiguous flags and stopped at the
   first one taking a value. Found by injecting the error on purpose, which is the only
   thing that makes a test written after the code worth anything.
+
+- **Day 9** — An external review of days 7 to 9, and the five defects it found.
+
+  A Codex review over `847d138...HEAD` — the whole of days 7, 8 and 9, 47 files and
+  some 7,500 inserted lines. Five findings, all five real when checked against the
+  code, two of them changing a decision rather than repairing an implementation of one.
+  No false positives, which is worth recording: the previous external pass on day 6
+  also landed, and reviewing a whole scope at once is what keeps finding the defects
+  that sit between correct pieces.
+
+  *A refusal that destroyed the evidence it was refusing to replace.* `embed` cleared
+  the previous attempt's embeddings and metrics and then resolved the seed, which can
+  refuse. A retry carrying a seed the run was not created with deleted the record of
+  the previous failure and then declined to produce a new one, and the decision log
+  does not close the gap: it records how an attempt ended, not why. The op, the error
+  type and the message existed only in `embeddings/<id>.json`.
+
+  The invariant was already written thirty lines above, over the `--in-process`
+  refusal — a request the run cannot honour must leave the run exactly as it found it —
+  and the budget and attempt-count refusals sit above the invalidation and keep it.
+  One refusal sat below it. Every individual rule here was correct; the defect was
+  only in where one of them sat relative to a destructive step. That is the third time
+  this project has found a defect at a seam rather than inside a rule.
+
+  *`/analyze` opened every new analysis on a refusal.* It said a Run is resumed or
+  started and that "either way, the next command is `drtools status`". There is no
+  either way: `status` reads a Run through `_require_run`, which refuses a path that
+  does not exist. `profile-dataset` had the same circularity at the top — read your
+  position from `status`, and only then, at step 1, run the `profile` that creates the
+  directory `status` needs. Both now branch on the case. The refusal carries the route
+  out too, which `_open_run` already did for its own case and `_require_run` did not.
+
+  Prose only, for the two documents. The branch a skill takes is not mechanically
+  checkable, and a test that pattern-matched the wording would pass for the wrong
+  reason; the refusal is tested instead.
+
+  *A declared ceiling was not frozen, and this changes a decision.* Day 8 recorded that
+  a plan declaring `max_candidates` below the budget's ceiling "enforces nothing by
+  itself, since a bound the agent sets on itself is not a bound, but under the hard
+  ceiling it is a checkable claim about self-restraint — the same thing pre-registering
+  the weighting buys for the evaluation". Re-registration froze the budget, the
+  weighting and the base preprocessing and left this open, so a run could declare 2,
+  register 2, then re-register at 5 and spend 5. The `register_plan` record carried the
+  digest, the weights and the candidate ids but not the declaration, and
+  `plan.registered.json` is overwritten by the next registration — so afterwards
+  nothing showed that 2 had ever been claimed.
+
+  That day 8 sentence is superseded, and both halves of it are why. *Checkable* needs
+  the claim to survive in the append-only log. And the comparison to the weighting is
+  not decoration: the weighting is frozen by refusal, so a field said to buy the same
+  thing cannot be freely rewritten. The declaration is made before any candidate has
+  run, which is what separates a claim about restraint from a report of what the run
+  turned out to need. Loosening now refuses, tightening stays legal, omitting the field
+  counts as loosening rather than as saying nothing, and `max_candidates` joins
+  `LIFECYCLE_FIELDS` so the agent's own write route cannot forge it.
+
+  Rejected: recording the declaration and leaving it loosenable, which was the smaller
+  change and keeps the day 8 sentence intact. It buys a record of the loosening and
+  nothing that stops it, and a pre-registration the run may revise is the thing this
+  project has refused everywhere else.
+
+  *One re-plan round, enforced rather than reported.* Section 3.1 permits one round
+  once the portfolio has been attempted, and `evaluate-embeddings` says so. Nothing
+  refused a second. `status` computed `replan_round_spent` correctly and spent it on
+  one decision — whether a run with no successes goes back to plan or on to report —
+  while `validate-plan` registered a third and fourth extension without comment.
+
+  The refusal reuses `status`'s own scan rather than restating the rule. The round has
+  four distinctions in it and every one lives at an edge, so a second implementation
+  would disagree with the first somewhere and the two commands would then describe
+  different runs.
+
+  This exposed a test that was not testing what it said. The exhaust-abandon-replace
+  cycle test described exhausting an id, abandoning it and registering a replacement,
+  and never recorded the abandonment — which under the design's own definition made
+  every cycle a re-plan round, and it passed only because nothing refused one. It now
+  abandons through `log-decision` and still ends where it did, at the Ceiling. The
+  Ceiling remains what bounds the replacement route; the round bounds the other one.
+
+  *Malformed JSON escaped the error contract.* `--plan` and `log-decision --json` both
+  parsed with a bare `json.loads`, and `main` catches neither `JSONDecodeError` nor the
+  `ValueError` it derives from, so a mistyped brace left a traceback and exit 1 — not
+  one of the four documented exit codes, and no route out. `_plan_from` had already
+  closed this class for pydantic's `ValidationError`, which is raised only once the
+  document has parsed. The message names the source, because `@path` and an inline
+  document are two of them and fixing the wrong one is a loop.
+
+  Day 10's brief is unchanged: the report template and the first end-to-end run. These
+  five were repairs to days 7 to 9 and are recorded here rather than spending a day.
+
+  385 tests.

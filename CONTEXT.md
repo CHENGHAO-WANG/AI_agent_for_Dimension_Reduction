@@ -77,6 +77,16 @@ its Budget, or it died without recording anything. The last two are distinct fro
 failure and from each other.
 _Avoid_: status, result, exit
 
+**Abandonment**:
+A Run's recorded decision to stop pursuing a Candidate. The Candidate stays in the
+Portfolio and on the record; what ends is any further Attempt at it.
+_Avoid_: dropping, removing, skipping, retiring
+
+**Re-plan round**:
+The single extension a Run may make to its Portfolio once its Candidates have been
+attempted. Registering a Candidate to replace an Abandonment is not one.
+_Avoid_: iteration, re-planning, second pass, extra round
+
 ### Representations
 
 Three transforms sit close together and are deliberately not the same thing.
