@@ -10,17 +10,25 @@ is what it tracks.
 **`design/notes.md` is this project's authoritative record.** Read it and `CONTEXT.md`
 before exploring the codebase: the notes carry the architecture, the decisions and the
 reasoning behind them, while `CONTEXT.md` carries the vocabulary they are written in.
-Append to the notes' decision log as each work day closes, keyed by day index — what was
-decided, why, and what was rejected.
+Append to the notes' decision log as each work day closes, keyed by day index — what
+was decided, why, and what was rejected. That log is how this project records a
+decision, and it stands in for the ADR the global rule asks of bounded work.
+`docs/adr/` is created on **day 13** for ADR-0001, on the locked-core/open-adapter
+action space, and is the whole of `docs/` — there is no prose documentation tree.
 
-`CONTEXT.md` is the glossary, and it is live from day 6 — the five skills are written
-on days 7 and 8 and must name concepts in its terms. `docs/adr/` is created on **day
-13** for ADR-0001, on the locked-core/open-adapter action space, and holds nothing
-else. There is no prose `docs/` tree: an architecture page would be a third copy of
-what the README, the four-page report and the notes already carry between them.
+`CONTEXT.md` is the glossary, and it governs rather than describes: the five skills are
+prose the agent reads at runtime, so they must name concepts in its terms.
 
-This defers the global rule that architectural work is unfinished until `docs/` reflects
-it. Every day of this build is architectural by that rule's own test — a new package, a
-new pipeline, new interface functions — so applying it per session would mean keeping two
-records of the same decisions for fourteen days and reconciling them at the end. One pass
-at day 13 costs less and contradicts less.
+## Scoping a work day
+
+The global rule's `design/notes.md` branch governs here, and it turns on whether the
+notes carry *this* day's design — not on whether the project has notes. The test: can
+you name the mechanism from the notes, or only the requirement?
+
+Most days pass it. The notes settle the design up front, so the day is bounded whatever
+its interface surface, and the work is to implement it and append to the decision log.
+
+A day briefed as *make X hold* — the notes fixing the property and leaving the mechanism
+open — is architectural, and its size is not the deciding fact. Contract work reached
+that way is what every later day is built on, so the design is worth reviewing before
+any code exists.
