@@ -1223,3 +1223,82 @@ what a further slip costs. Never the tests, never the last day.
   five were repairs to days 7 to 9 and are recorded here rather than spending a day.
 
   385 tests.
+
+- **Day 10** — The report contract, and what the toolbox contributes to a document the
+  agent writes.
+
+  Briefed as "report template + pandoc render". The notes fixed the requirement and not
+  the mechanism — section 5 fixes the nine-section skeleton and names pandoc, section
+  2.3 fixes that the report is generated from the Decision log, and nothing anywhere
+  said whether `drtools` contributes to the document at all. That is the *make X hold*
+  shape, so the day was architectural and got a design before any code:
+  `design/specs/2026-09-20-report-contract.md`, then a plan, then six tasks.
+
+  *The decision: the toolbox emits the numbers; the agent writes the prose.* Generated
+  sections carry fenced blocks the toolbox owns and can regenerate; everything outside a
+  fence is the agent's. The property this buys is that **the agent never retypes a
+  number** — a figure in the report cannot disagree with the artefact it came from,
+  because there was no opportunity to transcribe it. That is stronger than citation
+  integrity and composes with it: citation integrity says a cited key resolves, and this
+  says the value printed is the value it resolved to.
+
+  Rejected: *render only*, the agent writing everything and `render` just calling pandoc,
+  which leaves the grounding resting on prose discipline and makes every number a
+  transcription. Rejected: *fully generated*, which cannot write sections 8 and 9 without
+  squeezing paragraphs of interpretation through a field meant for one-line rationales,
+  inverting which of the log and the report is the record. Rejected: *write then verify*,
+  which needs a number-extraction parser over free prose — and a parser that misses one
+  case is worse than no parser, because it reports a clean check over a document it did
+  not fully read. Emitting achieves the same end with no parser at all.
+
+  Section 8, Interpretation, has no block. Nothing in the Run grounds one, and a
+  generated contribution there would lend the appearance of derivation to the one section
+  that is entirely the agent's judgment — the failure mode section 2.3 already had to
+  narrow a claim over once.
+
+  *Rendering last is a property, not an instruction.* Two chains go stale and ordering
+  fixes only one: the PDF against the Markdown, and the Markdown against the Run. The
+  second is the dangerous one, because it yields a clean, current-looking PDF of numbers
+  the Run has moved past. So `render` recomputes what each block would hold and refuses
+  if any would change. It does not refresh on the agent's behalf — silently changing the
+  numbers while producing the PDF would let the two artefacts a reader compares differ,
+  and section 5 already settles that the Markdown is the source of truth.
+
+  *Reading real artefacts corrected the design twice, and simplified it once.* The spec
+  said section 4's hyperparameters come from the registered Plan. They come from
+  `embeddings/<id>.json`: the Plan holds what was asked for, and the record holds what
+  ran, with registry defaults filled in and `param_provenance` marking every value
+  `specified` or `registry_default`. Only the record can say which hyperparameters the
+  agent chose. And `figures.json` stores absolute paths, so the block relativises them —
+  a report carrying an absolute path breaks the moment the Run is moved and pandoc cannot
+  resolve the image.
+
+  The simplification: the spec carried an exception for a Run where every Candidate
+  failed. It needs no code. `status._next_stage` already returns `report` once nothing
+  has succeeded and the re-plan round is spent, and `plan` while the round is unspent.
+  Both are the right answer, so `report` checks one condition and has no special case —
+  which is the same discipline as reading `status` for readiness at all, rather than
+  asking the question a second way and letting the two answers drift.
+
+  *A defect in the fence contract, found by the tests of the task after it.* `fence`
+  wrote the body verbatim, but `parse_blocks` strips trailing newlines, because the
+  closing comment sits on its own line. So any body ending in a blank line failed its own
+  digest the instant it was read back, and `--refresh` refused a block nobody had
+  touched. `_block_ranking` produces exactly such a body whenever a Run has no ranking
+  notes. The task that introduced it had six tests and every one used a body ending
+  mid-line, so the round trip was never exercised at its edge.
+
+  The fix is one canonical form applied wherever a body is written, hashed or compared.
+  Half of it would have been worse than none: normalising only the digest makes the
+  hand-edit check pass while leaving the staleness comparison weighing a stripped parsed
+  body against an unstripped generated one, so every block reads as changed on every
+  refresh and `refreshed` stops meaning anything the agent can act on. Two tests pin the
+  two halves.
+
+  Day 10's second half — the first end-to-end run on PBMC3k — is not done. It carries one
+  decision the design deliberately left open: whether PBMC3k gets derived Leiden
+  reference labels. Labels from a PCA-neighbour-graph-Leiden pipeline would flatter
+  embeddings preserving that same neighbourhood structure, so using them as a metric
+  input would bias the ranking toward methods resembling the pipeline that produced them.
+
+  416 tests, 61s.

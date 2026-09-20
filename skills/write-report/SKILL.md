@@ -43,8 +43,41 @@ direct evidence that the agent selected rather than sprayed, and each one alread
 carries its reason and its Evidence keys in the log. Give them the same weight as the
 methods that ran.
 
-Markdown in the Run directory is the source of truth; rendering to PDF is a separate
-step.
+## How the document is produced
+
+```
+drtools report --run-dir runs/<id>
+```
+
+writes `report.md`: the nine sections above, and inside fenced blocks, every number
+this Run produced. **You never type a number into the report.** The blocks are the
+toolbox's; everything outside them is yours.
+
+Write your prose around the blocks. If the Run changes — another Candidate evaluated, a
+re-rank — bring the numbers up to date with:
+
+```
+drtools report --refresh --run-dir runs/<id>
+```
+
+which rewrites only the blocks and leaves every word you wrote. It tells you which
+blocks changed, so you know what to re-read. It refuses if you have edited inside a
+block, because regenerating it would discard your edit: move the edit outside the fence
+and the refresh goes through.
+
+Last:
+
+```
+drtools render --run-dir runs/<id>
+```
+
+It refuses a `report.md` whose blocks no longer match the Run, so the PDF can only be
+made from a document that still agrees with the analysis. Refresh, then render.
+
+Markdown in the Run directory is the source of truth; the PDF is a rendering of it.
+
+**Section 8, Interpretation, has no block.** Nothing in the Run grounds an
+interpretation — it is yours alone, and it is the section the report exists for.
 
 ## What you may claim
 
