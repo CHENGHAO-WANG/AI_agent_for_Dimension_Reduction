@@ -38,7 +38,13 @@ from drtools.recon import reconnaissance
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import MISSING, RunDir, resolve_evidence
-from drtools.status import MAX_ATTEMPTS, attempts as candidate_attempts, run_status
+from drtools.status import (
+    MAX_ATTEMPTS,
+    attempts as candidate_attempts,
+    extends_portfolio,
+    replan_round_spent,
+    run_status,
+)
 from drtools.viz import (
     figure_class_facet,
     figure_comparison,
@@ -810,6 +816,21 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
 
     existing_ids = {candidate.id for candidate in existing.candidates}
     proposed_ids = {candidate.id for candidate in proposed.candidates}
+
+    decisions = run.decisions()
+    if replan_round_spent(decisions) and extends_portfolio(decisions, proposed_ids):
+        raise ContractError(
+            "this run has already spent its one re-plan round, and the plan just "
+            "submitted extends the portfolio again. Iterative planning was rejected "
+            "as unbounded in cost; one round, once the portfolio has been attempted, "
+            "is what the design allows. Replacing a candidate you have given up on is "
+            "a retry rather than a round, so if that is what this is, record the "
+            "abandonment with `drtools log-decision` -- it is a commitment on the "
+            "record, not a formality -- and the replacement registers. Otherwise the "
+            "portfolio stands, and what the results revealed is a finding the report "
+            "should carry."
+        )
+
     dropped = sorted(existing_ids - proposed_ids)
     if dropped:
         raise ContractError(

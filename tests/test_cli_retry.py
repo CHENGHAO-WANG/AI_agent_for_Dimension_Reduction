@@ -72,6 +72,35 @@ def _prepared(cli, csv_dataset, tmp_path, candidates):
     return runs / "r1"
 
 
+def _add_candidate(run, candidate_id, n_components=2):
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"].append(
+        {"id": candidate_id, "stages": [{"op": "pca", "params": {"n_components": n_components}}]}
+    )
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+
+def _abandon(cli, run, candidate_id):
+    document = {
+        "stage": "execute",
+        "question": f"Is {candidate_id} worth another attempt?",
+        "chosen": "abandon it",
+        "rationale": "the diagnosis says the shape is wrong, not the parameters",
+        "evidence": [],
+        "candidate": candidate_id,
+        "abandoned": True,
+    }
+    return cli("log-decision", "--run-dir", run, "--json", json.dumps(document))
+
+
+def _spend_the_round(cli, csv_dataset, tmp_path):
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    _add_candidate(run, "b", n_components=3)
+    assert cli("validate-plan", "--run-dir", run).code == 0
+    assert cli("status", "--run-dir", run).payload["replan_round_spent"] is True
+    return run
+
 def test_re_embedding_a_successful_candidate_is_refused(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
@@ -449,9 +478,14 @@ def test_the_exhaust_abandon_replace_cycle_terminates(cli, csv_dataset, tmp_path
             break
 
         # Spend the id's whole allowance, give up on it, and replace it — the cycle
-        # that used to be free.
+        # that used to be free. The abandonment is recorded rather than implied,
+        # because that is what makes the next registration a replacement: growth
+        # nobody gave anything up for is the re-plan round, and it is refused once
+        # the round is spent. This loop is the other route, and the Ceiling is what
+        # bounds it.
         _append_embed_decision(run, candidates[-1]["id"], "failed")
         _append_embed_decision(run, candidates[-1]["id"], "failed")
+        assert _abandon(cli, run, candidates[-1]["id"]).code == 0
         candidates = candidates + [{"id": f"c{cycle}", "stages": PCA}]
     else:  # pragma: no cover - reached only if the loop never terminates
         raise AssertionError("the replacement cycle was never refused")
@@ -515,3 +549,70 @@ def test_a_refused_retry_leaves_the_previous_metrics_alone(cli, csv_dataset, tmp
 
     assert result.code == 2
     assert metrics.exists()
+
+
+# ------------------------------------- the round is bounded by a refusal, not by prose
+
+
+
+def test_a_second_round_of_extending_the_portfolio_is_refused(
+    cli, csv_dataset, tmp_path
+):
+    """One optional re-plan, and `status` reported it without anything enforcing it.
+
+    The skill said a single round is permitted, which is prose the agent reads, not a
+    bound the toolbox keeps: nothing stopped a third, fourth and fifth registration
+    each adding one more candidate, up to the hard ceiling.
+    """
+    run = _spend_the_round(cli, csv_dataset, tmp_path)
+
+    _add_candidate(run, "c", n_components=4)
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 2
+    assert "re-plan" in result.stderr
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert sorted(c["id"] for c in registered["candidates"]) == ["a", "b"]
+
+
+def test_replacing_an_abandoned_candidate_after_the_round_stays_legal(
+    cli, csv_dataset, tmp_path
+):
+    """A replacement is the diagnose-and-retry, not a second round.
+
+    The round is growth *net of* what was given up, and that arithmetic has to hold on
+    the refusing side too, or spending the round would end retries as well.
+    """
+    run = _spend_the_round(cli, csv_dataset, tmp_path)
+    assert _abandon(cli, run, "b").code == 0
+
+    _add_candidate(run, "c", n_components=4)
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 0, result.stderr
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert sorted(c["id"] for c in registered["candidates"]) == ["a", "b", "c"]
+
+
+def test_re_registering_an_unchanged_plan_after_the_round_stays_legal(
+    cli, csv_dataset, tmp_path
+):
+    """Revalidating adds nothing, so it cannot be a second round."""
+    run = _spend_the_round(cli, csv_dataset, tmp_path)
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+
+def test_revising_a_failed_candidate_after_the_round_stays_legal(
+    cli, csv_dataset, tmp_path
+):
+    """Changing the stages of a candidate that failed is a retry at any point."""
+    run = _spend_the_round(cli, csv_dataset, tmp_path)
+    _rewrite_last_embed_outcome(run, "a", "failed")
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    for candidate in plan["candidates"]:
+        if candidate["id"] == "a":
+            candidate["stages"] = [{"op": "pca", "params": {"n_components": 5}}]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0

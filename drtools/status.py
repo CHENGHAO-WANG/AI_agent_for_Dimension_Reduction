@@ -82,7 +82,7 @@ def run_status(run: RunDir) -> dict[str, Any]:
         "registered": registered,
         "reference_prepared": (run.path / "data" / "reference.json").exists(),
         "ranked": _ranked(run, decisions),
-        "replan_round_spent": _replan_spent(decisions),
+        "replan_round_spent": replan_round_spent(decisions),
         "candidates": candidates,
     }
     state["next"] = _next_stage(state)
@@ -165,7 +165,7 @@ def _registered_digests(decisions: list[dict[str, Any]]) -> list[str | None]:
     ]
 
 
-def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
+def replan_round_spent(decisions: list[dict[str, Any]]) -> bool:
     """Whether the one bounded round of extending the portfolio has been used.
 
     The round is a registration that *adds* candidate ids once something has been
@@ -190,6 +190,25 @@ def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
     the same breath. So growth is measured net of the candidates abandoned since the
     previous registration, and only growth beyond those replacements is the round.
     """
+    spent, _, _, _ = _replan_scan(decisions)
+    return spent
+
+
+def _replan_scan(
+    decisions: list[dict[str, Any]],
+) -> tuple[bool, bool, set[str] | None, set[str]]:
+    """One pass over the log: whether the round is spent, and the state after it.
+
+    Split out of `_replan_spent` so that `validate-plan` can ask the same question
+    of a registration that has not happened yet. Reporting the round and refusing a
+    second one have to agree exactly -- a refusal computed by a second, similar rule
+    would disagree with `status` at the edges, and the edges are where all four of
+    the distinctions above live.
+
+    Returns the round's state, whether anything has been attempted, the ids of the
+    last registration, and the candidates abandoned since it.
+    """
+    spent = False
     attempted = False
     previous_ids: set[str] | None = None
     abandoned_since: set[str] = set()
@@ -203,13 +222,32 @@ def _replan_spent(decisions: list[dict[str, Any]]) -> bool:
 
         if stage == "register_plan":
             ids = set(record.get("candidates") or [])
-            if previous_ids is not None and attempted:
-                added = ids - previous_ids
-                if len(added) > len(abandoned_since & previous_ids):
-                    return True
+            if previous_ids is not None and attempted and _extends(
+                ids, previous_ids, abandoned_since
+            ):
+                spent = True
             previous_ids = ids
             abandoned_since = set()
-    return False
+    return spent, attempted, previous_ids, abandoned_since
+
+
+def _extends(ids: set[str], previous_ids: set[str], abandoned: set[str]) -> bool:
+    """Whether this id set grows the portfolio beyond replacing what was given up."""
+    return len(ids - previous_ids) > len(abandoned & previous_ids)
+
+
+def extends_portfolio(
+    decisions: list[dict[str, Any]], proposed_ids: set[str]
+) -> bool:
+    """Whether registering `proposed_ids` now would be a round of extension.
+
+    Nothing has been attempted yet, or nothing has been registered yet: the first
+    registration establishes the portfolio rather than extending one.
+    """
+    _, attempted, previous_ids, abandoned_since = _replan_scan(decisions)
+    if previous_ids is None or not attempted:
+        return False
+    return _extends(proposed_ids, previous_ids, abandoned_since)
 
 
 def _next_stage(state: dict[str, Any]) -> str:
