@@ -285,7 +285,8 @@ PCA, Kernel PCA, Sparse PCA, MDS both metric and non-metric, Isomap, LLE with it
 variants under one op, Laplacian Eigenmaps, t-SNE, UMAP — plus Diffusion Maps, written
 directly after `datafold` proved unusable against modern scikit-learn.
 
-**Out, and named as future work in the report:** a minimal MAP-GPLVM in torch, which
+**Out, and named as future work in the report:** datasets with missing values, for
+which see the day 8 decision below; a minimal MAP-GPLVM in torch, which
 was first on the cut order and is what day 7's contract work spent; ensemble/consensus
 embeddings; a cross-run experience store (with two datasets the prior would be n=2,
 worse than no prior, and it would introduce hidden state that breaks reproducibility);
@@ -979,3 +980,46 @@ would cost. Never the tests, never day 14.
   appeared three times in two days: a refusal that explains the way around itself. A
   message is the surface the agent acts on, so a true sentence in it is an instruction,
   not a note.
+
+- **Day 8** — Missing values are out of scope, and three files now say so.
+
+  Day 6's adversarial pass found the loader, the contract and the registry mutually
+  unsatisfiable on a CSV with a hole in it. `_load_table` refused and called imputation
+  "a preprocessing decision for the agent to make explicitly"; the contract demanded
+  missingness be "resolved or explicitly encoded by the loader"; and the registry had
+  no op that imputes. The only route those three left open was an adapter filling the
+  holes in silently, after which audited metrics treat fabricated numbers as
+  observations and `meta` has nowhere to say otherwise.
+
+  The measurement that settled it: **none of the ten reductions tolerates NaN.** Every
+  one raises, and most name it — "PCA does not accept missing values encoded as NaN",
+  "NearestNeighbors does not accept missing values". Nor is there a back door: sklearn's
+  `nan_euclidean_distances` works and several methods take precomputed matrices, but no
+  executor exposes that route — `spectral.py` hardcodes `affinity="nearest_neighbors"`,
+  and the registry offers no distance metric for MDS, Isomap or t-SNE.
+
+  So admitting NaN into the contract would have bought exactly one thing: carrying it
+  from the loader to an `impute` stage. That reframed the question as *where imputation
+  happens* rather than whether — at load, recorded in `meta`, or in the plan, recorded as
+  a Stage that is pre-registered, validated, cited and comparable between candidates.
+
+  The plan-stage version is the better design and is not being built. It costs a
+  contract change, two executors, a validator rule, and a clause in reconnaissance's
+  probe rule, on a day already over its scope, to serve an input neither graded dataset
+  has. PBMC3k is a count matrix and PathMNIST is images; neither has missing values.
+
+  What changes is that the three files agree, and agree on refusal. Both messages
+  previously named a route — the contract told the loader to resolve it, the loader
+  called it the agent's decision — and those sentences were the whole opening. They now
+  say the dataset is out of scope and why filling the holes would be worse than
+  stopping. Section 7 lists it as future work with the measurement behind it.
+
+  Rejected: required `meta` provenance recording what an adapter did about missingness.
+  It is the honest half-measure and merges with the adapter-digest work, but a mandatory
+  field is a declaration, not a verification, and this project already has one
+  overstated guarantee it had to walk back. A narrower promise kept exactly is worth
+  more here than a wider one qualified in a footnote.
+
+  One thing found while measuring, not fixed: `mds.metric` is the metric-versus-
+  non-metric flag, a boolean, while `umap.metric` is a distance-function name. Same key,
+  two meanings, in a registry the planner reasons over. Day 10.

@@ -61,13 +61,25 @@ def test_reads_a_csv_and_factorises_its_label_column(tmp_path) -> None:
     assert meta["feature_names"] == ["a", "b"]
 
 
-def test_refuses_to_guess_at_missing_values(tmp_path) -> None:
-    """Imputation is a decision the agent must make explicitly, not a loader default."""
+def test_refuses_a_dataset_with_missing_values(tmp_path) -> None:
+    """Missing values are out of scope, and the refusal must say so.
+
+    It used to say imputation was "a preprocessing decision for the agent to make
+    explicitly" -- a route that does not exist. No registry op imputes, and all ten
+    reductions refuse NaN outright, so the only path that sentence left open was an
+    adapter filling the holes in silently, after which audited metrics treat
+    fabricated numbers as observations.
+    """
     path = tmp_path / "holes.csv"
     path.write_text("a,b\n1,2\n3,\n", encoding="utf-8")
 
-    with pytest.raises(ContractError, match="missing values"):
+    with pytest.raises(ContractError) as error:
         load(str(path))
+
+    message = str(error.value)
+    assert "missing values" in message
+    assert "out of scope" in message
+    assert "preprocessing decision" not in message
 
 
 def test_names_the_offending_column_when_it_is_not_numeric(tmp_path) -> None:

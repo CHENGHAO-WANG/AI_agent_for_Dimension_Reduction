@@ -123,8 +123,11 @@ def _load_table(path: Path, *, label_column: str | None = None, **_: Any) -> Dat
     if numeric.isna().any().any():
         n_missing = int(numeric.isna().sum().sum())
         raise ContractError(
-            f"{path.name}: {n_missing} missing values. Imputation is a preprocessing "
-            "decision for the agent to make explicitly, so the loader will not guess."
+            f"{path.name}: {n_missing} missing values. Datasets with missing values "
+            "are out of scope for this toolbox, and an adapter that filled them in "
+            "would put fabricated numbers into audited results with nothing recorded. "
+            "Supply a complete table, or resolve the missingness upstream where the "
+            "choice can be written down."
         )
 
     meta = {
