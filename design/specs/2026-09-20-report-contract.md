@@ -71,10 +71,28 @@ Pandoc being absent says nothing about whether the Run supports the report; a si
 command that did both would give an environment problem and a Run problem the same
 shape, and the agent's next move differs completely between them.
 
-`render` takes the file as it finds it. It does not refresh first: a render that
-silently changed the document's numbers would let the PDF and the Markdown a reader
-compares differ, and which of the two is the source of truth is already settled — the
-Markdown is.
+`render` takes the file as it finds it and refuses a stale one.
+
+It does not refresh first. A render that silently changed the document's numbers would
+let the PDF and the Markdown a reader compares differ, and which of the two is the
+source of truth is already settled — the Markdown is. But taking the file as it finds
+it is not enough on its own, because two things can go stale and only one of them is
+fixed by rendering last:
+
+- the PDF against the Markdown, if prose or numbers change after the render;
+- the Markdown against the Run, if a Candidate is evaluated or re-ranked after the
+  blocks were written.
+
+The second is the dangerous one: it produces a clean, current-looking PDF of numbers
+the Run has moved past. So `render` recomputes what each block would hold, compares,
+and refuses if any of them would change — naming the stale ids and `report --refresh`.
+Rendering is therefore the last step by construction rather than by instruction: a PDF
+can only be produced from a Markdown that already agrees with the Run. The comparison
+costs nothing extra, since it reuses the block generation `--refresh` needs anyway.
+
+Prose edited after a render leaves the PDF stale and re-rendering is the fix. The
+toolbox does not track that, because a prose edit changes no number and the toolbox has
+no view on prose.
 
 ## 2. The facts blocks
 
@@ -128,7 +146,13 @@ matters to a reader deciding whether something was skipped or was never availabl
 ## 3. Refusals
 
 - **`report` refuses unless the Run is at the report stage.** `status` already derives
-  `next`; this reads it rather than recomputing the condition. One exception, which
+  `next` from the Decision log, and `report` calls that same code rather than asking
+  the question a second way — "`ranking.json` exists and every Candidate has an
+  outcome", say. Two implementations of one condition drift at the edges, and the
+  failure that produces is a Run where `status` says `next: report` and `report` says
+  the Run is not ready, with nothing to tell the agent which of the two is right. That
+  is the shape of the re-plan defect found on day 9, where `status` computed the round
+  and `validate-plan` did not compute it at all. One exception, which
   `write-report` already carries: a Run where every Candidate failed still gets a
   report, and sections 6 and 7 then hold the failure record instead of a table.
 
@@ -147,6 +171,10 @@ matters to a reader deciding whether something was skipped or was never availabl
   and guessing would drop a table into the middle of a paragraph. The report names the
   missing ids so the agent can paste the fence back where it wants it, and running
   `report` on a fresh file is the other route.
+
+- **`render` refuses a Markdown whose blocks no longer agree with the Run,** naming the
+  stale ids and `report --refresh`. This is what makes rendering last a property of the
+  toolbox rather than an instruction in a skill.
 
 - **`render` refuses a missing pandoc and a missing PDF engine separately.** They are
   two different installs and two different fixes. Both are present in this environment
@@ -176,6 +204,8 @@ the prose for every `drtools <command> --flag` it names.
 - `report` refuses a Run that is not at the report stage.
 - `report` refuses to overwrite, and names `--refresh`.
 - `render` refuses a missing pandoc, and a missing PDF engine, with different messages.
+- `render` refuses after a Candidate is evaluated but before `--refresh` is run, and
+  names the block that went stale; `--refresh` then makes the same `render` succeed.
 - The rendered PDF exists and is non-trivial; its content is not asserted.
 
 ## 6. Out of scope
