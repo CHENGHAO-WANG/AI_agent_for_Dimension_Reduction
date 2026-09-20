@@ -469,3 +469,49 @@ def test_the_exhaust_abandon_replace_cycle_terminates(cli, csv_dataset, tmp_path
     # Which is the bound: `ceiling` ids, two attempts each, and no route to a
     # further id. Before the ceiling existed this loop had no end at all.
     assert ceiling * MAX_ATTEMPTS == 14
+
+
+def test_a_refused_retry_leaves_the_previous_failure_on_the_record(
+    cli, csv_dataset, tmp_path
+):
+    """A refusal must not be the thing that destroys the evidence.
+
+    `embed` invalidated the previous attempt's artefacts before resolving the seed, so
+    a retry carrying a seed the run cannot honour deleted the failure record and then
+    refused. The decision log records only how an attempt ended, not why: the op, the
+    error type and the message live in `embeddings/<id>.json` and nowhere else, so
+    they were gone for good.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    record = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
+    record["status"] = "failed"
+    record["failure"] = {
+        "op": "pca",
+        "error_type": "ExecutionError",
+        "message": "the diagnosis this retry exists to act on",
+    }
+    (run / "embeddings" / "a.json").write_text(json.dumps(record), encoding="utf-8")
+    _rewrite_last_embed_outcome(run, "a", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process", "--seed", 999)
+
+    assert result.code == 2
+    assert "seed" in result.stderr
+    survived = json.loads((run / "embeddings" / "a.json").read_text(encoding="utf-8"))
+    assert survived["failure"]["message"] == "the diagnosis this retry exists to act on"
+
+
+def test_a_refused_retry_leaves_the_previous_metrics_alone(cli, csv_dataset, tmp_path):
+    """The same refusal, against the other artefact `_invalidate_candidate` removes."""
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    assert cli("evaluate", "--run-dir", run, "--id", "a").code == 0
+    metrics = run / "metrics" / "a.json"
+    assert metrics.exists()
+    _rewrite_last_embed_outcome(run, "a", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process", "--seed", 999)
+
+    assert result.code == 2
+    assert metrics.exists()

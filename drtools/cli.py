@@ -600,10 +600,16 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     if len(tries) >= MAX_ATTEMPTS:
         raise ContractError(_exhausted_message(args.id, plan))
 
-    _invalidate_candidate(run, args.id)
-
-    stages = plan.stages_for(candidate)
+    # Resolving the seed and the stages are the last two steps that can refuse, so
+    # they run before the invalidation rather than after it. A conflicting --seed
+    # used to delete the previous attempt and then refuse to replace it, and the
+    # decision log records only how an attempt ended: the op, the error type and the
+    # message live in the embeddings artefact and nowhere else, so the diagnosis the
+    # retry existed to act on was destroyed by the refusal to run it.
     seed = run_seed(run, args.seed)
+    stages = plan.stages_for(candidate)
+
+    _invalidate_candidate(run, args.id)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
