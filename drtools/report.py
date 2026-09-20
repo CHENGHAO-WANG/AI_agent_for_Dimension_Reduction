@@ -46,15 +46,27 @@ _OPEN = re.compile(
 _DIGEST_CHARS = 16
 
 
-def _digest(body: str) -> str:
-    """Over the body as written, with line endings normalised.
+def _normalise(body: str) -> str:
+    """The one canonical form of a block body, used everywhere a body is compared.
 
-    Normalised because git rewrites them on checkout in this repo, and a block that read
-    as hand-edited after a clone would make `--refresh` useless on a fresh checkout.
+    Line endings collapse because git rewrites them on checkout in this repo, and a
+    block that read as hand-edited after a clone would make `--refresh` useless on a
+    fresh checkout.
+
+    Trailing blank lines go because `parse_blocks` cannot keep them: the closing comment
+    sits on its own line, so reading a body back always strips what precedes it. A
+    generator that ends its body with a blank line -- `_block_ranking` does, whenever a
+    run produced no ranking notes -- would otherwise write a body that does not match
+    its own digest the moment it is read back, and every refresh would refuse a block
+    nobody had touched. Normalising in one place is what keeps written, parsed and
+    regenerated bodies comparable.
     """
-    return hashlib.sha256(
-        body.replace("\r\n", "\n").encode("utf-8")
-    ).hexdigest()[:_DIGEST_CHARS]
+    return body.replace("\r\n", "\n").rstrip("\n")
+
+
+def _digest(body: str) -> str:
+    """Over the body in canonical form."""
+    return hashlib.sha256(_normalise(body).encode("utf-8")).hexdigest()[:_DIGEST_CHARS]
 
 
 @dataclass(frozen=True)
@@ -73,7 +85,12 @@ class ParsedBlock:
 
 
 def fence(block_id: str, body: str) -> str:
-    """One complete fenced region: opening comment with digest, body, closing comment."""
+    """One complete fenced region: opening comment with digest, body, closing comment.
+
+    The body is written in canonical form, so that what is written is exactly what
+    `parse_blocks` reads back and exactly what the digest covers.
+    """
+    body = _normalise(body)
     return (
         f"<!-- drtools:{block_id} sha256={_digest(body)} -->\n"
         f"{body}\n"
@@ -488,8 +505,13 @@ _BUILDERS = {
 
 
 def build_blocks(run: RunDir) -> dict[str, str]:
-    """A body for every declared block. Never raises for an artefact that is absent."""
-    return {block_id: _BUILDERS[block_id](run) for block_id in BLOCK_IDS}
+    """A body for every declared block. Never raises for an artefact that is absent.
+
+    Bodies come back in canonical form, so that a caller comparing one against a body
+    parsed out of a document is comparing like with like. Without this, every block
+    whose generator ends on a blank line would read as changed on every refresh.
+    """
+    return {block_id: _normalise(_BUILDERS[block_id](run)) for block_id in BLOCK_IDS}
 
 
 # ----------------------------------------------------------------- the document

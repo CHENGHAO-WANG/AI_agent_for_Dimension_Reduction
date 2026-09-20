@@ -35,7 +35,15 @@ from drtools.pipeline import PipelineError, run_pipeline
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
-from drtools.report import BLOCK_IDS, assemble, stale_blocks
+from drtools.report import (
+    BLOCK_IDS,
+    assemble,
+    build_blocks,
+    edited,
+    parse_blocks,
+    replace_block,
+    stale_blocks,
+)
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import MISSING, RunDir, resolve_evidence
@@ -1251,6 +1259,55 @@ def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return suggest_base(profile, recon)
+
+
+def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
+    """Rewrite the generated blocks of an existing report, and nothing else.
+
+    A block the agent has edited is refused rather than rewritten. Regenerating it
+    would destroy that edit as a side effect of an unrelated request, which is the
+    defect found in `embed` on day 9 — and the whole reason the fence carries a digest.
+
+    A block the document no longer holds is reported rather than re-inserted. Where in
+    the agent's prose a deleted fence belonged is not something the toolbox can know,
+    and guessing would drop a table into the middle of a paragraph.
+    """
+    if not path.exists():
+        raise ContractError(
+            f"there is no report at {path} to refresh. Run `drtools report --run-dir "
+            f"{run.path}` to write one."
+        )
+
+    document = path.read_text(encoding="utf-8")
+    blocks = parse_blocks(document)
+    hand_edited = sorted(block_id for block_id, block in blocks.items() if edited(block))
+    if hand_edited:
+        raise ContractError(
+            f"block(s) {', '.join(hand_edited)} have been edited by hand since the "
+            "toolbox wrote them, and refreshing would discard those edits. The blocks "
+            "hold this run's numbers and the toolbox owns them; prose belongs outside "
+            "the fence. Move the edit outside the block and the refresh will go "
+            "through."
+        )
+
+    bodies = build_blocks(run)
+    refreshed, unchanged = [], []
+    for block_id in BLOCK_IDS:
+        if block_id not in blocks:
+            continue
+        if blocks[block_id].body == bodies[block_id]:
+            unchanged.append(block_id)
+            continue
+        document = replace_block(document, block_id, bodies[block_id])
+        refreshed.append(block_id)
+
+    path.write_text(document, encoding="utf-8")
+    return {
+        "path": str(path),
+        "refreshed": refreshed,
+        "unchanged": unchanged,
+        "missing": [block_id for block_id in BLOCK_IDS if block_id not in blocks],
+    }
 
 
 def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:

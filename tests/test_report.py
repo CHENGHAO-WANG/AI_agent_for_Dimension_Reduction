@@ -199,3 +199,111 @@ def test_report_refuses_to_overwrite_and_names_refresh(cli, finished_run):
     assert (
         finished_run.path / "report.md"
     ).read_text(encoding="utf-8") == "the agent's prose\n"
+
+
+# ----------------------------------------------- refreshing without destroying prose
+
+
+def test_refresh_updates_a_block_and_leaves_the_prose_alone(cli, finished_run):
+    cli("report", "--run-dir", finished_run.path)
+    path = finished_run.path / "report.md"
+    written = "The winner is clear on the neighbourhood metrics."
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "_Yours to write. Delete this line._", written, 1
+        ),
+        encoding="utf-8",
+    )
+
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
+    after = path.read_text(encoding="utf-8")
+    assert written in after
+    assert set(parse_blocks(after)) == set(BLOCK_IDS)
+
+
+def test_refresh_rewrites_a_block_the_run_has_moved_past(cli, finished_run):
+    """The case the whole mechanism exists for: a number changed under the document."""
+    cli("report", "--run-dir", finished_run.path)
+    path = finished_run.path / "report.md"
+    current = parse_blocks(path.read_text(encoding="utf-8"))["ranking"].body
+    path.write_text(
+        replace_block(path.read_text(encoding="utf-8"), "ranking", "an older ranking"),
+        encoding="utf-8",
+    )
+
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
+    assert "ranking" in result.payload["refreshed"]
+    assert parse_blocks(path.read_text(encoding="utf-8"))["ranking"].body == current
+
+
+def test_refresh_refuses_a_block_the_agent_edited(cli, finished_run):
+    cli("report", "--run-dir", finished_run.path)
+    path = finished_run.path / "report.md"
+    document = path.read_text(encoding="utf-8")
+    block = parse_blocks(document)["ranking"]
+    tampered = (
+        document[: block.start]
+        + document[block.start : block.end].replace("| Rank |", "| Rank (mine) |", 1)
+        + document[block.end :]
+    )
+    path.write_text(tampered, encoding="utf-8")
+
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 2
+    assert "ranking" in result.stderr
+    assert path.read_text(encoding="utf-8") == tampered, "a refusal writes nothing"
+
+
+def test_refresh_reports_a_deleted_block_rather_than_reinserting_it(cli, finished_run):
+    """The toolbox cannot know where in the prose a deleted fence belonged."""
+    cli("report", "--run-dir", finished_run.path)
+    path = finished_run.path / "report.md"
+    document = path.read_text(encoding="utf-8")
+    block = parse_blocks(document)["figures"]
+    path.write_text(document[: block.start] + document[block.end :], encoding="utf-8")
+
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
+    assert result.payload["missing"] == ["figures"]
+    assert "figures" not in parse_blocks(path.read_text(encoding="utf-8"))
+
+
+def test_refresh_refuses_when_there_is_no_report_yet(cli, finished_run):
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 2
+    assert "drtools report" in result.stderr
+
+
+def test_a_body_that_ends_in_a_blank_line_still_matches_its_own_digest():
+    """The closing comment sits on its own line, so a read always strips what precedes it.
+
+    A generator that ends its body with a blank line -- `_block_ranking` does whenever
+    a Run produced no ranking notes -- would otherwise write a block that reads as
+    hand-edited the instant it is parsed back, and `--refresh` would refuse a block
+    nobody had touched.
+    """
+    document = fence("ranking", "a table\n\n")
+
+    assert not edited(parse_blocks(document)["ranking"])
+
+
+def test_an_unchanged_report_refreshes_nothing(cli, finished_run):
+    """The comparison must be against a body in the same form the document holds.
+
+    Otherwise a block whose generator ends on a blank line reads as changed on every
+    refresh, and `refreshed` stops meaning anything the agent can act on.
+    """
+    cli("report", "--run-dir", finished_run.path)
+
+    result = cli("report", "--refresh", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
+    assert result.payload["refreshed"] == []
+    assert set(result.payload["unchanged"]) == set(BLOCK_IDS)
