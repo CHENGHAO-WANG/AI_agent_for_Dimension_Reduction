@@ -161,3 +161,41 @@ def test_a_block_whose_source_is_absent_says_so(tmp_path):
     assert blocks["ranking"] == NOT_PRODUCED
     assert blocks["figures"] == NOT_PRODUCED
     assert blocks["methods"] == NOT_PRODUCED
+
+
+# ------------------------------------------------------- emitting the document itself
+
+
+def test_report_writes_the_nine_sections_with_their_blocks(cli, finished_run):
+    result = cli("report", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
+    document = (finished_run.path / "report.md").read_text(encoding="utf-8")
+    for heading in ("## 1. Dataset profile", "## 8. Interpretation", "## 9. Limitations"):
+        assert heading in document
+    assert set(parse_blocks(document)) == set(BLOCK_IDS)
+
+
+def test_report_refuses_a_run_that_is_not_ready(cli, tmp_path):
+    """status already knows; report asks it rather than asking the question again."""
+    root = tmp_path / "runs"
+    cli("profile", "--data", "blobs", "--runs-root", root, "--run-id", "early")
+
+    result = cli("report", "--run-dir", root / "early")
+
+    assert result.code == 2
+    assert "report" in result.stderr
+    assert not (root / "early" / "report.md").exists()
+
+
+def test_report_refuses_to_overwrite_and_names_refresh(cli, finished_run):
+    cli("report", "--run-dir", finished_run.path)
+    (finished_run.path / "report.md").write_text("the agent's prose\n", encoding="utf-8")
+
+    result = cli("report", "--run-dir", finished_run.path)
+
+    assert result.code == 2
+    assert "--refresh" in result.stderr
+    assert (
+        finished_run.path / "report.md"
+    ).read_text(encoding="utf-8") == "the agent's prose\n"

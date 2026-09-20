@@ -130,3 +130,18 @@ def finished_run(tmp_path_factory):
         else:
             os.environ["DRTOOLS_ALLOW_IN_PROCESS"] = before
     return RunDir(run_dir)
+
+
+@pytest.fixture(autouse=True)
+def _clear_report(request):
+    """A session-scoped run must look untouched to every test that uses it.
+
+    `finished_run` is shared, and several tests write report.md or report.pdf into it.
+    Without this the second such test sees the first one's document and the refusals
+    under test never fire.
+    """
+    yield
+    if "finished_run" in request.fixturenames:
+        run = request.getfixturevalue("finished_run")
+        for name in ("report.md", "report.pdf"):
+            (run.path / name).unlink(missing_ok=True)

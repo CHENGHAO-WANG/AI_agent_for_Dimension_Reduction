@@ -35,6 +35,7 @@ from drtools.pipeline import PipelineError, run_pipeline
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
+from drtools.report import BLOCK_IDS, assemble, stale_blocks
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools.runs import MISSING, RunDir, resolve_evidence
@@ -258,6 +259,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="candidate to draw the per-class facet for; defaults to the ranking winner",
     )
     figures.set_defaults(handler=_cmd_figures)
+
+    report = subparsers.add_parser(
+        "report", help="emit the report skeleton with every number already in it"
+    )
+    _add_run_arguments(report)
+    report.add_argument(
+        "--refresh",
+        action="store_true",
+        help="rewrite the generated blocks of an existing report.md in place, "
+        "leaving the prose around them untouched",
+    )
+    report.set_defaults(handler=_cmd_report)
 
     return parser
 
@@ -1238,6 +1251,38 @@ def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return suggest_base(profile, recon)
+
+
+def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
+    """Emit the report skeleton, or refresh the blocks in one that already exists.
+
+    The readiness condition is `status`'s, not a second copy of it. Two implementations
+    of one question drift at the edges, and the failure that produces is a run where
+    `status` says the next stage is `report` and `report` says the run is not ready,
+    with nothing to tell the agent which of the two is right.
+    """
+    run = _require_run(args)
+    path = run.path / "report.md"
+
+    if args.refresh:
+        return _refresh_report(run, path)
+
+    stage = run_status(run)["next"]
+    if stage != "report":
+        raise ContractError(
+            f"this run's next stage is {stage}, not report, so a report written now "
+            "would describe an analysis that has not finished. Run `drtools status "
+            f"--run-dir {run.path}` and complete that stage first."
+        )
+    if path.exists():
+        raise ContractError(
+            f"{path} already exists, and writing it again would discard the prose "
+            "around the generated blocks. Use `--refresh` to bring the blocks up to "
+            "date and leave everything else alone."
+        )
+
+    path.write_text(assemble(run), encoding="utf-8")
+    return {"path": str(path), "blocks": list(BLOCK_IDS), "written": True}
 
 
 def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:

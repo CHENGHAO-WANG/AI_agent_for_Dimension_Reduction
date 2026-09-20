@@ -490,3 +490,54 @@ _BUILDERS = {
 def build_blocks(run: RunDir) -> dict[str, str]:
     """A body for every declared block. Never raises for an artefact that is absent."""
     return {block_id: _BUILDERS[block_id](run) for block_id in BLOCK_IDS}
+
+
+# ----------------------------------------------------------------- the document
+
+
+SECTIONS: tuple[tuple[str, str | None], ...] = (
+    ("1. Dataset profile", "profile"),
+    ("2. Preprocessing decisions, and why", "preprocessing"),
+    ("3. Methods selected and rejected", "methods"),
+    ("4. Hyperparameter choices, and why", "hyperparameters"),
+    ("5. Figures", "figures"),
+    ("6. Quantitative comparison", "metrics"),
+    ("7. Ranking, with the weighting justification", "ranking"),
+    ("8. Interpretation", None),
+    ("9. Limitations", "limitations"),
+)
+"""The skeleton, matching `skills/write-report/SKILL.md` heading for heading.
+
+Fixed so that the two generated reports can be read side by side. Section 8 carries no
+block id, which is the whole shape of the split.
+"""
+
+_PROMPT = "_Yours to write. Delete this line._"
+
+
+def assemble(run: RunDir) -> str:
+    """The whole document: the nine headings, the eight blocks, and room to write."""
+    bodies = build_blocks(run)
+    parts = [f"# Dimension reduction report — {run.id}", ""]
+    for heading, block_id in SECTIONS:
+        parts += [f"## {heading}", ""]
+        if block_id is not None:
+            parts += [fence(block_id, bodies[block_id]), ""]
+        parts += [_PROMPT, ""]
+    return "\n".join(parts)
+
+
+def stale_blocks(run: RunDir, document: str) -> list[str]:
+    """Ids whose generated body no longer matches what the document holds.
+
+    Used by `--refresh` to decide what to rewrite, and by `render` to decide whether
+    the document still agrees with the run. One function, so that the two commands
+    cannot disagree about what stale means.
+    """
+    bodies = build_blocks(run)
+    present = parse_blocks(document)
+    return sorted(
+        block_id
+        for block_id, block in present.items()
+        if block_id in bodies and block.body != bodies[block_id]
+    )
