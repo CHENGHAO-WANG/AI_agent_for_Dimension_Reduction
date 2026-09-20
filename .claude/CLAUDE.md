@@ -1,9 +1,9 @@
 # dr-agent
 
 A Claude Code plugin that runs dimension-reduction analyses autonomously, built over
-fourteen work days against a 2026-09-28 deadline. The schedule in `design/notes.md` is
-indexed by day number, not dated: the build has run ahead of the calendar, and the index
-is what it tracks.
+fifteen work days against a 2026-09-28 deadline. The schedule in `design/notes.md` is
+indexed by day number, not dated: the build has run ahead of the calendar, and the
+index is what it tracks.
 
 ## Where decisions live
 

@@ -3,9 +3,9 @@
 Running record of decisions and their rationale. Raw material for the manually
 written 4-page `report.pdf`. Append as decisions are made; do not rewrite history.
 
-Fourteen work days against a 2026-09-28 deadline. Days are indexed rather than
-dated: the build has run ahead of the calendar, and the index is what the schedule
-actually tracks.
+Fifteen work days against a 2026-09-28 deadline. Days are indexed rather than dated:
+the build has run ahead of the calendar, and the index is what the schedule actually
+tracks. It was fourteen until day 8, which grew a day rather than spending the hedge.
 
 ---
 
@@ -83,9 +83,19 @@ rules planner (section 6) to reuse the same executors.
 ```
 
 **The report is generated from the log**, not written freehand. The `evidence` field
-pins every rationale to a key that actually exists in `profile.json` or
-`metrics.json`, so the agent structurally cannot claim a decision it did not make or
-cite a number it did not compute. This is the hallucination-control mechanism.
+pins every rationale to keys that must resolve in `profile.json` or `metrics.json`;
+`log-decision` refuses a citation that points at nothing, and records what each key
+resolved to beside it.
+
+What that buys is **citation integrity**: no rationale can rest on a number the run
+never computed, and a reader can follow every claim back to the artefact it came
+from. It is not proof that a rationale is true. A real key with a false reading
+passes — a silhouette of 0.7 is 0.7, and "confirms distinct biological cell types"
+is not thereby supported — and nothing binds `chosen` to an outcome the toolbox
+executed. The earlier claim here, that the agent "structurally cannot claim a
+decision it did not make", was more than key validation can carry, and day 5's rank
+falsehood was that gap already occurring. Worth having and worth claiming; the
+report should claim this and not more.
 
 ### 2.4 Pre-registered evaluation weights
 
@@ -323,20 +333,23 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 5 | Metrics battery, rank, pre-registered weighting, plan validator |
 | 6 | CONTEXT.md; viz house style, size-adaptive rendering |
 | 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol |
-| 8 | The five skills, /analyze, the decision-log write route |
-| 9 | Report template + pandoc render; first end-to-end run, dataset 1 |
-| 10 | Fix what day 9 broke, plus the queued defect lists; clean run on dataset 1 |
-| 11 | End-to-end on dataset 2 (large) |
-| 12 | Rules-planner hedge + ablation run |
-| 13 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
-| 14 | Final graded runs, reports, submit |
+| 8 | The toolbox surface the skills need: status, budget, retry accounting, log-decision, suggest-base; the candidate ceiling; adapter provenance |
+| 9 | The four skills, /analyze |
+| 10 | write-report, the report template + pandoc render; first end-to-end run, dataset 1 |
+| 11 | Fix what day 10 broke, plus the queued defect lists; clean run on dataset 1 |
+| 12 | End-to-end on dataset 2 (large) |
+| 13 | Rules-planner hedge + ablation run |
+| 14 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
+| 15 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
 the full pipeline running on toy data in under a minute.
 
-The cut order was GPLVM first, then the hedge. GPLVM is spent: day 7's contract work
-took it, and the skills it displaced now hold day 8. The hedge is what a further slip
-would cost. Never the tests, never day 14.
+The cut order was GPLVM first, then the hedge. GPLVM is spent, on day 7's contract
+work. Day 8 then overran too, and took a fifteenth day rather than the hedge: the
+calendar had the room, and the hedge is worth more than a day — it is both the
+ablation and the working system for a grader without Claude Code. The hedge is still
+what a further slip costs. Never the tests, never the last day.
 
 ---
 
@@ -1023,3 +1036,37 @@ would cost. Never the tests, never day 14.
   One thing found while measuring, not fixed: `mds.metric` is the metric-versus-
   non-metric flag, a boolean, while `umap.metric` is a distance-function name. Same key,
   two meanings, in a registry the planner reasons over. Day 10.
+
+- **Day 8** — Adapter provenance, the narrowed 2.3 claim, and a fifteenth day.
+
+  The adapter is the one piece of agent-written code in an analysis, and a run recorded
+  only its path. That dates badly: `my_adapter.py` describes a matrix produced by
+  whatever that file holds when someone later opens it. `meta['adapter']` is now a
+  record carrying the path, a sha256 of the source that ran, and its size.
+
+  It is also assigned rather than defaulted. `setdefault` let an adapter supply its own
+  `adapter` key and keep it — the one field saying which code produced the matrix was
+  writable by that code. This is the toolbox recording what it executed, not the
+  adapter describing itself.
+
+  Provenance is deliberately separate from the dataset digest. Day 7 kept adapter source
+  out of identity so an adapter could be tidied without invalidating a run; the
+  corollary is that identity cannot then answer which code ran, so provenance has to.
+  A test pins both halves: the same matrix from an edited adapter keeps its identity and
+  changes its provenance.
+
+  *Section 2.3 is narrowed, which day 6 said to do and nothing did.* It claimed evidence
+  keys mean the agent "structurally cannot claim a decision it did not make". They do
+  not. `log-decision` refuses a citation that resolves to nothing and records what each
+  key resolved to, which buys citation integrity: no rationale rests on a number the run
+  never computed, and every claim leads back to an artefact. A real key with a false
+  reading still passes, and nothing binds `chosen` to an executed outcome. Day 5's rank
+  falsehood was that gap occurring. The notes and the README now claim the narrower
+  thing, which is the one the mechanism delivers.
+
+  *And the schedule gained a fifteenth day.* Day 8 was re-scoped to the toolbox surface
+  the skills need, and then absorbed the candidate ceiling, four review findings, the
+  missing-data decision and this. The skills move to day 9 and everything shifts. Paid
+  for with a day rather than with the hedge: the calendar has the room, and the hedge is
+  worth more than a day, being both the ablation and the working system for a grader
+  without Claude Code. It stays what a further slip would cost.

@@ -26,10 +26,10 @@ Three properties shape the design:
   unfamiliar formats are handled by an agent-written adapter that is contract-checked
   before use.
 - **The run directory is the only state.** Nothing lives in conversation context.
-  Every decision lands in `runs/<id>/decisions.jsonl` with an `evidence` field
-  pointing at a key that actually exists in `profile.json` or `metrics.json`, and the
-  report is generated *from* that log — so the agent cannot claim a decision it did
-  not make.
+  Every decision lands in `runs/<id>/decisions.jsonl` with an `evidence` field whose
+  keys must resolve in `profile.json` or `metrics.json`, and the report is generated
+  *from* that log — so no rationale can rest on a number the run never computed, and
+  every claim can be followed back to the artefact behind it.
 - **Pre-registered evaluation.** The agent declares how it will weight the evaluation
   metrics *before* any embedding is computed, which rules out choosing a weighting
   that flatters whichever method happened to win.
