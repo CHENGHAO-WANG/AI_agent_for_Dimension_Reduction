@@ -245,3 +245,113 @@ def test_rank_refuses_a_registration_the_log_never_witnessed(cli, csv_dataset, t
     assert result.code == 2
     assert "no plan registration" in result.stderr
     assert not (run / "ranking.json").exists()
+
+
+# ------------------------------------------- a ceiling the plan declared for itself
+
+
+def _prepared_with_ceiling(cli, csv_dataset, tmp_path, ceiling):
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    plan = _plan({"trustworthiness": 1.0})  # candidates a and b
+    plan["max_candidates"] = ceiling
+    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    assert cli("validate-plan", "--run-dir", runs / "r1").code == 0
+    return runs / "r1"
+
+
+def test_a_declared_ceiling_is_recorded_where_it_cannot_be_rewritten(
+    cli, csv_dataset, tmp_path
+):
+    """plan.registered.json is a file and is overwritten by the next registration.
+
+    The log is the only place a declaration made before the results existed survives
+    one made after them. Without it, a ceiling of 2 raised to 5 leaves no trace that 2
+    was ever claimed, so the self-restraint is unfalsifiable rather than checkable.
+    """
+    run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 2)
+
+    records = [json.loads(line) for line in
+               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
+    registration = [r for r in records if r["stage"] == "register_plan"][-1]
+
+    assert registration["max_candidates"] == 2
+
+
+def test_no_declared_ceiling_records_none_rather_than_omitting_the_key(
+    cli, csv_dataset, tmp_path
+):
+    """Absent and unstated must be distinguishable in the record."""
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+
+    records = [json.loads(line) for line in
+               (run / "decisions.jsonl").read_text(encoding="utf-8").splitlines()]
+    registration = [r for r in records if r["stage"] == "register_plan"][-1]
+
+    assert "max_candidates" in registration
+    assert registration["max_candidates"] is None
+
+
+def test_raising_a_declared_ceiling_after_registering_refuses(
+    cli, csv_dataset, tmp_path
+):
+    """Declared before any result existed, so it is pre-registration like the weighting.
+
+    Re-registration froze the budget, the weighting and the base, and left this open,
+    which let a run declare restraint at 2 and then register 5 candidates under it.
+    """
+    run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 2)
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["max_candidates"] = 5
+    plan["candidates"].append({"id": "c", "stages": PCA})
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 2
+    assert "max_candidates" in result.stderr
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert registered["max_candidates"] == 2
+    assert sorted(c["id"] for c in registered["candidates"]) == ["a", "b"]
+
+
+def test_tightening_a_declared_ceiling_stays_legal(cli, csv_dataset, tmp_path):
+    """More restraint than was claimed is not a loosening, and nothing rests on it."""
+    run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 5)
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["max_candidates"] = 3
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 0
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert registered["max_candidates"] == 3
+
+
+def test_declaring_a_ceiling_where_none_was_declared_stays_legal(
+    cli, csv_dataset, tmp_path
+):
+    """Going from the budget's ceiling to a tighter one of your own is a tightening."""
+    run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    plan["max_candidates"] = 3
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    assert cli("validate-plan", "--run-dir", run).code == 0
+
+
+def test_dropping_a_declared_ceiling_back_to_the_budgets_refuses(
+    cli, csv_dataset, tmp_path
+):
+    """Omitting the field is the loosening that looks like saying nothing."""
+    run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 2)
+    plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
+    del plan["max_candidates"]
+    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    result = cli("validate-plan", "--run-dir", run)
+
+    assert result.code == 2
+    assert "max_candidates" in result.stderr

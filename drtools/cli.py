@@ -330,7 +330,9 @@ claimed without scoring -- which is the pre-registration guarantee defeated by t
 mechanism built to record it.
 """
 
-LIFECYCLE_FIELDS = frozenset({"plan_digest", "outcome", "weights", "candidates"})
+LIFECYCLE_FIELDS = frozenset(
+    {"plan_digest", "outcome", "weights", "candidates", "max_candidates"}
+)
 """Fields the freeze reads off lifecycle records. Refused for the same reason."""
 
 
@@ -772,6 +774,22 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
             "Start a new run for the changed budget."
         )
 
+    existing_ceiling = _effective_ceiling(existing)
+    proposed_ceiling = _effective_ceiling(proposed)
+    if proposed_ceiling > existing_ceiling:
+        allows = (
+            f"max_candidates={proposed.max_candidates}"
+            if proposed.max_candidates is not None
+            else f"no max_candidates of its own, so the budget's {proposed_ceiling}"
+        )
+        raise ContractError(
+            f"this run registered a plan capped at {existing_ceiling} candidates and "
+            f"the plan just submitted declares {allows}. The cap was declared before "
+            "any candidate had run, which is what made it a claim about restraint "
+            "rather than a report of what the run turned out to need. Tighten it or "
+            "leave it as it stands, or start a new run under the ceiling you want."
+        )
+
     if dict(proposed.evaluation.weights) != dict(existing.evaluation.weights):
         raise ContractError(
             "this run already registered a plan, and the weighting cannot move once "
@@ -812,6 +830,18 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
             )
 
 
+def _effective_ceiling(plan: Plan) -> int:
+    """How many candidates this plan may register: the budget's, or tighter.
+
+    A plan may cap itself below the budget. `validate_plan` refuses a declaration
+    above it, so the effective ceiling is the smaller of the two.
+    """
+    ceiling = BUDGET_MAX_CANDIDATES[plan.budget]
+    if plan.max_candidates is not None:
+        ceiling = min(plan.max_candidates, ceiling)
+    return ceiling
+
+
 def _exhausted_message(candidate_id: str, plan: Plan) -> str:
     """Why a third attempt is refused, and what is actually available instead.
 
@@ -820,9 +850,7 @@ def _exhausted_message(candidate_id: str, plan: Plan) -> str:
     manual for the loop the ceiling exists to bound — true, helpful, and the exact
     sentence that lets an exhausted run keep spending.
     """
-    ceiling = BUDGET_MAX_CANDIDATES[plan.budget]
-    if plan.max_candidates is not None:
-        ceiling = min(plan.max_candidates, ceiling)
+    ceiling = _effective_ceiling(plan)
     remaining = ceiling - len(plan.candidates)
 
     opening = (
@@ -1168,6 +1196,9 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         plan_digest=digest,
         weights=dict(registered.evaluation.weights),
         candidates=[c.id for c in registered.candidates],
+        # Recorded even when nothing was declared, so that "claimed no restraint"
+        # and "this record predates the field" stay distinguishable.
+        max_candidates=registered.max_candidates,
     )
     report["plan_digest"] = digest
     return report

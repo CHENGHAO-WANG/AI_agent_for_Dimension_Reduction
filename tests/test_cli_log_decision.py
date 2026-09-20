@@ -252,7 +252,7 @@ def test_lifecycle_stages_cannot_be_written_by_hand(cli, csv_dataset, tmp_path, 
 @pytest.mark.parametrize(
     "field,value",
     [("plan_digest", "deadbeef"), ("outcome", "ok"), ("weights", {"t": 1.0}),
-     ("candidates", ["a", "b"])],
+     ("candidates", ["a", "b"]), ("max_candidates", 7)],
 )
 def test_lifecycle_fields_cannot_be_written_by_hand(
     cli, csv_dataset, tmp_path, field, value
