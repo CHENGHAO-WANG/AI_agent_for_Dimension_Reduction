@@ -1338,7 +1338,11 @@ def _require_run(args: argparse.Namespace, *, create: bool = True) -> RunDir:
         raise ContractError("--run-dir is required: this command reads an existing run.")
     path = Path(args.run_dir)
     if not path.exists():
-        raise ContractError(f"no run at {path}.")
+        raise ContractError(
+            f"no run at {path}. Correct the path, or create the run: `drtools "
+            "profile --data <spec> --runs-root <root> --run-id <id>` is what makes "
+            "one, and every other command reads a run that already exists."
+        )
     return RunDir(path, create=create)
 
 

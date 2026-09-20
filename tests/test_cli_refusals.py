@@ -109,6 +109,21 @@ def test_a_typo_does_not_turn_rank_into_the_wrong_diagnosis(cli, tmp_path):
     assert "no registered plan" not in result.stderr
 
 
+def test_the_missing_run_refusal_names_the_command_that_creates_one(cli, tmp_path):
+    """The first command of a new analysis is run against a path that does not exist.
+
+    `/analyze` and `profile-dataset` both open by reading position from `status`, so
+    this refusal is what a fresh Run meets first. Saying only that the path is empty
+    leaves the agent to guess between a typo and a Run it has not created yet, and
+    those have opposite repairs.
+    """
+    result = cli("status", "--run-dir", tmp_path / "fresh")
+
+    assert result.code == 2
+    assert "no run at" in result.stderr
+    assert "drtools profile" in result.stderr
+    assert not (tmp_path / "fresh").exists()
+
 # -------------------------------------------------- refusals that were OS errors
 
 

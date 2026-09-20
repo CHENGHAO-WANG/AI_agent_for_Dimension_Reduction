@@ -34,16 +34,23 @@ number in the report has to come from it.
 ## Start or resume
 
 If a `--run-id` was given and that Run exists, or if `runs/` holds an unfinished Run for
-this dataset, resume it. Otherwise start one.
+this dataset, this is a resumption. Otherwise it is a new Run. The two open
+differently, because `status` reads a Run and cannot create one.
 
-Either way, the next command is:
+**A new Run.** Enter **profile-dataset** and start at its first step.
+`drtools profile` is what creates the Run directory, and until it has run there is
+no position to read: every other command refuses a path that does not exist.
+
+**A resumed Run.** Read the position first:
 
 ```
 drtools status --run-dir runs/<id>
 ```
 
 `next` names the stage to enter: `profile`, `recon`, `plan`, `execute`, `evaluate` or
-`report`. Enter that stage's skill. Re-read `status` after each stage rather than
+`report`. Enter that stage's skill.
+
+From there the two are the same. Re-read `status` after each stage rather than
 assuming the next one — a Candidate that failed changes what comes next.
 
 Nothing about the Run lives in this conversation. If context is lost, `status` restores

@@ -10,6 +10,12 @@ structured, so that planning argues from evidence rather than from the dataset's
 
 ## Read your position from the Run
 
+A new Run has no position to read. Step 1 below is what creates the Run directory,
+and until it has run every command that reads a Run refuses the path. Starting a new
+analysis, go straight to step 1.
+
+Resuming a Run that exists, read the position first:
+
 ```
 drtools status --run-dir runs/<id>
 ```
