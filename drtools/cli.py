@@ -347,7 +347,7 @@ def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
     report must not imply otherwise.
     """
     run = _require_run(args)
-    document = _read_json_argument(args.json)
+    document = _read_json_argument(args.json, flag="--json")
     if not isinstance(document, dict):
         raise ContractError(
             "--json must be a JSON object describing one decision, with stage, "
@@ -1097,7 +1097,7 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
     source = args.plan if args.plan else "plan.json"
     document = (
-        _read_json_argument(args.plan)
+        _read_json_argument(args.plan, flag="--plan")
         if args.plan
         else run.read_artifact("plan.json")
     )
@@ -1354,13 +1354,28 @@ def _reference_for(run: RunDir, candidate_id: str):
     return reference, labels
 
 
-def _read_json_argument(argument: str) -> Any:
-    text = (
-        Path(argument[1:]).read_text(encoding="utf-8")
-        if argument.startswith("@")
-        else argument
-    )
-    return json.loads(text)
+def _read_json_argument(argument: str, *, flag: str) -> Any:
+    """Parse a JSON argument, naming the source that did not parse.
+
+    `_plan_from` already turned pydantic's ValidationError into a refusal. That is
+    raised once the document has parsed; a document that never parses fails a step
+    earlier, in `json.loads`, and `main` catches neither JSONDecodeError nor the
+    ValueError it derives from. The agent read a traceback and exit 1, which is none
+    of the four codes the toolbox documents and carries no route out.
+
+    The flag and `@path` are two sources and the message says which was read, because
+    `json.loads` reports only a line and a column.
+    """
+    from_file = argument.startswith("@")
+    source = argument[1:] if from_file else flag
+    text = Path(argument[1:]).read_text(encoding="utf-8") if from_file else argument
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ContractError(
+            f"{source} is not valid JSON: {error}. Correct the document and run the "
+            "command again."
+        ) from error
 
 
 def _load(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:

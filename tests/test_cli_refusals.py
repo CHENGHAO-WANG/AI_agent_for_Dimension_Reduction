@@ -181,3 +181,53 @@ def test_a_candidate_with_no_stages_is_refused_rather_than_raising(
 
     assert result.code == 2
     assert "at least one stage" in result.stderr
+
+
+# ------------------------------------------ malformed JSON passed on the command line
+
+
+def test_a_malformed_plan_argument_is_refused_rather_than_raising(
+    cli, csv_dataset, tmp_path
+):
+    """`--plan '{bad'` used to leave a JSONDecodeError traceback and exit 1.
+
+    `_plan_from` already closed this for pydantic's ValidationError, which is raised
+    once the document has parsed. A document that never parses is raised a step
+    earlier, by `json.loads`, and reached `main` uncaught -- so the agent read a
+    traceback and an exit code that is none of the four the toolbox documents.
+    """
+    run, _ = _profiled(cli, csv_dataset, tmp_path)
+
+    result = cli("validate-plan", "--run-dir", run, "--plan", "{not json")
+
+    assert result.code == 2
+    assert "contract error:" in result.stderr
+    assert "--plan" in result.stderr
+
+
+def test_a_malformed_decision_argument_is_refused_rather_than_raising(
+    cli, csv_dataset, tmp_path
+):
+    """The same parse, on the agent's only write route into the decision log."""
+    run, _ = _profiled(cli, csv_dataset, tmp_path)
+
+    result = cli("log-decision", "--run-dir", run, "--json", "{not json")
+
+    assert result.code == 2
+    assert "contract error:" in result.stderr
+    assert "--json" in result.stderr
+
+
+def test_a_malformed_json_file_names_the_file_rather_than_the_flag(
+    cli, csv_dataset, tmp_path
+):
+    """`@path` is a second source, and the message has to say which one was read."""
+    run, _ = _profiled(cli, csv_dataset, tmp_path)
+    document = tmp_path / "decision.json"
+    document.write_text("{not json", encoding="utf-8")
+
+    result = cli("log-decision", "--run-dir", run, "--json", f"@{document}")
+
+    assert result.code == 2
+    assert "contract error:" in result.stderr
+    assert str(document) in result.stderr
