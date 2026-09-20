@@ -334,8 +334,8 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 6 | CONTEXT.md; viz house style, size-adaptive rendering |
 | 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol |
 | 8 | The toolbox surface the skills need: status, budget, retry accounting, log-decision, suggest-base; the candidate ceiling; adapter provenance |
-| 9 | The four skills, /analyze |
-| 10 | write-report, the report template + pandoc render; first end-to-end run, dataset 1 |
+| 9 | The five skills, /analyze |
+| 10 | Report template + pandoc render; first end-to-end run, dataset 1 |
 | 11 | Fix what day 10 broke, plus the queued defect lists; clean run on dataset 1 |
 | 12 | End-to-end on dataset 2 (large) |
 | 13 | Rules-planner hedge + ablation run |
