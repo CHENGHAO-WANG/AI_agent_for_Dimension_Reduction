@@ -4,10 +4,12 @@
 every skill's first step reads its position from here. Prose that tells an agent which
 files to check decays silently and cannot be tested; a command can be.
 
-Existence comes from artefacts. Anything the freeze governs — a candidate's outcome, how
-many attempts it has had, whether the re-plan round is spent — comes from the decision
-log, which is append-only and predates every embedding. Files can be deleted; the log is
-the authority, as day 7 established for the registration check.
+Existence comes from artefacts. Anything the freeze governs — which candidates the run
+registered, how each ended, how many attempts it has had, whether the re-plan round is
+spent — comes from the decision log, which is append-only and predates every embedding.
+Files can be deleted or rewritten; the log is the authority, as day 7 established for
+the registration check. That matters most here, because this is the command that
+decides what the agent does next.
 """
 
 from __future__ import annotations
@@ -56,8 +58,7 @@ def run_status(run: RunDir) -> dict[str, Any]:
 
     abandoned = _abandoned(decisions)
     candidates: dict[str, Any] = {}
-    for candidate in (plan or {}).get("candidates", []):
-        candidate_id = candidate["id"]
+    for candidate_id in _registered_candidate_ids(decisions, plan):
         tries = attempts(run, candidate_id)
         # An attempt that recorded no outcome died before it could write one, which is
         # revisable — the same reading `_recorded_outcome` takes.
@@ -86,6 +87,26 @@ def run_status(run: RunDir) -> dict[str, Any]:
     }
     state["next"] = _next_stage(state)
     return state
+
+
+def _registered_candidate_ids(
+    decisions: list[dict[str, Any]], plan: dict[str, Any] | None
+) -> list[str]:
+    """Which candidates this run registered, taken from the log, not the file.
+
+    `rank` cross-checks `plan.registered.json` against the log and refuses when they
+    disagree, so a rewritten file cannot change a ranking. It could still change what
+    this command reports, and this command is what the agent reads to decide its next
+    move — so a forged candidate would redirect the run long before `rank` refused.
+    The registration record already carries the id list; use it.
+
+    The file remains the fallback only where no registration was recorded, which is a
+    run that never froze a plan and therefore has no freeze to protect.
+    """
+    for record in reversed(decisions):
+        if record.get("stage") == "register_plan":
+            return list(record.get("candidates") or [])
+    return [candidate["id"] for candidate in (plan or {}).get("candidates", [])]
 
 
 def _abandoned(decisions: list[dict[str, Any]]) -> set[str]:
@@ -128,9 +149,11 @@ def _ranked(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
         return False
     registered = _registered_digests(decisions)
     if not registered:
-        # A ranking with no registration recorded predates the freeze; nothing to
-        # compare it against, so take the artefact at its word.
-        return True
+        # `rank` refuses unless the log records a registration, so a ranking with no
+        # `register_plan` record behind it was not produced by this toolbox. Taking
+        # the artefact at its word would let a hand-written file declare the run
+        # finished — the one claim `status` must never make on a file's say-so.
+        return False
     return jsonio.read(ranking_path).get("plan_digest") == registered[-1]
 
 

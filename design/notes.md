@@ -116,8 +116,13 @@ about 3 with a connected k-NN graph justifies Isomap and Diffusion Maps; a
 fast-decaying PCA spectrum says the structure is largely linear and manifold methods
 will add little; a disconnected graph rules out spectral methods before they crash.
 
-One optional re-plan is permitted after evaluation. Fully iterative planning was
-rejected as unbounded in cost.
+One optional re-plan is permitted once the portfolio has been attempted. Fully
+iterative planning was rejected as unbounded in cost. The trigger is an attempt
+rather than an evaluation, because a run where every candidate failed has nothing to
+evaluate and would otherwise be offered the round forever — and a run with no
+successes is exactly the one that needs to re-plan. The round is a portfolio that
+*grew*: replacing a candidate the agent gave up on is the diagnose-and-retry of
+section 4, not a new round.
 
 ### 3.2 Candidates are pipelines, not methods
 
@@ -935,3 +940,42 @@ would cost. Never the tests, never day 14.
   ids all running the same method is legal. Section 3.4's family-spanning requirement is
   the answer to that and is still unenforced; it is day 10 work, because as an error at
   re-registration it could refuse a legitimate replacement.
+
+- **Day 8** — Four smaller findings from the same review, and one pattern shared
+  between two of them.
+
+  *The re-plan trigger.* Section 3.1 said the round comes "after evaluation"; the code
+  offers it once anything has been attempted. The code is right and the sentence was
+  amended to match: a run where every candidate failed has nothing to evaluate, and is
+  exactly the run that needs to re-plan. Reading it literally would have offered the
+  round forever to the runs least able to take it.
+
+  *`status` trusted the file.* It enumerated candidates from `plan.registered.json`
+  while taking outcomes, attempts and the re-plan round from the decision log. `rank`
+  cross-checks the two and refuses, so a rewritten file could never change a ranking —
+  but it could change what `status` reported, and `status` is what the agent reads to
+  choose its next move, so a forged candidate would have redirected the run long before
+  `rank` refused. The registration record already carries the id list; it is now the
+  source, with the file kept only as the fallback for a run that never froze a plan.
+
+  *`_ranked` failed open.* A `ranking.json` with no registration recorded was taken at
+  its word. `rank` refuses unless the log records a registration, so that state cannot
+  be produced by this toolbox — which makes reading it as ranked a way for a
+  hand-written file to declare the run finished. It now fails closed.
+
+  *The in-process gate named its own key.* `--in-process` escapes the wall-clock cap
+  and is held behind an environment variable, and both the refusal and the `--help`
+  text said which variable. That is the same defect as the retry refusal that advised
+  registering a new candidate id: correct, helpful, and the one sentence that hands over
+  the bypass. Both now name only the legitimate route.
+
+  The limit is worth stating rather than leaving to be found: the variable still exists,
+  because the suite needs it, and an agent with a shell could set it. What changed is
+  that nothing in the toolbox tells it so. That is a speed bump, not a barrier — the
+  barrier would be removing the flag and having the tests reach `run_pipeline` directly,
+  which costs the outcome recording the CLI path gives them.
+
+  Two of the four are the same shape, and it is worth naming because it has now
+  appeared three times in two days: a refusal that explains the way around itself. A
+  message is the surface the agent acts on, so a true sentence in it is an instruction,
+  not a note.

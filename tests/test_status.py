@@ -6,6 +6,25 @@ log, because files can be deleted and the log cannot.
 
 from __future__ import annotations
 
+import json
+
+
+def _registered_run(cli, csv_dataset, tmp_path):
+    """A run with one registered PCA candidate."""
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+    (run / "plan.json").write_text(json.dumps({
+        "dataset": "d",
+        "candidates": [
+            {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+        ],
+        "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
+    }), encoding="utf-8")
+    cli("validate-plan", "--run-dir", run)
+    return run
+
 
 def test_a_fresh_run_reports_recon_as_next(cli, csv_dataset, tmp_path):
     cli(
@@ -371,3 +390,45 @@ def test_extending_beyond_a_replacement_does_spend_the_round(cli, csv_dataset, t
     ]).code == 0
 
     assert cli("status", "--run-dir", run).payload["replan_round_spent"] is True
+
+
+def test_the_candidate_set_comes_from_the_log_not_the_registered_file(
+    cli, csv_dataset, tmp_path
+):
+    """A rewritten plan file must not redirect the agent.
+
+    Day 7 made the log the authority for the freeze because a file can be rewritten,
+    and `rank` cross-checks the two. `status` decides what the agent does next, so
+    enumerating candidates from the file left the one command that steers the run
+    trusting the one artefact the freeze does not.
+    """
+    run = _registered_run(cli, csv_dataset, tmp_path)
+
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    registered["candidates"].append(
+        {"id": "ghost", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+    )
+    (run / "plan.registered.json").write_text(json.dumps(registered), encoding="utf-8")
+
+    status = cli("status", "--run-dir", run).payload
+
+    assert "ghost" not in status["candidates"]
+    assert "pca2" in status["candidates"]
+
+
+def test_a_ranking_with_no_registration_recorded_is_not_ranked(
+    cli, csv_dataset, tmp_path
+):
+    """The toolbox cannot produce that state, so reading it as ranked fails open.
+
+    `rank` refuses unless the log records a registration, so a ranking.json with no
+    `register_plan` record behind it was not written by this toolbox. Taking it at its
+    word would let a hand-written file declare the run finished.
+    """
+    run = _registered_run(cli, csv_dataset, tmp_path)
+    (run / "decisions.jsonl").write_text("", encoding="utf-8")
+    (run / "ranking.json").write_text(
+        json.dumps({"winner": "pca2", "plan_digest": "whatever"}), encoding="utf-8"
+    )
+
+    assert cli("status", "--run-dir", run).payload["ranked"] is False

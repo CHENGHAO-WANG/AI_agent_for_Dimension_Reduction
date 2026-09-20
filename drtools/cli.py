@@ -184,9 +184,9 @@ def _build_parser() -> argparse.ArgumentParser:
     embed.add_argument(
         "--in-process",
         action="store_true",
-        help="run in this process instead of an isolated one. Faster, but uncapped and "
-        "unrecorded if a method exhausts memory, so it is gated behind the "
-        "DRTOOLS_ALLOW_IN_PROCESS environment variable that the test harness sets",
+        help="run in this process instead of an isolated one. Faster, but uncapped "
+        "and unrecorded if a method exhausts memory, so it is reserved for the test "
+        "harness and refused otherwise",
     )
     embed.set_defaults(handler=_cmd_embed)
 
@@ -564,9 +564,9 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         raise ContractError(
             "--in-process runs with no wall-clock cap, so no budget can bind it and a "
             "method that exhausts memory takes the toolbox down with it, leaving no "
-            "record of the attempt. It exists for the test harness, which sets "
-            "DRTOOLS_ALLOW_IN_PROCESS. Drop the flag to run this candidate in an "
-            "isolated process under the budget this run registered."
+            "record of the attempt. It exists for the test harness and is not "
+            "available here. Drop the flag to run this candidate in an isolated "
+            "process under the budget this run registered."
         )
 
     cap = budget_timeout(plan.budget)

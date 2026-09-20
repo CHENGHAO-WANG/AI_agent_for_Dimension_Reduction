@@ -142,8 +142,33 @@ def test_in_process_is_refused_without_the_developer_gate(
     result = cli("embed", "--run-dir", run, "--id", "pca2", "--in-process")
 
     assert result.code == 2
-    assert "DRTOOLS_ALLOW_IN_PROCESS" in result.stderr
     assert "isolated process" in result.stderr
+
+
+def test_the_in_process_gate_does_not_name_its_own_key(
+    cli, csv_dataset, tmp_path, monkeypatch
+):
+    """A refusal that names the variable unlocking it is the bypass's instructions.
+
+    The same defect as the retry refusal that advised registering a new candidate id:
+    true, helpful, and the one sentence that lets the agent step around the bound. The
+    gate keeps the variable, because the suite needs it; the agent is never told it.
+    """
+    monkeypatch.delenv("DRTOOLS_ALLOW_IN_PROCESS", raising=False)
+    run = _registered(cli, csv_dataset, tmp_path, budget="fast")
+
+    result = cli("embed", "--run-dir", run, "--id", "pca2", "--in-process")
+
+    assert "DRTOOLS_ALLOW_IN_PROCESS" not in result.stderr
+    assert "Drop the flag" in result.stderr
+
+
+def test_the_in_process_help_does_not_name_the_key_either():
+    """`--help` is a surface the agent reads as readily as a refusal."""
+    from drtools.cli import _build_parser
+
+    subparsers = _build_parser()._subparsers._group_actions[0]
+    assert "DRTOOLS_ALLOW_IN_PROCESS" not in subparsers.choices["embed"].format_help()
 
 
 def test_the_isolated_route_needs_no_gate(cli, csv_dataset, tmp_path, monkeypatch):
