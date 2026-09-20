@@ -8,6 +8,7 @@ are what the tests assert on.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,3 +62,71 @@ def allow_in_process(monkeypatch):
     deletes the variable itself.
     """
     monkeypatch.setenv("DRTOOLS_ALLOW_IN_PROCESS", "1")
+
+
+PCA_STAGES = [{"op": "pca", "params": {"n_components": 2}}]
+
+
+def plan_document(**overrides):
+    """A small, valid plan over the blobs fixture: one candidate and one rejection."""
+    plan = {
+        "dataset": "blobs",
+        "budget": "fast",
+        "base_preprocessing": [{"op": "standardise", "params": {}}],
+        "candidates": [
+            {
+                "id": "pca-2",
+                "stages": PCA_STAGES,
+                "rationale": "linear baseline, always included",
+            }
+        ],
+        "rejected": [
+            {
+                "method": "mds",
+                "reason": "O(n^2) at this sample count and PCA recovers the same structure",
+                "evidence": ["profile.shape.n_samples"],
+            }
+        ],
+        "evaluation": {
+            "weights": {"trustworthiness": 0.6, "continuity": 0.4},
+            "justification": "neighbourhood faithfulness is the question here",
+        },
+    }
+    plan.update(overrides)
+    return plan
+
+
+@pytest.fixture(scope="session")
+def finished_run(tmp_path_factory):
+    """One complete run: profile, recon, plan, embed, evaluate, rank, figures.
+
+    Session-scoped because every report test reads it and building it twice doubles
+    the suite's runtime. The in-process gate is set here rather than left to the
+    autouse `allow_in_process` fixture: that one is function-scoped, and pytest builds
+    higher-scoped fixtures first, so it has not run yet when this one embeds.
+    """
+    from drtools.cli import main
+    from drtools.runs import RunDir
+
+    root = tmp_path_factory.mktemp("finished")
+    run_dir = root / "r1"
+    before = os.environ.get("DRTOOLS_ALLOW_IN_PROCESS")
+    os.environ["DRTOOLS_ALLOW_IN_PROCESS"] = "1"
+    try:
+        assert main(["profile", "--data", "blobs", "--runs-root", str(root),
+                     "--run-id", "r1"]) == 0
+        assert main(["recon", "--run-dir", str(run_dir)]) == 0
+        (run_dir / "plan.json").write_text(json.dumps(plan_document()), encoding="utf-8")
+        assert main(["validate-plan", "--run-dir", str(run_dir)]) == 0
+        assert main(["prepare-reference", "--run-dir", str(run_dir)]) == 0
+        assert main(["embed", "--run-dir", str(run_dir), "--id", "pca-2",
+                     "--in-process"]) == 0
+        assert main(["evaluate", "--run-dir", str(run_dir), "--id", "pca-2"]) == 0
+        assert main(["rank", "--run-dir", str(run_dir)]) == 0
+        assert main(["figures", "--run-dir", str(run_dir)]) == 0
+    finally:
+        if before is None:
+            os.environ.pop("DRTOOLS_ALLOW_IN_PROCESS", None)
+        else:
+            os.environ["DRTOOLS_ALLOW_IN_PROCESS"] = before
+    return RunDir(run_dir)

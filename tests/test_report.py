@@ -8,15 +8,21 @@ toolbox wrote from one the agent has edited.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from drtools.cli import main
 from drtools.report import (
     BLOCK_IDS,
+    NOT_PRODUCED,
+    build_blocks,
     edited,
     fence,
     parse_blocks,
     replace_block,
 )
+from drtools.runs import RunDir
 
 
 def test_a_fence_round_trips_through_the_parser():
@@ -70,3 +76,88 @@ def test_a_body_containing_a_fence_like_line_does_not_end_the_block():
     blocks = parse_blocks(fence("metrics", body))
 
     assert blocks["metrics"].body == body
+
+
+# ------------------------------------- the block contents, against a real finished run
+
+
+def test_every_declared_block_is_generated(finished_run):
+    assert set(build_blocks(finished_run)) == set(BLOCK_IDS)
+
+
+def test_there_is_no_interpretation_block(finished_run):
+    """Section 8 is the agent's alone; a generated block there would imply derivation."""
+    assert "interpretation" not in build_blocks(finished_run)
+
+
+def test_the_profile_block_prints_the_shape_the_profile_recorded(finished_run):
+    profile = json.loads((finished_run.path / "profile.json").read_text(encoding="utf-8"))
+
+    body = build_blocks(finished_run)["profile"]
+
+    assert str(profile["shape"]["n_samples"]) in body
+    assert str(profile["shape"]["n_features"]) in body
+    assert profile["dataset_digest"][:12] in body
+
+
+def test_the_ranking_block_carries_the_weighting_and_every_note(finished_run):
+    ranking = json.loads((finished_run.path / "ranking.json").read_text(encoding="utf-8"))
+
+    body = build_blocks(finished_run)["ranking"]
+
+    assert ranking["winner"] in body
+    for note in ranking["notes"]:
+        assert note in body, "a qualification rank produced must reach the report"
+
+
+def test_the_metrics_block_prints_the_values_metrics_recorded(finished_run):
+    metrics = json.loads(
+        (finished_run.path / "metrics" / "pca-2.json").read_text(encoding="utf-8")
+    )
+
+    body = build_blocks(finished_run)["metrics"]
+
+    assert f"{metrics['values']['trustworthiness']:.4f}" in body
+
+
+def test_the_hyperparameter_block_separates_specified_from_default(finished_run):
+    """param_provenance is the only record of which values the agent actually chose."""
+    body = build_blocks(finished_run)["hyperparameters"]
+
+    assert "n_components" in body
+    assert "specified" in body
+
+
+def test_the_methods_block_carries_the_rejections_with_their_reasons(finished_run):
+    """Section 3 is the highest-value part of the document, by the design's own account."""
+    plan = json.loads(
+        (finished_run.path / "plan.registered.json").read_text(encoding="utf-8")
+    )
+    rejection = plan["rejected"][0]
+
+    body = build_blocks(finished_run)["methods"]
+
+    assert rejection["method"] in body
+    assert rejection["reason"] in body
+    assert rejection["evidence"][0] in body
+
+
+def test_figure_paths_are_relative_to_the_run(finished_run):
+    """figures.json stores absolute paths; a report holding one breaks when moved."""
+    body = build_blocks(finished_run)["figures"]
+
+    assert "figures/comparison.png" in body.replace("\\", "/")
+    assert str(finished_run.path) not in body
+
+
+def test_a_block_whose_source_is_absent_says_so(tmp_path):
+    """Absent must not read as a section the agent has not reached yet."""
+    root = tmp_path / "runs"
+    assert main(["profile", "--data", "blobs", "--runs-root", str(root),
+                 "--run-id", "bare"]) == 0
+
+    blocks = build_blocks(RunDir(root / "bare"))
+
+    assert blocks["ranking"] == NOT_PRODUCED
+    assert blocks["figures"] == NOT_PRODUCED
+    assert blocks["methods"] == NOT_PRODUCED
