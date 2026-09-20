@@ -25,6 +25,40 @@ from drtools.runs import RunDir
 DEFAULT_TIMEOUT_S = 600.0
 STDERR_TAIL_LINES = 8
 
+BUDGET_TIMEOUTS_S = {"fast": 120.0, "standard": 600.0, "thorough": 3600.0}
+"""Per-candidate wall-clock caps. `standard` keeps what the default has always been."""
+
+
+def budget_timeout(budget: str) -> float:
+    """The wall-clock one candidate may spend under this Budget.
+
+    The mapping lives here rather than in skill prose so that the Budget reaches the
+    command that spends it. A table in a skill would be a number the agent retypes,
+    and a number the agent retypes is a number the agent can get wrong.
+    """
+    return BUDGET_TIMEOUTS_S[budget]
+
+
+BUDGET_MAX_CANDIDATES = {"fast": 8, "standard": 7, "thorough": 6}
+"""How many Candidates one Run may ever register, by Budget.
+
+Attempts are capped per candidate id and the id set only grows, so this is what
+bounds a Run: at most `MAX_ATTEMPTS x ceiling` executions. Without it the id set is
+the one spendable quantity nothing declares, and it is precisely what an agent mints
+to reset the per-candidate allowance — exhaust two attempts, abandon, register a
+replacement, repeat.
+
+The ceiling shrinks as `BUDGET_TIMEOUTS_S` grows, which states the trade rather than
+hiding it: a larger time allowance per candidate buys fewer of them. It sits strictly
+above section 3.4's 3-5 portfolio guidance, and that gap is the repair headroom — a
+ceiling of 5 would bound the loop by forbidding the sanctioned retry instead.
+"""
+
+
+def max_candidates(budget: str) -> int:
+    """The size of the Plan one Run may register under this Budget."""
+    return BUDGET_MAX_CANDIDATES[budget]
+
 # Signals worth naming, because the remedy differs. A process killed by the OS for
 # memory needs a smaller problem; one that aborted needs a different method.
 KILLED_BY_MEMORY = {137, -9}

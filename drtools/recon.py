@@ -50,7 +50,7 @@ def reconnaissance(
     n_samples = X.shape[0]
     index = _subsample_index(n_samples, max_samples, labels, seed)
 
-    transform, reason = _choose_probe_representation(profile)
+    transform, reason = choose_probe_representation(profile)
     probe_full = _apply_transform(X, transform)
 
     spectrum = {"probe": _spectrum(probe_full, seed=seed)}
@@ -91,8 +91,16 @@ def reconnaissance(
 # ------------------------------------------------------------------ probe choice
 
 
-def _choose_probe_representation(profile: dict[str, Any]) -> tuple[list[str], str]:
-    """Pick the representation the probes run on, by a fixed, stated rule."""
+def choose_probe_representation(profile: dict[str, Any]) -> tuple[list[str], str]:
+    """Pick the representation the probes run on, by a fixed, stated rule.
+
+    Public because `heuristics.suggest_base` offers this same rule as the planner's
+    default Base preprocessing. The two remain different things -- a probe
+    representation is discarded once the measuring is done and never produces an
+    embedding -- but they answer the same question, so the rule that settles one is the
+    honest default for the other. One implementation: a second copy in skill prose
+    would drift, and an override needs something concrete to override.
+    """
     values, features = profile["values"], profile["features"]
 
     if values["suspected_kind"] == "counts":
@@ -134,7 +142,7 @@ def _apply_transform(X: Matrix, transform: list[str]) -> Matrix:
             std = dense.std(axis=0)
             std[std == 0] = 1.0
             out = (dense - dense.mean(axis=0)) / std
-        else:  # pragma: no cover - guarded by _choose_probe_representation
+        else:  # pragma: no cover - guarded by choose_probe_representation
             raise ValueError(f"unknown probe transform {step!r}")
     return out
 

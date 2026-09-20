@@ -56,11 +56,36 @@ The compute a Run may spend, treated as a resource the agent allocates between
 Candidates rather than a limit it discovers by hitting it.
 _Avoid_: quota, timeout, allowance
 
+**Portfolio**:
+The Candidates a Plan registers. It only ever grows — a Candidate that ran and lost
+stays in the record — so its size is what a Run has spent of its Ceiling.
+_Avoid_: candidate set, arm, sweep
+
+**Ceiling**:
+The largest Portfolio a Run may register, fixed by its Budget. Since each Candidate has
+a fixed number of Attempts, this is what bounds a Run's total compute.
+_Avoid_: cap, quota, limit
+
+**Attempt**:
+One execution of a Candidate, ending in an Outcome. A Candidate gets two — the first
+and the one diagnose-and-retry — after which its failure is permanent.
+_Avoid_: try, run, retry count
+
 **Outcome**:
 How a Candidate ended: it produced an Embedding, it failed with a reason, it exceeded
 its Budget, or it died without recording anything. The last two are distinct from
 failure and from each other.
 _Avoid_: status, result, exit
+
+**Abandonment**:
+A Run's recorded decision to stop pursuing a Candidate. The Candidate stays in the
+Portfolio and on the record; what ends is any further Attempt at it.
+_Avoid_: dropping, removing, skipping, retiring
+
+**Re-plan round**:
+The single extension a Run may make to its Portfolio once its Candidates have been
+attempted. Registering a Candidate to replace an Abandonment is not one.
+_Avoid_: iteration, re-planning, second pass, extra round
 
 ### Representations
 
@@ -85,8 +110,7 @@ _Avoid_: original space, input, raw data, ground truth
 
 **Reference value**:
 A metric computed on the Reference rather than on an Embedding, so the Embedding's score
-has something to be read against. It is a baseline, not a ceiling — an Embedding can
-exceed it.
+has something to be read against. It is a baseline, and an Embedding can exceed it.
 _Avoid_: ceiling, upper bound, best case
 
 ### Evidence

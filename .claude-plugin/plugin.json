@@ -1,0 +1,22 @@
+{
+  "name": "dr-agent",
+  "description": "Runs a dimension-reduction analysis end to end: profiles a dataset, plans what to compare, executes it under a budget, scores the results against a pre-registered weighting, and writes up what was decided and why",
+  "version": "0.1.0",
+  "author": {
+    "name": "Chenghao Wang",
+    "email": "36188372+CHENGHAO-WANG@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/CHENGHAO-WANG/AI_agent_for_Dimension_Reduction",
+  "repository": "https://github.com/CHENGHAO-WANG/AI_agent_for_Dimension_Reduction",
+  "license": "MIT",
+  "keywords": [
+    "dimension-reduction",
+    "exploratory-data-analysis",
+    "umap",
+    "t-sne",
+    "pca",
+    "single-cell",
+    "embeddings",
+    "reproducibility"
+  ]
+}

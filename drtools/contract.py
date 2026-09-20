@@ -11,6 +11,13 @@ every loader — built in or agent written — must satisfy this contract:
     labels  1-D integer array of length n_samples, or None when unlabelled.
     meta    dict carrying at minimum `name` and `source`.
 
+Complete matrices only. Missing values are out of scope, and the refusal above says
+so rather than asking a loader to resolve them: measured against this toolbox, all
+ten reductions raise on NaN and no registry op imputes, so the only route a softer
+refusal left open was an adapter filling the holes in silently. Imputation changes
+results and belongs where the choice is recorded, which is nowhere in this system
+today.
+
 Sparse input is admitted deliberately. A 2700-cell scRNA-seq matrix is 707 MB dense
 and 8 MB sparse, and the sparsity itself is a fact the profiler must report and the
 planner must reason about — densifying at load time would destroy the evidence before
@@ -69,8 +76,11 @@ def _check_matrix(X: Any, origin: str) -> None:
     if not np.isfinite(values).all():
         n_bad = int((~np.isfinite(values)).sum())
         raise ContractError(
-            f"{origin}: X contains {n_bad} non-finite values (NaN or inf). Missing "
-            "data must be resolved or explicitly encoded by the loader, not passed on."
+            f"{origin}: X contains {n_bad} non-finite values (NaN or inf). Datasets "
+            "with missing values are out of scope for this toolbox: none of the ten "
+            "reductions accepts NaN, and no op imputes, so filling them in here would "
+            "put fabricated numbers into every metric and figure as though they had "
+            "been measured. Supply a complete matrix."
         )
 
 

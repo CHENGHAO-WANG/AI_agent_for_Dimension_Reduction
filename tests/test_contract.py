@@ -108,3 +108,21 @@ def test_evidence_resolution_distinguishes_present_from_missing(tmp_path) -> Non
     assert resolved["profile.shape.n_samples"] == 42
     assert resolved["profile.observations.0.a"] == 1
     assert resolved["profile.nope.deep"] is MISSING
+
+
+def test_the_non_finite_refusal_does_not_ask_the_loader_to_resolve_it() -> None:
+    """The contract used to instruct the very fabrication it exists to prevent.
+
+    "Missing data must be resolved or explicitly encoded by the loader" is an
+    instruction, not a note: an agent-written loader is the one place that could act
+    on it, and `nan_to_num` satisfies the contract with nothing recorded anywhere.
+    """
+    X = np.zeros((10, 3))
+    X[2, 1] = np.nan
+
+    with pytest.raises(ContractError) as error:
+        check_dataset(X, None, dict(VALID_META))
+
+    message = str(error.value)
+    assert "out of scope" in message
+    assert "resolved or explicitly encoded by the loader" not in message

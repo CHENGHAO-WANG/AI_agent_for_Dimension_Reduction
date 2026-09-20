@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.pipeline import PipelineError, normalise_stages, validate_stages
 from drtools.rank import RankingError, _check_weights
 from drtools.registry import Registry, load_registry
@@ -86,6 +87,7 @@ class Plan(BaseModel):
     dataset: str
     instruction: str | None = None
     budget: Literal["fast", "standard", "thorough"] = "standard"
+    max_candidates: int | None = Field(default=None, ge=1)
     base_preprocessing: list[StageSpec] = Field(default_factory=list)
     candidates: list[CandidateSpec]
     rejected: list[RejectionSpec] = Field(default_factory=list)
@@ -189,8 +191,63 @@ def validate_plan(
     }
 
 
+def _check_ceiling(plan: Plan) -> list[Finding]:
+    """How many Candidates this Run may register, and what the agent asked for.
+
+    Attempts are capped per candidate id, and `_check_reregistration` refuses to let
+    a registered id disappear, so the id set only grows. That makes its size the
+    quantity that bounds a Run's total compute — and the quantity an agent mints to
+    reset a spent per-candidate allowance. Capping it is what turns the
+    exhaust-abandon-replace cycle from unbounded into `MAX_ATTEMPTS x ceiling`.
+
+    A Plan may declare a tighter ceiling of its own. That buys no enforcement by
+    itself — a bound the agent sets on itself is not a bound — but under the hard
+    ceiling it is a checkable claim about self-restraint, which is what
+    pre-registering the weighting already buys for the evaluation.
+    """
+    ceiling = BUDGET_MAX_CANDIDATES[plan.budget]
+    declared = plan.max_candidates
+    findings: list[Finding] = []
+
+    if declared is not None and declared > ceiling:
+        findings.append(
+            Finding(
+                code="declared_ceiling_above_budget",
+                severity="error",
+                message=f"the plan declares max_candidates={declared}, above the "
+                f"{ceiling} the {plan.budget} budget allows. A ceiling the plan sets "
+                "for itself can only tighten the budget's, never loosen it.",
+                fix=f"declare max_candidates at {ceiling} or below, or omit it to "
+                "accept the budget's ceiling",
+            )
+        )
+
+    effective = min(declared, ceiling) if declared is not None else ceiling
+    if len(plan.candidates) > effective:
+        source = (
+            f"declared max_candidates of {declared}"
+            if declared is not None and declared < ceiling
+            else f"{plan.budget} budget's ceiling of {ceiling}"
+        )
+        findings.append(
+            Finding(
+                code="candidates_exceed_ceiling",
+                severity="error",
+                message=f"this plan holds {len(plan.candidates)} candidates, and the "
+                f"{source} allows {effective}. The ceiling is what bounds the run: "
+                f"each candidate id may be attempted twice, so {effective} of them "
+                f"caps the whole run at {effective * 2} executions.",
+                fix=f"register at most {effective} candidates. A run cannot drop an "
+                "id it has already registered, so one already at its ceiling has "
+                "spent its scope of work: evaluate what succeeded and report it",
+            )
+        )
+    return findings
+
+
 def _check_structure(plan: Plan, registry: Registry) -> list[Finding]:
     findings: list[Finding] = []
+    findings += _check_ceiling(plan)
 
     seen: set[str] = set()
     for candidate in plan.candidates:

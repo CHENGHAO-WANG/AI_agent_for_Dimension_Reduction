@@ -13,28 +13,48 @@ should tell it what to fix.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
 from drtools import jsonio
-from drtools.cache import ensure_cache, read_cache
+from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
-from drtools.heuristics import suggest
-from drtools.isolation import run_candidate
+from drtools.heuristics import suggest, suggest_base
+from drtools.isolation import BUDGET_MAX_CANDIDATES, budget_timeout, run_candidate
 from drtools.loaders import available, load
-from drtools.metrics import evaluate_embedding
+from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
 from drtools.pipeline import PipelineError, run_pipeline
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
+from drtools.render import render_pdf
+from drtools.report import (
+    BLOCK_IDS,
+    assemble,
+    build_blocks,
+    edited,
+    parse_blocks,
+    replace_block,
+    stale_blocks,
+)
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
-from drtools.runs import RunDir
+from drtools.runs import MISSING, RunDir, resolve_evidence
+from drtools.status import (
+    MAX_ATTEMPTS,
+    attempts as candidate_attempts,
+    extends_portfolio,
+    replan_round_spent,
+    run_status,
+)
 from drtools.viz import (
     figure_class_facet,
     figure_comparison,
@@ -52,7 +72,18 @@ EXIT_PLAN_ERROR = 5
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as error:
+        # A malformed invocation (an unknown flag, a missing required one) is refused by
+        # argparse itself, before any handler runs. It already wrote its message to
+        # stderr; the contract for `main` is that a refusal returns rather than raises,
+        # so that holds here too instead of only for errors raised past this point.
+        # argparse's own exit code for a usage error is 2, which collides with
+        # EXIT_CONTRACT_ERROR — an agent reading 2 would go looking for a
+        # "contract error:" sentence that was never printed. `--help` exits 0 and
+        # should still mean success; every other argparse exit means a usage error.
+        return EXIT_USAGE_ERROR if error.code else 0
     if not hasattr(args, "handler"):
         parser.print_help()
         return EXIT_USAGE_ERROR
@@ -91,6 +122,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "datasets", help="list the dataset specs that load without an adapter"
     )
     datasets.set_defaults(handler=_cmd_datasets)
+
+    status = subparsers.add_parser(
+        "status", help="where this run stands: what has run, what is outstanding"
+    )
+    _add_run_arguments(status)
+    status.set_defaults(handler=_cmd_status)
+
+    log_decision = subparsers.add_parser(
+        "log-decision",
+        help="append one decision, refusing any evidence key that does not resolve",
+    )
+    _add_run_arguments(log_decision)
+    log_decision.add_argument(
+        "--json",
+        required=True,
+        help="decision JSON, or @path. Requires stage, question, chosen and rationale; "
+        "evidence is a list of dotted keys, and may be empty",
+    )
+    log_decision.set_defaults(handler=_cmd_log_decision)
 
     profile = subparsers.add_parser(
         "profile", help="measure a dataset and state what the measurements imply"
@@ -137,26 +187,22 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_data_arguments(embed)
     _add_run_arguments(embed)
     embed.add_argument(
-        "--stages",
-        required=True,
-        help='ordered stages as JSON, e.g. \'[{"op":"pca","params":{"n_components":2}}]\''
-        ", or @path to read that JSON from a file",
-    )
-    embed.add_argument(
         "--id", default="candidate", help="name for this candidate's artefacts"
     )
     embed.add_argument(
         "--timeout",
         type=float,
-        default=600.0,
-        help="wall-clock cap in seconds; the candidate is stopped and recorded as a "
-        "timeout rather than left running",
+        default=None,
+        help="wall-clock cap in seconds, defaulting to the registered plan's budget. "
+        "A value above that budget's cap is refused: a budget that can be exceeded on "
+        "request is not a resource the run was planned under",
     )
     embed.add_argument(
         "--in-process",
         action="store_true",
-        help="run in this process instead of an isolated one. Faster, but a method that "
-        "exhausts memory takes the whole command down with it and leaves no record",
+        help="run in this process instead of an isolated one. Faster, but uncapped "
+        "and unrecorded if a method exhausts memory, so it is reserved for the test "
+        "harness and refused otherwise",
     )
     embed.set_defaults(handler=_cmd_embed)
 
@@ -166,7 +212,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "representation every candidate is measured against",
     )
     _add_run_arguments(reference)
-    reference.add_argument("--stages", required=True, help="base stages as JSON, or @path")
     reference.set_defaults(handler=_cmd_prepare_reference)
 
     evaluate = subparsers.add_parser(
@@ -174,15 +219,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(evaluate)
     evaluate.add_argument("--id", required=True, help="candidate to score")
-    evaluate.add_argument(
-        "--k", type=int, default=15, help="neighbourhood size for the local metrics"
-    )
-    evaluate.add_argument(
-        "--max-samples",
-        type=int,
-        default=2000,
-        help="cap for the quadratic metrics; recorded with the results",
-    )
     evaluate.set_defaults(handler=_cmd_evaluate)
 
     rank = subparsers.add_parser(
@@ -212,6 +248,13 @@ def _build_parser() -> argparse.ArgumentParser:
     suggest.add_argument("--op", required=True, help="the op to suggest parameters for")
     suggest.set_defaults(handler=_cmd_suggest_params)
 
+    suggest_base_parser = subparsers.add_parser(
+        "suggest-base",
+        help="base preprocessing the planner may adopt, from reconnaissance's rule",
+    )
+    _add_run_arguments(suggest_base_parser)
+    suggest_base_parser.set_defaults(handler=_cmd_suggest_base)
+
     figures = subparsers.add_parser(
         "figures", help="draw the standard figure set for a run"
     )
@@ -226,14 +269,33 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     figures.set_defaults(handler=_cmd_figures)
 
+    report = subparsers.add_parser(
+        "report", help="emit the report skeleton with every number already in it"
+    )
+    _add_run_arguments(report)
+    report.add_argument(
+        "--refresh",
+        action="store_true",
+        help="rewrite the generated blocks of an existing report.md in place, "
+        "leaving the prose around them untouched",
+    )
+    report.set_defaults(handler=_cmd_report)
+
+    render = subparsers.add_parser(
+        "render", help="render report.md to report.pdf, refusing a stale one"
+    )
+    _add_run_arguments(render)
+    render.set_defaults(handler=_cmd_render)
+
     return parser
 
 
 def _add_data_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--data",
-        required=True,
-        help="built-in name (see `drtools datasets`) or a path to a data file",
+        default=None,
+        help="built-in name (see `drtools datasets`) or a path to a data file; "
+        "optional when --run-dir names a run that already holds a cached dataset",
     )
     parser.add_argument(
         "--adapter",
@@ -256,7 +318,10 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--runs-root", default="runs", help="where new run directories are created"
     )
     parser.add_argument("--run-id", default=None, help="name for a new run directory")
-    parser.add_argument("--seed", type=int, default=0, help="random seed")
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="random seed; fixed when the run is created and immutable afterwards",
+    )
 
 
 # ---------------------------------------------------------------------- handlers
@@ -266,38 +331,230 @@ def _cmd_datasets(_: argparse.Namespace) -> dict[str, Any]:
     return available()
 
 
+def _cmd_status(args: argparse.Namespace) -> dict[str, Any]:
+    """Read-only, so the agent may ask as often as it likes."""
+    return run_status(_require_run(args, create=False))
+
+
+RESERVED_DECISION_FIELDS = frozenset(
+    {
+        "stage",
+        "question",
+        "chosen",
+        "rationale",
+        "evidence",
+        "options_considered",
+        "evidence_resolved",
+        "timestamp",
+        "actor",
+    }
+)
+
+LIFECYCLE_STAGES = frozenset(
+    {"recon", "embed", "rank", "validate_plan", "register_plan"}
+)
+"""Stages only the toolbox may write.
+
+The decision log is the authority the freeze anchors on: `rank` cross-checks
+registration against it, attempts are counted from it, and `status` derives the whole
+state machine from it. That holds only while these records are produced by the command
+that did the thing. A generic write route that could emit them would let a plan be
+"registered" without validation, an attempt be spent without running, or a ranking be
+claimed without scoring -- which is the pre-registration guarantee defeated by the
+mechanism built to record it.
+"""
+
+LIFECYCLE_FIELDS = frozenset(
+    {"plan_digest", "outcome", "weights", "candidates", "max_candidates"}
+)
+"""Fields the freeze reads off lifecycle records. Refused for the same reason."""
+
+
+def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
+    """The agent's only route into the decision log.
+
+    Every key is resolved before anything is written, and what it resolved to is
+    written beside it. Validating at write time and reading at report time are
+    different guarantees: artefacts are rewritten in place, so a key can resolve to
+    one value when a decision is logged and to another when the report reads it.
+    Keeping the reading makes that divergence detectable instead of invisible.
+
+    It does not make a rationale true. A real key with a false reading passes, and the
+    report must not imply otherwise.
+    """
+    run = _require_run(args)
+    document = _read_json_argument(args.json, flag="--json")
+    if not isinstance(document, dict):
+        raise ContractError(
+            "--json must be a JSON object describing one decision, with stage, "
+            "question, chosen and rationale."
+        )
+
+    missing = [
+        field
+        for field in ("stage", "question", "chosen", "rationale")
+        if not str(document.get(field) or "").strip()
+    ]
+    if missing:
+        raise ContractError(
+            f"this decision is missing {', '.join(missing)}. A decision records what "
+            "was asked, what was chosen and why; without them there is nothing for the "
+            "report to be generated from."
+        )
+
+    stage = document["stage"]
+    if stage in LIFECYCLE_STAGES:
+        raise ContractError(
+            f"'{stage}' records are written by the command that performs that step, "
+            "and the freeze reads them as evidence it happened: registration, "
+            "attempts and ranking are all checked against this log. Recording one "
+            "here would assert something the run did not do. Use a stage of your own "
+            f"-- profile, plan, execute, evaluate -- and run `drtools {stage.replace('_', '-')}` "
+            "to produce the real record."
+        )
+
+    forbidden = sorted(LIFECYCLE_FIELDS & set(document))
+    if forbidden:
+        raise ContractError(
+            f"{', '.join(forbidden)} belong to the records the toolbox writes for "
+            "itself, and the freeze reads them to decide what this run has already "
+            "done. Describe the decision in `chosen` and `rationale` instead."
+        )
+
+    evidence = list(document.get("evidence") or [])
+    artifacts = _artifacts_for_evidence(run)
+    resolved = resolve_evidence(evidence, artifacts)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(_unresolved_message(unresolved, artifacts))
+
+    extra = {
+        key: value
+        for key, value in document.items()
+        if key not in RESERVED_DECISION_FIELDS
+    }
+    run.log_decision(
+        stage=stage,
+        question=document["question"],
+        chosen=document["chosen"],
+        rationale=document["rationale"],
+        evidence=evidence,
+        options_considered=document.get("options_considered") or [],
+        evidence_resolved=jsonio.jsonable(resolved),
+        **extra,
+    )
+    return {
+        "logged": document["stage"],
+        "evidence_resolved": jsonio.jsonable(resolved),
+    }
+
+
+def _artifacts_for_evidence(run: RunDir) -> dict[str, Any]:
+    """Everything an evidence key may cite, keyed by its artefact-root name.
+
+    Keys are artefact-rooted — `profile.shape.n_samples`, not `shape.n_samples` — so
+    that a citation resolves identically from the decision log, the report or a test.
+    """
+    artifacts: dict[str, Any] = {}
+    for name, path in (
+        ("profile", run.profile_path),
+        ("recon", run.recon_path),
+        ("plan", run.plan_path),
+        ("ranking", run.path / "ranking.json"),
+    ):
+        if path.exists():
+            artifacts[name] = jsonio.read(path)
+
+    registered = run.path / "plan.registered.json"
+    if registered.exists():
+        # `plan.registered.*` is the authority a rationale should cite, so it is
+        # reachable whether or not an unregistered plan.json is also sitting there.
+        plan = dict(artifacts.get("plan") or {})
+        plan["registered"] = jsonio.read(registered)
+        artifacts["plan"] = plan
+
+    metrics_dir = run.path / "metrics"
+    if metrics_dir.exists():
+        metrics = {
+            path.stem: jsonio.read(path) for path in sorted(metrics_dir.glob("*.json"))
+        }
+        if metrics:
+            artifacts["metrics"] = metrics
+    return artifacts
+
+
+def _unresolved_message(unresolved: list[str], artifacts: dict[str, Any]) -> str:
+    """Name the broken key and the keys that do exist beside it.
+
+    An agent told only that something failed will guess again; told what is there, it
+    corrects.
+    """
+    lines = []
+    for key in unresolved:
+        parent, _, _ = key.rpartition(".")
+        if parent:
+            neighbour = resolve_evidence([parent], artifacts)[parent]
+        else:
+            neighbour = artifacts
+        if isinstance(neighbour, dict) and neighbour:
+            available = ", ".join(sorted(str(k) for k in neighbour))
+            # ASCII only. A console on a legacy codepage renders U+2014 as a literal
+            # "?", and this message exists to be read and acted on by the agent.
+            lines.append(f"  {key} -- {parent or 'the run'} holds: {available}")
+        else:
+            roots = ", ".join(sorted(artifacts)) or "nothing yet"
+            lines.append(f"  {key} — no such path. This run holds: {roots}")
+    return (
+        "these evidence keys do not resolve against this run's artefacts:\n"
+        + "\n".join(lines)
+        + "\nCite a key that exists, or drop it. An empty evidence list is allowed and "
+        "renders as unsupported, but a citation pointing at nothing is a broken "
+        "rationale rather than a missing measurement."
+    )
+
+
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
-    run.write_manifest(dataset=meta.get("name"), spec=args.data, seed=args.seed)
-    # Cache on first contact, not at first embed: every later stage reads the matrix
-    # from the run rather than from the source, which is what makes a run
-    # self-contained and lets prepare-reference run before any candidate has.
-    ensure_cache(run, X, labels, meta)
+    run, X, labels, meta = _resolve_run(args)
+    # The seed is resolved — and a mismatched request refused — before anything is
+    # written, the same discipline _resolve_run applies to the dataset digest.
+    seed = run_seed(run, args.seed)
+    # The manifest is written only now: a refused re-profile must not have overwritten
+    # the command, spec and timestamp of the run it just declined to touch.
+    # `spec` falls back to the cached source, so omitting --data records where the data
+    # came from rather than recording null.
+    run.write_manifest(
+        dataset=meta.get("name"),
+        spec=args.data or meta.get("source"),
+        seed=seed,
+    )
 
     profile = profile_dataset(X, labels, meta)
     profile["run_id"] = run.id
+    # Which matrix this describes, so a loader repair that changed nothing is visible as
+    # having changed nothing rather than looking like it was never read.
+    profile["dataset_digest"] = meta.get("dataset_digest")
     run.write_artifact("profile.json", profile)
     return profile
 
 
 def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
+    run, X, labels, meta = _resolve_run(args)
+    seed = run_seed(run, args.seed)
 
-    ensure_cache(run, X, labels, meta)
     if run.profile_path.exists():
         profile = run.read_artifact("profile.json")
     else:
         profile = profile_dataset(X, labels, meta)
-        run.write_manifest(dataset=meta.get("name"), spec=args.data, seed=args.seed)
+        run.write_manifest(
+            dataset=meta.get("name"), spec=args.data or meta.get("source"), seed=seed
+        )
         run.write_artifact("profile.json", profile)
 
     recon = reconnaissance(
         X,
         labels,
         profile,
-        seed=args.seed,
+        seed=seed,
         max_samples=args.max_samples,
         k=args.k,
         thumbnail_path=run.path / "figures" / "recon_thumbnail.png",
@@ -334,40 +591,334 @@ def _cmd_methods(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
-    stages = _read_stages(args.stages)
-    X, labels, meta = _load(args)
-    run = _open_run(args, meta)
-    ensure_cache(run, X, labels, meta)
+    run, X, labels, _ = _resolve_run(args)
+    plan = _registered_plan(run)
+
+    # Refused before anything is invalidated or attempted: a request the run cannot
+    # honour must leave the run exactly as it found it.
+    if args.in_process and not os.environ.get("DRTOOLS_ALLOW_IN_PROCESS"):
+        raise ContractError(
+            "--in-process runs with no wall-clock cap, so no budget can bind it and a "
+            "method that exhausts memory takes the toolbox down with it, leaving no "
+            "record of the attempt. It exists for the test harness and is not "
+            "available here. Drop the flag to run this candidate in an isolated "
+            "process under the budget this run registered."
+        )
+
+    cap = budget_timeout(plan.budget)
+    if args.timeout is not None and args.timeout > cap:
+        raise ContractError(
+            f"this run registered the {plan.budget} budget, which caps a candidate at "
+            f"{cap:g}s, and {args.timeout:g}s was requested. Lower the timeout, or "
+            "start a new run under a larger budget: the budget is frozen at "
+            "registration because every candidate was planned and rejected under it."
+        )
+    timeout_s = cap if args.timeout is None else args.timeout
+
+    candidate = next((c for c in plan.candidates if c.id == args.id), None)
+    if candidate is None:
+        registered = ", ".join(c.id for c in plan.candidates)
+        raise ContractError(
+            f"{args.id} is not a candidate in the registered plan. The plan registered "
+            f"[{registered}]; add the candidate by re-registering, or embed one of those."
+        )
+
+    outcome_so_far = _recorded_outcome(run, args.id)
+    if outcome_so_far == "ok":
+        raise ContractError(
+            f"candidate {args.id} has already produced an embedding. Its stages are "
+            "fixed once it has succeeded, and replacing the result would leave the "
+            "embedding disagreeing with the record of how it was produced. Register a "
+            "new candidate id to try something different."
+        )
+
+    tries = candidate_attempts(run, args.id)
+    if len(tries) >= MAX_ATTEMPTS:
+        raise ContractError(_exhausted_message(args.id, plan))
+
+    # Resolving the seed and the stages are the last two steps that can refuse, so
+    # they run before the invalidation rather than after it. A conflicting --seed
+    # used to delete the previous attempt and then refuse to replace it, and the
+    # decision log records only how an attempt ended: the op, the error type and the
+    # message live in the embeddings artefact and nowhere else, so the diagnosis the
+    # retry existed to act on was destroyed by the refusal to run it.
+    seed = run_seed(run, args.seed)
+    stages = plan.stages_for(candidate)
+
+    _invalidate_candidate(run, args.id)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
         # process, so by default it runs somewhere that can be killed.
-        return run_candidate(
-            run, args.id, stages, seed=args.seed, timeout_s=args.timeout
+        outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=timeout_s)
+    else:
+        try:
+            result = run_pipeline(X, labels, stages, seed=seed)
+        except (ExecutionError, PipelineError) as error:
+            # An in-process failure has to become a record like any other. Letting it
+            # propagate skipped the decision below, so the attempt was never counted
+            # and the same failing command could be repeated past the two-attempt
+            # allowance while `status` still reported no attempts at all. The isolated
+            # path has always turned a failure into an outcome; this one now agrees.
+            outcome = {
+                "id": args.id,
+                "status": "failed",
+                "stages_requested": stages,
+                "failure": {
+                    "op": getattr(error, "op", None),
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            }
+            jsonio.write(run.path / "embeddings" / f"{args.id}.json", outcome)
+            _log_embed_outcome(run, args.id, candidate, plan, outcome)
+            return outcome
+
+        embeddings = run.path / "embeddings"
+        np.save(embeddings / f"{args.id}.npy", result.embedding)
+        if result.labels is not None:
+            np.save(embeddings / f"{args.id}.labels.npy", result.labels)
+        if result.context.sample_index is not None:
+            np.save(embeddings / f"{args.id}.index.npy", result.context.sample_index)
+        outcome = {"id": args.id, "status": "ok", **result.as_dict()}
+        jsonio.write(embeddings / f"{args.id}.json", outcome)
+
+    _log_embed_outcome(run, args.id, candidate, plan, outcome)
+    return outcome
+
+
+def _log_embed_outcome(
+    run: RunDir, candidate_id: str, candidate: Any, plan: Plan, outcome: dict[str, Any]
+) -> None:
+    """Record one attempt. Every path that runs a candidate ends here.
+
+    Shared rather than duplicated because the attempt count is derived from these
+    records: a route that runs a candidate without writing one is a route that does
+    not count, which is how the in-process path escaped the retry allowance.
+    """
+    run.log_decision(
+        stage="embed",
+        question=f"What did candidate {candidate_id} produce?",
+        chosen=candidate_id,
+        rationale=candidate.rationale or "the candidate as registered",
+        evidence=["plan.registered.candidates"],
+        candidate=candidate_id,
+        outcome=outcome.get("status"),
+        # Recomputed from the registration rather than read off the manifest. The
+        # manifest is rewritten by `profile`, so a re-profile after registering used to
+        # drop the key and leave every later `embed` dying on a KeyError with no
+        # message and no route. `plan.registered.json` is the authority for what was
+        # registered; the manifest only ever held a copy of it.
+        plan_digest=_plan_digest(plan.model_dump(mode="json")),
+    )
+
+
+def _recorded_outcome(run: RunDir, candidate_id: str) -> str | None:
+    """How this candidate last ended according to the decision log.
+
+    The freeze anchors here rather than on files, because files can be deleted: an
+    agent that removes `embeddings/` would otherwise be free to re-register a different
+    weighting and re-run. An attempt that began but recorded no outcome — the process
+    died, the machine rebooted — reads as `crashed`, which is revisable, so an
+    interrupted run is recoverable rather than wedged.
+    """
+    attempts = [
+        record
+        for record in run.decisions()
+        if record.get("stage") == "embed" and record.get("candidate") == candidate_id
+    ]
+    if not attempts:
+        return None
+    return attempts[-1].get("outcome") or "crashed"
+
+
+def _invalidate_candidate(run: RunDir, candidate_id: str) -> None:
+    """Clear everything derived from a previous attempt at this candidate.
+
+    The toolbox does this rather than the agent, and does it before *every* attempt
+    rather than only when stages change: the commonest retry of all is the same stages
+    with a bigger budget, and leaving the old metrics in place lets a candidate that has
+    just timed out be ranked on the scores of the run before it.
+    """
+    for path in (run.path / "embeddings").glob(f"{candidate_id}.*"):
+        path.unlink()
+    metrics = run.path / "metrics" / f"{candidate_id}.json"
+    metrics.unlink(missing_ok=True)
+
+
+def _plan_digest(plan: dict[str, Any]) -> str:
+    """A digest over the plan as registered, so divergence is detectable."""
+    return hashlib.sha256(
+        json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _plan_from(document: Any, source: str) -> Plan:
+    """Parse a plan document, refusing a malformed one rather than raising out of `main`.
+
+    `plan.json` is the artefact the agent edits most often, and pydantic's own
+    `ValidationError` is neither a `ContractError` nor a `FileNotFoundError`, so a typo
+    in it used to escape as a traceback with no exit code the agent could read and no
+    route out. The detail pydantic produces already names the offending field, which is
+    exactly what the agent needs, so it is carried through rather than summarised away.
+    """
+    try:
+        return Plan.model_validate(document)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc']) or 'plan'}: {item['msg']}"
+            for item in error.errors()
+        )
+        raise ContractError(
+            f"{source} is not a valid plan — {problems}. Correct the fields named "
+            "above and re-run: a plan needs `dataset`, an `evaluation` with `weights`, "
+            "and `candidates`, each with an `id` and at least one stage. "
+            "`drtools methods` lists the ops a stage may name."
+        ) from error
+
+
+def _registered_plan(run: RunDir) -> Plan:
+    path = run.path / "plan.registered.json"
+    if not path.exists():
+        raise ContractError(
+            "this run has no registered plan. Run `drtools validate-plan` to register "
+            "one before embedding or ranking: the weighting has to be fixed before any "
+            "embedding exists for pre-registration to mean anything."
+        )
+    return _plan_from(jsonio.read(path), "plan.registered.json")
+
+
+def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
+    """What a plan may still change once a run has already registered one.
+
+    Re-registering an identical plan stays legal, and so does adding a new candidate
+    id — an agent revising a failed candidate depends on that. What it cannot do is
+    move the weighting, move the shared base every candidate is scored against, make
+    a candidate that already ran disappear from the record, or revise the stages of a
+    candidate that has already succeeded. Everything else — adding a candidate,
+    revising one that failed, timed out or crashed — is the one diagnose-and-retry the
+    design promises, and is the clearest evidence of agency the run can produce.
+    """
+    if proposed.budget != existing.budget:
+        raise ContractError(
+            f"this run registered the {existing.budget} budget and the plan just "
+            f"submitted declares {proposed.budget}. Every candidate was planned, "
+            "timed and rejected under the registered budget, so moving it after "
+            "results exist would describe a resource discipline the run did not keep. "
+            "Start a new run for the changed budget."
         )
 
-    result = run_pipeline(X, labels, stages, seed=args.seed)
+    existing_ceiling = _effective_ceiling(existing)
+    proposed_ceiling = _effective_ceiling(proposed)
+    if proposed_ceiling > existing_ceiling:
+        allows = (
+            f"max_candidates={proposed.max_candidates}"
+            if proposed.max_candidates is not None
+            else f"no max_candidates of its own, so the budget's {proposed_ceiling}"
+        )
+        raise ContractError(
+            f"this run registered a plan capped at {existing_ceiling} candidates and "
+            f"the plan just submitted declares {allows}. The cap was declared before "
+            "any candidate had run, which is what made it a claim about restraint "
+            "rather than a report of what the run turned out to need. Tighten it or "
+            "leave it as it stands, or start a new run under the ceiling you want."
+        )
 
-    embeddings = run.path / "embeddings"
-    np.save(embeddings / f"{args.id}.npy", result.embedding)
-    if result.labels is not None:
-        np.save(embeddings / f"{args.id}.labels.npy", result.labels)
-    if result.context.sample_index is not None:
-        np.save(embeddings / f"{args.id}.index.npy", result.context.sample_index)
+    if dict(proposed.evaluation.weights) != dict(existing.evaluation.weights):
+        raise ContractError(
+            "this run already registered a plan, and the weighting cannot move once "
+            "registered — that is the entire guarantee registration exists to make. "
+            "The sanctioned route is an amendment, which this toolbox does not "
+            "implement yet, so a changed weighting means starting a new run."
+        )
 
-    record = {
-        "id": args.id,
-        "status": "ok",
-        "run_id": run.id,
-        "dataset": meta.get("name"),
-        "stages_requested": stages,
-        "seed": args.seed,
-        "embedding_path": str(embeddings / f"{args.id}.npy"),
-        **result.as_dict(),
-    }
-    jsonio.write(embeddings / f"{args.id}.json", record)
-    return record
+    existing_base = [stage.model_dump() for stage in existing.base_preprocessing]
+    proposed_base = [stage.model_dump() for stage in proposed.base_preprocessing]
+    if proposed_base != existing_base:
+        raise ContractError(
+            "this run already registered a plan with different base preprocessing. "
+            "Every candidate is scored against its output, so moving it would "
+            "invalidate every metric already computed against the old one. Start a "
+            "new run for the changed base."
+        )
 
+    existing_ids = {candidate.id for candidate in existing.candidates}
+    proposed_ids = {candidate.id for candidate in proposed.candidates}
+
+    decisions = run.decisions()
+    if replan_round_spent(decisions) and extends_portfolio(decisions, proposed_ids):
+        raise ContractError(
+            "this run has already spent its one re-plan round, and the plan just "
+            "submitted extends the portfolio again. Iterative planning was rejected "
+            "as unbounded in cost; one round, once the portfolio has been attempted, "
+            "is what the design allows. Replacing a candidate you have given up on is "
+            "a retry rather than a round, so if that is what this is, record the "
+            "abandonment with `drtools log-decision` -- it is a commitment on the "
+            "record, not a formality -- and the replacement registers. Otherwise the "
+            "portfolio stands, and what the results revealed is a finding the report "
+            "should carry."
+        )
+
+    dropped = sorted(existing_ids - proposed_ids)
+    if dropped:
+        raise ContractError(
+            f"this run already registered candidate(s) {dropped}, which are absent "
+            "from the plan just submitted. A candidate that ran and lost is part of "
+            "the record and cannot be made to disappear by re-registering; add it "
+            "back, or start a new run to drop it."
+        )
+
+    proposed_by_id = {candidate.id: candidate for candidate in proposed.candidates}
+    for candidate in existing.candidates:
+        if proposed_by_id[candidate.id].stages == candidate.stages:
+            continue
+        if _recorded_outcome(run, candidate.id) == "ok":
+            raise ContractError(
+                f"candidate {candidate.id} has already succeeded, so its stages cannot "
+                "be revised. Register a new candidate id for the variant."
+            )
+
+
+def _effective_ceiling(plan: Plan) -> int:
+    """How many candidates this plan may register: the budget's, or tighter.
+
+    A plan may cap itself below the budget. `validate_plan` refuses a declaration
+    above it, so the effective ceiling is the smaller of the two.
+    """
+    ceiling = BUDGET_MAX_CANDIDATES[plan.budget]
+    if plan.max_candidates is not None:
+        ceiling = min(plan.max_candidates, ceiling)
+    return ceiling
+
+
+def _exhausted_message(candidate_id: str, plan: Plan) -> str:
+    """Why a third attempt is refused, and what is actually available instead.
+
+    The advice has to be conditional. Registering a new candidate id is what mints a
+    fresh allowance, so offering it unconditionally makes this refusal the instruction
+    manual for the loop the ceiling exists to bound — true, helpful, and the exact
+    sentence that lets an exhausted run keep spending.
+    """
+    ceiling = _effective_ceiling(plan)
+    remaining = ceiling - len(plan.candidates)
+
+    opening = (
+        f"candidate {candidate_id} has already had two attempts, which is one run "
+        "and the one diagnose-and-retry the design allows. "
+    )
+    if remaining > 0:
+        return opening + (
+            "Register a new candidate id for a further variant, so that what was "
+            f"already tried stays on the record: {remaining} further "
+            f"{'id is' if remaining == 1 else 'ids are'} available under this run's "
+            f"ceiling of {ceiling}."
+        )
+    return opening + (
+        f"This run has registered all {ceiling} candidates its budget allows, so "
+        "there is no further variant to register and no route that would add one. "
+        "What was tried is on the record: evaluate the candidates that succeeded "
+        "and report the run."
+    )
 
 def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     """Compute the representation every candidate is scored against.
@@ -375,52 +926,105 @@ def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     Candidates differ in their own stages but share a base, and comparing each one
     against its *own* input would measure different things under the same name. The
     shared base output is the common ground that makes the comparison mean something.
+    The base stages are read from the registered plan rather than taken as an argument,
+    so the reference always reflects what was pre-registered rather than whatever was
+    typed at the command line that day.
     """
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    stages = _read_stages(args.stages)
-    X, labels, meta = read_cache(run)
-
-    result = (
-        run_pipeline(
-            X, labels, stages, seed=args.seed, require_terminal_reduction=False
-        )
-        if stages
-        else None
-    )
-    reference = result.embedding if result is not None else X
+    run = _require_run(args)
+    plan = _registered_plan(run)
+    stages = [stage.model_dump() for stage in plan.base_preprocessing]
+    X, labels, _ = read_cache(run)
+    seed = run_seed(run, args.seed)
 
     directory = run.path / "data"
-    np.save(directory / "reference.npy", np.asarray(reference))
+    if stages:
+        result = run_pipeline(
+            X, labels, stages, seed=seed, require_terminal_reduction=False
+        )
+        reference = result.embedding
+        np.save(directory / "reference.npy", np.asarray(reference))
+        stage_records = result.as_dict()["stages"]
+    else:
+        # No base preprocessing means the reference *is* the cache. Writing a copy would
+        # add a second artefact to keep honest, and np.asarray on a sparse matrix writes
+        # an unloadable 0-d object array.
+        reference = X
+        stage_records = []
+
+    n_rows = int(reference.shape[0])
     record = {
         "stages": stages,
         "shape": list(np.shape(reference)),
-        "path": str(directory / "reference.npy"),
-        "stage_records": result.as_dict()["stages"] if result is not None else [],
+        "n_rows": n_rows,
+        "is_cache": not stages,
+        "settings": {
+            "k": neighbourhood_size(min(n_rows, METRIC_SAMPLE_CAP)),
+            "max_samples": METRIC_SAMPLE_CAP,
+            "seed": seed,
+        },
+        "stage_records": stage_records,
     }
     jsonio.write(directory / "reference.json", record)
     return record
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    embeddings = run.path / "embeddings"
+    run = _require_run(args)
+    # A seed that conflicts with the run's recorded one is still refused here, the same
+    # discipline every other command follows — even though the value actually used
+    # below always comes from the recorded settings, not from this call's return.
+    run_seed(run, args.seed)
+    plan = _registered_plan(run)
+    reference_record = run.path / "data" / "reference.json"
 
-    candidate = jsonio.read(embeddings / f"{args.id}.json")
-    if candidate.get("status") != "ok":
-        raise FileNotFoundError(
-            f"candidate {args.id!r} has status {candidate.get('status')!r} and produced "
-            "no embedding to evaluate"
+    if plan.base_preprocessing and not reference_record.exists():
+        raise ContractError(
+            "the registered plan declares base preprocessing, so candidates must be "
+            "scored against its output rather than against the raw cache. Run "
+            "`drtools prepare-reference` before evaluating."
         )
-    embedding = np.load(embeddings / f"{args.id}.npy")
 
+    if reference_record.exists():
+        record = jsonio.read(reference_record)
+        settings = record["settings"]
+        reference_rows = int(record["n_rows"])
+    else:
+        # No base preprocessing: the reference is the cache, and the same rule applies
+        # to its row count.
+        reference_rows = int(
+            jsonio.read(run.path / "data" / "meta.json")["cached_shape"][0]
+        )
+        settings = {
+            "k": neighbourhood_size(min(reference_rows, METRIC_SAMPLE_CAP)),
+            "max_samples": METRIC_SAMPLE_CAP,
+            "seed": run_seed(run, None),
+        }
+
+    record_path = run.path / "embeddings" / f"{args.id}.json"
+    if not record_path.exists():
+        raise ContractError(
+            f"candidate {args.id!r} has no embedding in this run — `embed` has not run "
+            f"for it, so there is nothing to score. Run `drtools embed --run-dir "
+            f"{run.path} --id {args.id}` first, or evaluate a candidate that has."
+        )
+    candidate = jsonio.read(record_path)
+    if candidate.get("status") != "ok":
+        raise ContractError(
+            f"candidate {args.id!r} has status {candidate.get('status')!r} and produced "
+            "no embedding to evaluate. Fix what made it fail and re-run `embed` for "
+            "this id, or evaluate a different candidate."
+        )
+    embedding = np.load(run.path / "embeddings" / f"{args.id}.npy")
     reference, labels = _reference_for(run, args.id)
+    _check_rows_support_k(run, args.id, reference.shape[0], reference_rows, settings)
+
     metrics = evaluate_embedding(
         reference,
         embedding,
         labels,
-        k=args.k,
-        seed=args.seed,
-        max_samples=args.max_samples,
+        k=settings["k"],
+        seed=settings["seed"],
+        max_samples=settings["max_samples"],
         runtime_s=candidate.get("total_duration_s"),
     )
     metrics["id"] = args.id
@@ -433,16 +1037,116 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
     return metrics
 
 
+def _check_registration_is_recorded(run: RunDir, plan: Plan) -> None:
+    """Check the registration against the append-only log that witnessed it.
+
+    `plan.registered.json` is a file, and a file can be overwritten — one `cp` of
+    `plan.json` over it makes the divergence check pass and lets a weighting chosen
+    after the results were in look pre-registered. The decision log is what makes that
+    more than a copy: `validate-plan` appends a `register_plan` record carrying the
+    digest and the full weighting, so the registration has to agree with something that
+    was written before any embedding existed. Tampering is thereby raised from editing
+    one JSON file to forging a consistent log — which is the guarantee the design
+    claimed and, until now, did not check anywhere.
+    """
+    digest = _plan_digest(plan.model_dump(mode="json"))
+    weights = dict(plan.evaluation.weights)
+    registrations = [
+        record for record in run.decisions() if record.get("stage") == "register_plan"
+    ]
+    if not registrations:
+        raise ContractError(
+            "this run's decision log records no plan registration, so there is nothing "
+            "showing the weighting was fixed before the results existed. Run `drtools "
+            "validate-plan` to register the plan, or start a new run: a ranking whose "
+            "pre-registration cannot be checked is not one the report can claim."
+        )
+
+    last = registrations[-1]
+    if last.get("plan_digest") == digest and last.get("weights") == weights:
+        return
+    raise ContractError(
+        "plan.registered.json does not match what this run's decision log recorded "
+        f"being registered. The log's last registration is {last.get('weights')} under "
+        f"digest {str(last.get('plan_digest'))[:12]}; the registration on disk is "
+        f"{weights} under {digest[:12]}. The log is append-only and was written before "
+        "any embedding existed, so it is the authority here and the file is not. "
+        "Restore plan.registered.json from a backup if one exists, or start a new run "
+        "and register the plan you actually mean to be judged by."
+    )
+
+
+def _check_rows_support_k(
+    run: RunDir,
+    candidate_id: str,
+    candidate_rows: int,
+    reference_rows: int,
+    settings: dict[str, Any],
+) -> None:
+    """Refuse a candidate whose rows cannot carry the neighbourhood the run is fixed at.
+
+    The battery's k is derived once, from the reference's row count, so that every
+    candidate's trustworthiness is a measurement of the same thing. A candidate that
+    subsampled has fewer rows than the reference, and scikit-learn needs `k < n / 2`;
+    the tempting repair is to fall back to a smaller k for that one candidate, which is
+    precisely how two candidates come to be scored at different neighbourhoods and
+    ranked together with no caveat. So this refuses instead, and names the subsample as
+    the reason rather than leaving the agent to infer it from an arithmetic error.
+    """
+    k = int(settings["k"])
+    n_used = min(int(candidate_rows), int(settings["max_samples"]))
+    if k < n_used / 2:
+        return
+
+    subsampled = (run.path / "embeddings" / f"{candidate_id}.index.npy").exists()
+    kept = (
+        f"candidate {candidate_id!r} subsampled to {candidate_rows} of the "
+        f"reference's {reference_rows} rows"
+        if subsampled
+        else f"candidate {candidate_id!r} has {candidate_rows} rows against the "
+        f"reference's {reference_rows}"
+    )
+    raise ContractError(
+        f"{kept}, which cannot support this run's neighbourhood of k={k}: "
+        f"scikit-learn needs k < n/2, so {n_used} rows admit at most "
+        f"k={neighbourhood_size(n_used)}. k is fixed once from the reference so that "
+        "every candidate is measured at the same neighbourhood, and scoring this one "
+        "at a smaller k would make its numbers incomparable with the rest — which is "
+        "the whole reason this refuses rather than adjusting. Drop the subsample stage "
+        "and re-register this candidate under a new id, or start a new run whose "
+        "dataset is the smaller sample so the reference is fixed to it."
+    )
+
+
 def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    plan = Plan.model_validate(run.read_artifact("plan.json"))
+    run = _require_run(args)
+    plan = _registered_plan(run)
+    _check_registration_is_recorded(run, plan)
+
+    live = run.path / "plan.json"
+    if live.exists():
+        current = _plan_from(run.read_artifact("plan.json"), "plan.json")
+        if _plan_digest(current.model_dump(mode="json")) != _plan_digest(
+            plan.model_dump(mode="json")
+        ):
+            raise ContractError(
+                "plan.json no longer matches the plan this run registered, so ranking "
+                "it would score results under a weighting chosen after they existed. "
+                "Either copy plan.registered.json back over plan.json to restore what "
+                "was registered, or start a new run for the changed plan. Copying the "
+                "other way round is not a route: the registration is checked against "
+                "the decision log, so overwriting it only makes `rank` refuse for a "
+                "second reason. The sanctioned way to move a weighting is an "
+                "amendment, which this toolbox does not yet implement."
+            )
 
     metrics_by_id: dict[str, Any] = {}
     failures: dict[str, Any] = {}
     for candidate in plan.candidates:
         record_path = run.path / "embeddings" / f"{candidate.id}.json"
         metrics_path = run.path / "metrics" / f"{candidate.id}.json"
-        if metrics_path.exists():
+        outcome = jsonio.read(record_path).get("status") if record_path.exists() else None
+        if outcome == "ok" and metrics_path.exists():
             metrics_by_id[candidate.id] = jsonio.read(metrics_path)
         elif record_path.exists():
             failures[candidate.id] = jsonio.read(record_path).get("failure", {})
@@ -453,27 +1157,50 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         justification=plan.evaluation.justification,
         failures=failures,
     )
+    # Recomputed from the plan actually ranked, rather than read back off the
+    # manifest: a hand-edited manifest would otherwise make the stamp lie, and the
+    # manifest lookup has no guarantee the key is even there.
+    ranking["plan_digest"] = _plan_digest(plan.model_dump(mode="json"))
     run.write_artifact("ranking.json", ranking)
     run.log_decision(
         stage="rank",
         question="Which candidate best serves the question this analysis is answering?",
         chosen=ranking["winner"],
         rationale=plan.evaluation.justification
-        or "weights were declared in the plan before any embedding was computed",
+        or "scored under the weighting registered for this run",
         evidence=[f"metrics.{candidate}" for candidate in metrics_by_id],
         options_considered=sorted(metrics_by_id),
         weights_applied=ranking["weights_applied"],
+        plan_digest=ranking["plan_digest"],
     )
     return ranking
 
 
 def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
-    plan = (
-        _read_json_argument(args.plan)
+    run = _require_run(args)
+    source = args.plan if args.plan else "plan.json"
+    document = (
+        _read_json_argument(args.plan, flag="--plan")
         if args.plan
         else run.read_artifact("plan.json")
     )
+    # Parsed before anything else reads it, so a malformed plan is one refusal naming
+    # the bad field rather than a pydantic traceback out of the validator's own
+    # `model_validate`.
+    plan = _plan_from(document, source)
+
+    # The freeze is checked before anything is written. A refusal that has already
+    # overwritten `plan_validation.json` has left the run describing a plan it never
+    # registered, which is the "refuse and write nothing" contract broken by the
+    # command that exists to enforce contracts.
+    registered_path = run.path / "plan.registered.json"
+    if registered_path.exists():
+        _check_reregistration(
+            run,
+            _plan_from(jsonio.read(registered_path), "plan.registered.json"),
+            plan,
+        )
+
     profile = run.read_artifact("profile.json")
     recon = (
         run.read_artifact("recon.json") if run.recon_path.exists() else None
@@ -495,23 +1222,174 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
                 op=finding["op"],
                 fix=finding["fix"],
             )
+
+    errors = [f for f in report["findings"] if f["severity"] == "error"]
+    if errors:
+        return report
+
+    # Registration is the moment the weighting becomes fixed: a plan that passes
+    # validation is frozen here, before any embedding exists, so that ranking has
+    # something pre-registered to hold itself to. A run that already registered a
+    # plan may register again — but not to move what was already fixed.
+    registered = plan
+    digest = _plan_digest(registered.model_dump(mode="json"))
+    jsonio.write(registered_path, registered.model_dump(mode="json"))
+    run.update_manifest(plan_digest=digest)
+    run.log_decision(
+        stage="register_plan",
+        question="What will this run compare, and how will the results be judged?",
+        chosen=f"registered {len(registered.candidates)} candidates",
+        rationale=registered.evaluation.justification
+        or "the weighting was declared before this record was written",
+        evidence=["profile.shape.n_samples"],
+        plan_digest=digest,
+        weights=dict(registered.evaluation.weights),
+        candidates=[c.id for c in registered.candidates],
+        # Recorded even when nothing was declared, so that "claimed no restraint"
+        # and "this record predates the field" stay distinguishable.
+        max_candidates=registered.max_candidates,
+    )
+    report["plan_digest"] = digest
     return report
 
 
 def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    run = _require_run(args)
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return {"op": args.op, "suggested": suggest(args.op, profile, recon)}
 
 
+def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
+    """The default the planner accepts or overrides with a logged reason."""
+    run = _require_run(args)
+    profile = run.read_artifact("profile.json")
+    recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
+    return suggest_base(profile, recon)
+
+
+def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:
+    """Render the report, and refuse one whose numbers the run has moved past.
+
+    Rendering does not refresh on the agent's behalf. Silently changing the document's
+    numbers while producing the PDF would let the two artefacts a reader compares
+    differ, and the Markdown is the declared source of truth. So it refuses and names
+    the route instead, which is what makes rendering last a property of the toolbox
+    rather than an instruction in a skill.
+    """
+    run = _require_run(args)
+    source = run.path / "report.md"
+    if not source.exists():
+        raise ContractError(
+            f"there is no report at {source} to render. Run `drtools report --run-dir "
+            f"{run.path}` to write one."
+        )
+
+    stale = stale_blocks(run, source.read_text(encoding="utf-8"))
+    if stale:
+        raise ContractError(
+            f"block(s) {', '.join(stale)} no longer match this run, so the PDF would "
+            "carry numbers the run has moved past. Run `drtools report --refresh "
+            f"--run-dir {run.path}` and render again."
+        )
+
+    return render_pdf(source, run.path / "report.pdf")
+
+
+def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
+    """Rewrite the generated blocks of an existing report, and nothing else.
+
+    A block the agent has edited is refused rather than rewritten. Regenerating it
+    would destroy that edit as a side effect of an unrelated request, which is the
+    defect found in `embed` on day 9 — and the whole reason the fence carries a digest.
+
+    A block the document no longer holds is reported rather than re-inserted. Where in
+    the agent's prose a deleted fence belonged is not something the toolbox can know,
+    and guessing would drop a table into the middle of a paragraph.
+    """
+    if not path.exists():
+        raise ContractError(
+            f"there is no report at {path} to refresh. Run `drtools report --run-dir "
+            f"{run.path}` to write one."
+        )
+
+    document = path.read_text(encoding="utf-8")
+    blocks = parse_blocks(document)
+    hand_edited = sorted(block_id for block_id, block in blocks.items() if edited(block))
+    if hand_edited:
+        raise ContractError(
+            f"block(s) {', '.join(hand_edited)} have been edited by hand since the "
+            "toolbox wrote them, and refreshing would discard those edits. The blocks "
+            "hold this run's numbers and the toolbox owns them; prose belongs outside "
+            "the fence. Move the edit outside the block and the refresh will go "
+            "through."
+        )
+
+    bodies = build_blocks(run)
+    refreshed, unchanged = [], []
+    for block_id in BLOCK_IDS:
+        if block_id not in blocks:
+            continue
+        if blocks[block_id].body == bodies[block_id]:
+            unchanged.append(block_id)
+            continue
+        document = replace_block(document, block_id, bodies[block_id])
+        refreshed.append(block_id)
+
+    path.write_text(document, encoding="utf-8")
+    return {
+        "path": str(path),
+        "refreshed": refreshed,
+        "unchanged": unchanged,
+        "missing": [block_id for block_id in BLOCK_IDS if block_id not in blocks],
+    }
+
+
+def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
+    """Emit the report skeleton, or refresh the blocks in one that already exists.
+
+    The readiness condition is `status`'s, not a second copy of it. Two implementations
+    of one question drift at the edges, and the failure that produces is a run where
+    `status` says the next stage is `report` and `report` says the run is not ready,
+    with nothing to tell the agent which of the two is right.
+    """
+    run = _require_run(args)
+    path = run.path / "report.md"
+
+    if args.refresh:
+        return _refresh_report(run, path)
+
+    stage = run_status(run)["next"]
+    if stage != "report":
+        raise ContractError(
+            f"this run's next stage is {stage}, not report, so a report written now "
+            "would describe an analysis that has not finished. Run `drtools status "
+            f"--run-dir {run.path}` and complete that stage first."
+        )
+    if path.exists():
+        raise ContractError(
+            f"{path} already exists, and writing it again would discard the prose "
+            "around the generated blocks. Use `--refresh` to bring the blocks up to "
+            "date and leave everything else alone."
+        )
+
+    path.write_text(assemble(run), encoding="utf-8")
+    return {"path": str(path), "blocks": list(BLOCK_IDS), "written": True}
+
+
 def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     """Draw the standard set. The agent picks which of these to put in the report."""
-    run = RunDir(Path(args.run_dir)) if args.run_dir else _open_run(args, {})
+    run = _require_run(args)
     figures_dir = run.path / "figures"
     embeddings_dir = run.path / "embeddings"
     drawn: dict[str, Any] = {}
 
+    if not is_cached(run):
+        raise ContractError(
+            f"the run at {run.path} holds no cached dataset, so there is nothing to "
+            "draw labels or a reference from. Run `drtools profile --data ... "
+            f"--run-dir {run.path}` first; that is the step that caches the dataset."
+        )
     _, labels, meta = read_cache(run)
     names = meta.get("label_names")
 
@@ -638,6 +1516,25 @@ def _winner(run: RunDir) -> str | None:
 # ----------------------------------------------------------------------- helpers
 
 
+def _require_run(args: argparse.Namespace, *, create: bool = True) -> RunDir:
+    """The run a command must be given, rather than one it may create.
+
+    `create=False` is for commands that only report: constructing a RunDir otherwise
+    makes the run's subdirectories, which is a side effect a read-only command has no
+    business having.
+    """
+    if not args.run_dir:
+        raise ContractError("--run-dir is required: this command reads an existing run.")
+    path = Path(args.run_dir)
+    if not path.exists():
+        raise ContractError(
+            f"no run at {path}. Correct the path, or create the run: `drtools "
+            "profile --data <spec> --runs-root <root> --run-id <id>` is what makes "
+            "one, and every other command reads a run that already exists."
+        )
+    return RunDir(path, create=create)
+
+
 def _reference_for(run: RunDir, candidate_id: str):
     """The representation to measure against, subset to the rows the candidate kept."""
     directory = run.path / "data"
@@ -656,26 +1553,28 @@ def _reference_for(run: RunDir, candidate_id: str):
     return reference, labels
 
 
-def _read_json_argument(argument: str) -> Any:
-    text = (
-        Path(argument[1:]).read_text(encoding="utf-8")
-        if argument.startswith("@")
-        else argument
-    )
-    return json.loads(text)
+def _read_json_argument(argument: str, *, flag: str) -> Any:
+    """Parse a JSON argument, naming the source that did not parse.
 
+    `_plan_from` already turned pydantic's ValidationError into a refusal. That is
+    raised once the document has parsed; a document that never parses fails a step
+    earlier, in `json.loads`, and `main` catches neither JSONDecodeError nor the
+    ValueError it derives from. The agent read a traceback and exit 1, which is none
+    of the four codes the toolbox documents and carries no route out.
 
-def _read_stages(argument: str) -> list[Any]:
-    """Stages come as inline JSON, or as @path for anything long enough to want a file."""
-    text = (
-        Path(argument[1:]).read_text(encoding="utf-8")
-        if argument.startswith("@")
-        else argument
-    )
+    The flag and `@path` are two sources and the message says which was read, because
+    `json.loads` reports only a line and a column.
+    """
+    from_file = argument.startswith("@")
+    source = argument[1:] if from_file else flag
+    text = Path(argument[1:]).read_text(encoding="utf-8") if from_file else argument
     try:
         return json.loads(text)
     except json.JSONDecodeError as error:
-        raise PipelineError(f"--stages is not valid JSON: {error}") from None
+        raise ContractError(
+            f"{source} is not valid JSON: {error}. Correct the document and run the "
+            "command again."
+        ) from error
 
 
 def _load(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:
@@ -691,6 +1590,70 @@ def _open_run(args: argparse.Namespace, meta: dict[str, Any]) -> RunDir:
     return RunDir.create(
         Path(args.runs_root), meta.get("name", args.data), run_id=args.run_id
     )
+
+
+def _resolve_run(args: argparse.Namespace) -> tuple[RunDir, Any, Any, dict[str, Any]]:
+    """The run and the matrix every handler should work from.
+
+    A run holds one dataset. When it already has a cache that is the dataset, and
+    `--data` becomes a verification rather than a second source of truth: it is loaded,
+    digested, and refused if it disagrees. Nothing is written before that check.
+    """
+    spec = getattr(args, "data", None)
+
+    if args.run_dir:
+        path = Path(args.run_dir)
+        if not path.exists():
+            raise ContractError(
+                f"no run at {path}. Omit --run-dir to create one, or correct the path."
+            )
+        run = RunDir(path)
+        if is_cached(run):
+            if spec is None:
+                X, labels, meta = read_cache(run)
+                return run, X, labels, meta
+            X, labels, meta = _load(args)
+            meta = ensure_cache(run, X, labels, meta)   # refuses before anything writes
+            X, labels, _ = read_cache(run)
+            return run, X, labels, meta
+        if spec is None:
+            raise ContractError(
+                f"the run at {path} holds no cached dataset yet, so --data is needed "
+                "to say which dataset this run is of."
+            )
+        X, labels, meta = _load(args)
+        return run, X, labels, ensure_cache(run, X, labels, meta)
+
+    if spec is None:
+        raise ContractError(
+            "--data is required when no --run-dir is given: there is no run to read a "
+            "cached dataset from."
+        )
+    X, labels, meta = _load(args)
+    run = _open_run(args, meta)
+    return run, X, labels, ensure_cache(run, X, labels, meta)
+
+
+def run_seed(run: RunDir, requested: int | None) -> int:
+    """The run's seed, which is fixed when the run is created.
+
+    Every metric subsample is drawn from this. Letting a re-profile move it would let
+    two candidates be measured on different rows without the registered plan changing,
+    which is the comparability guarantee defeated by a route that looks compliant.
+    """
+    if not run.manifest_path.exists():
+        return 0 if requested is None else requested
+
+    recorded = jsonio.read(run.manifest_path).get("seed")
+    if recorded is None:
+        return 0 if requested is None else requested
+    if requested is not None and requested != recorded:
+        raise ContractError(
+            f"this run was created with seed {recorded} and every measurement in it "
+            f"is drawn from that seed, so it cannot be re-run with seed {requested}. "
+            "Use the recorded seed, or start a new run for the new one."
+        )
+    return recorded
 
 
 if __name__ == "__main__":  # pragma: no cover

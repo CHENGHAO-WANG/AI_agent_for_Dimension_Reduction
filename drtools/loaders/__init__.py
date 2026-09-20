@@ -12,6 +12,7 @@ An agent-written adapter is therefore no more trusted than a built-in loader.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -123,8 +124,11 @@ def _load_table(path: Path, *, label_column: str | None = None, **_: Any) -> Dat
     if numeric.isna().any().any():
         n_missing = int(numeric.isna().sum().sum())
         raise ContractError(
-            f"{path.name}: {n_missing} missing values. Imputation is a preprocessing "
-            "decision for the agent to make explicitly, so the loader will not guess."
+            f"{path.name}: {n_missing} missing values. Datasets with missing values "
+            "are out of scope for this toolbox, and an adapter that filled them in "
+            "would put fabricated numbers into audited results with nothing recorded. "
+            "Supply a complete table, or resolve the missingness upstream where the "
+            "choice can be written down."
         )
 
     meta = {
@@ -209,8 +213,31 @@ def _load_via_adapter(spec: str, adapter: str | Path, **kwargs: Any) -> Dataset:
         )
     X, labels, meta = result
     if isinstance(meta, dict):
-        meta.setdefault("adapter", str(adapter_path))
+        # Assigned, never defaulted: this is the toolbox recording which code it
+        # executed, not the adapter describing itself. `setdefault` let the adapter
+        # pre-empt the one field that says where the matrix came from.
+        meta["adapter"] = _adapter_provenance(adapter_path)
     return X, labels, meta
+
+
+def _adapter_provenance(adapter_path: Path) -> dict[str, Any]:
+    """What ran, and what was in it.
+
+    The path alone dates badly: a run recording only `my_adapter.py` describes a
+    matrix produced by whatever that file holds when someone later opens it. The
+    digest pins the source that actually ran.
+
+    Deliberately separate from the dataset digest, which covers the matrix and label
+    codes and excludes adapter source so that tidying an adapter does not invalidate
+    a run. Identity asks what the data is; provenance asks what produced it, and the
+    two are free to move independently.
+    """
+    source = adapter_path.read_bytes()
+    return {
+        "path": str(adapter_path),
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "bytes": len(source),
+    }
 
 
 # ------------------------------------------------------------------ named datasets

@@ -3,9 +3,9 @@
 Running record of decisions and their rationale. Raw material for the manually
 written 4-page `report.pdf`. Append as decisions are made; do not rewrite history.
 
-Fourteen work days against a 2026-09-28 deadline. Days are indexed rather than
-dated: the build has run ahead of the calendar, and the index is what the schedule
-actually tracks.
+Fifteen work days against a 2026-09-28 deadline. Days are indexed rather than dated:
+the build has run ahead of the calendar, and the index is what the schedule actually
+tracks. It was fourteen until day 8, which grew a day rather than spending the hedge.
 
 ---
 
@@ -83,9 +83,19 @@ rules planner (section 6) to reuse the same executors.
 ```
 
 **The report is generated from the log**, not written freehand. The `evidence` field
-pins every rationale to a key that actually exists in `profile.json` or
-`metrics.json`, so the agent structurally cannot claim a decision it did not make or
-cite a number it did not compute. This is the hallucination-control mechanism.
+pins every rationale to keys that must resolve in `profile.json` or `metrics.json`;
+`log-decision` refuses a citation that points at nothing, and records what each key
+resolved to beside it.
+
+What that buys is **citation integrity**: no rationale can rest on a number the run
+never computed, and a reader can follow every claim back to the artefact it came
+from. It is not proof that a rationale is true. A real key with a false reading
+passes — a silhouette of 0.7 is 0.7, and "confirms distinct biological cell types"
+is not thereby supported — and nothing binds `chosen` to an outcome the toolbox
+executed. The earlier claim here, that the agent "structurally cannot claim a
+decision it did not make", was more than key validation can carry, and day 5's rank
+falsehood was that gap already occurring. Worth having and worth claiming; the
+report should claim this and not more.
 
 ### 2.4 Pre-registered evaluation weights
 
@@ -116,8 +126,13 @@ about 3 with a connected k-NN graph justifies Isomap and Diffusion Maps; a
 fast-decaying PCA spectrum says the structure is largely linear and manifold methods
 will add little; a disconnected graph rules out spectral methods before they crash.
 
-One optional re-plan is permitted after evaluation. Fully iterative planning was
-rejected as unbounded in cost.
+One optional re-plan is permitted once the portfolio has been attempted. Fully
+iterative planning was rejected as unbounded in cost. The trigger is an attempt
+rather than an evaluation, because a run where every candidate failed has nothing to
+evaluate and would otherwise be offered the round forever — and a run with no
+successes is exactly the one that needs to re-plan. The round is a portfolio that
+*grew*: replacing a candidate the agent gave up on is the diagnose-and-retry of
+section 4, not a new round.
 
 ### 3.2 Candidates are pipelines, not methods
 
@@ -199,8 +214,12 @@ to Y". That is a working agent loop demonstrated with evidence.
 
 Every method runs in an isolated subprocess with a wall-clock cap. Failures produce a
 structured record — exception class, message, parameters used — not a traceback dump.
-The agent gets exactly **one** diagnose-and-retry per method before recording a
-permanent failure and continuing with the rest.
+The agent gets exactly **one** diagnose-and-retry per candidate before recording a
+permanent failure and continuing with the rest. Per *candidate*, not per method:
+section 3.2 settled the pipeline as the unit of comparison, and two candidates may
+legitimately end in the same method — the mandatory PCA baseline alongside a PCA on
+variable features, say — so a per-method allowance would let the first consume the
+second's.
 
 Not hypothetical: spectral methods die on disconnected neighbourhood graphs, MDS
 exhausts memory, numba throws version errors, and anything on a large matrix can hang.
@@ -209,9 +228,18 @@ A report sentence like *"Laplacian Eigenmaps failed on the first attempt due to 
 disconnected k-NN graph; the agent increased n_neighbors to 30 and succeeded"* is the
 most convincing single piece of evidence of agency the system can produce.
 
-`--budget fast|standard|thorough` caps per-method wall-clock and controls whether the
-hyperparameter sweep runs. This turns "too big for Isomap" from an implicit constraint
-into an explicit resource the agent reasons about and allocates.
+`--budget fast|standard|thorough` declares two resources: the wall-clock one candidate
+may spend, and how many candidates the run may ever register — 8, 7 and 6, shrinking as
+the time allowance grows, because a longer leash per candidate buys fewer of them. This
+turns "too big for Isomap" from an implicit constraint into an explicit resource the
+agent reasons about and allocates. The budget also controls whether the hyperparameter
+sweep runs.
+
+The second cap is what bounds a run. Candidate ids only ever grow — a registered
+candidate cannot be dropped, since one that ran and lost is part of the record — so the
+size of the plan caps total compute at attempts x ceiling. Without it the id set is the
+one quantity the agent can spend that nothing declares, and it is exactly what mints a
+fresh per-candidate allowance.
 
 ---
 
@@ -262,14 +290,17 @@ Scheduled late (day 12), so slipping costs only the ablation.
 
 ## 7. Scope boundaries
 
-**In:** PBMC3k and PathMNIST. Nine library-backed methods (PCA, Kernel PCA, Sparse
-PCA, metric and non-metric MDS, Isomap, LLE + Modified LLE, Laplacian Eigenmaps,
-Diffusion Maps, t-SNE, UMAP) plus a minimal MAP-GPLVM in torch, timeboxed to 3 hours
-on day 11.
+**In:** PBMC3k and PathMNIST. The registry's ten reductions: nine library-backed —
+PCA, Kernel PCA, Sparse PCA, MDS both metric and non-metric, Isomap, LLE with its four
+variants under one op, Laplacian Eigenmaps, t-SNE, UMAP — plus Diffusion Maps, written
+directly after `datafold` proved unusable against modern scikit-learn.
 
-**Out, and named as future work in the report:** ensemble/consensus embeddings; a
-cross-run experience store (with two datasets the prior would be n=2, worse than no
-prior, and it would introduce hidden state that breaks reproducibility); CI.
+**Out, and named as future work in the report:** datasets with missing values, for
+which see the day 8 decision below; a minimal MAP-GPLVM in torch, which
+was first on the cut order and is what day 7's contract work spent; ensemble/consensus
+embeddings; a cross-run experience store (with two datasets the prior would be n=2,
+worse than no prior, and it would introduce hidden state that breaks reproducibility);
+CI.
 
 **Deliberately deferred** — to be decided when reached, mostly *by the agent*:
 PathMNIST subsampling policy, whether PBMC3k gets derived Leiden reference labels,
@@ -279,9 +310,21 @@ dataset caching and `.gitignore` handling.
 
 ## 8. Deliverables
 
-Public GitHub repo as the front door. `.claude/` for zero-install use (clone, install
-requirements, open Claude Code, type `/analyze`) plus a plugin manifest so it can be
-installed elsewhere. Project-local `.venv` with a curated pinned `requirements.txt`.
+Public GitHub repo as the front door, and **installing the plugin is the route**, not a
+fallback: `.claude-plugin/plugin.json` at the repo root, the five skills under `skills/`
+and `/analyze` under `commands/`, so an install delivers them. Working in a clone stays
+possible and is the convenience, not the path most users take.
+
+`.claude/` holds the build configuration and nothing else. The skills were first written
+there, which conflated the product with the instructions to whoever is building it — and
+the symptom was immediate: the five skills appeared in the building session's own skill
+list.
+
+Installing the plugin delivers the prose, not the toolbox. `drtools` is a Python console
+script and installs separately, so `/analyze` checks for it before anything else and says
+what is missing rather than letting the agent meet a shell error and improvise.
+
+Project-local `.venv` with a curated pinned `requirements.txt`.
 Docs kept lean: `README.md`, `CONTEXT.md`, this file, and one ADR. No prose `docs/`
 tree: an architecture page would be a third copy of what the README, the four-page
 report and these notes already carry between them.
@@ -301,20 +344,24 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 4 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
 | 5 | Metrics battery, rank, pre-registered weighting, plan validator |
 | 6 | CONTEXT.md; viz house style, size-adaptive rendering |
-| 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol; then the five skills, /analyze, decisions.jsonl |
-| 8 | Report template + pandoc render; first end-to-end run, dataset 1 |
-| 9 | Fix what day 8 broke; clean run on dataset 1 |
-| 10 | End-to-end on dataset 2 (large) |
-| 11 | GPLVM, timeboxed |
-| 12 | Rules-planner hedge + ablation run |
-| 13 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
-| 14 | Final graded runs, reports, submit |
+| 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol |
+| 8 | The toolbox surface the skills need: status, budget, retry accounting, log-decision, suggest-base; the candidate ceiling; adapter provenance |
+| 9 | The five skills, /analyze |
+| 10 | Report template + pandoc render; first end-to-end run, dataset 1 |
+| 11 | Fix what day 10 broke, plus the queued defect lists; clean run on dataset 1 |
+| 12 | End-to-end on dataset 2 (large) |
+| 13 | Rules-planner hedge + ablation run |
+| 14 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
+| 15 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
 the full pipeline running on toy data in under a minute.
 
-Cut order if the schedule slips: GPLVM first, then the hedge. Never the tests, never
-day 14.
+The cut order was GPLVM first, then the hedge. GPLVM is spent, on day 7's contract
+work. Day 8 then overran too, and took a fifteenth day rather than the hedge: the
+calendar had the room, and the hedge is worth more than a day — it is both the
+ablation and the working system for a grader without Claude Code. The hedge is still
+what a further slip costs. Never the tests, never the last day.
 
 ---
 
@@ -750,3 +797,508 @@ day 14.
   exist. Also rejected: treating 2.3 as a defect — the overstatement is in the notes, and
   the fix is to describe the mechanism accurately rather than to build something larger
   than the deadline allows.
+
+- **Day 7** — The three contracts, and what it took to make them hold.
+
+  Days 5 and 6 left three guarantees the design claims and the code did not enforce.
+  All three are now enforced, and each was verified by re-running the reproduction that
+  found it rather than by trusting a passing suite. The suite went from 178 to 272.
+
+  *Dataset identity.* `ensure_cache` verified instead of trusting, and `profile`, `recon`
+  and `embed` stopped reloading the source when the run already holds a cache. Identity is
+  a content digest of the matrix and label codes. Sparse input is canonicalised first, and
+  `indices`/`indptr` are hashed at fixed width — measured here, one matrix built with
+  unsorted indices, with a stored zero, or with int64 rather than int32 indices gives three
+  different digests, and index width is storage, not data. Storage *kind* does stay part of
+  identity: normalising sparse against dense would mean densifying to hash, 707 MB for
+  pbmc3k, which defeats the representation the cache exists to preserve.
+
+  *Pre-registration.* `validate-plan` is the registration event; `rank` reads the frozen
+  copy. The false rationale that asserted "weights were declared in the plan before any
+  embedding was computed" is deleted — it was a fallback string the toolbox emitted while
+  the guarantee was being broken. Two bypasses were found only by attacking the fix. Running
+  `validate-plan` a second time re-registered unconditionally, so the whole contract fell to
+  one extra command; and copying `plan.json` over `plan.registered.json` satisfied the
+  digest check, which the refusal message had all but suggested by saying "restore the
+  registered plan". The freeze now refuses weight changes, base-preprocessing changes and
+  candidate removal, and `rank` cross-checks the registration against the last
+  `register_plan` record in the decision log. The log is append-only and predates every
+  embedding, so it is the authority and the file is not.
+
+  *Comparability.* The neighbourhood is chosen by published rule from the Reference's row
+  count, `k = max(1, min(15, ceil(n/2) - 1))`, which holds against scikit-learn for every
+  n >= 3 with the boundary tight at 30 and 31. `--k` and `--max-samples` are gone from
+  `evaluate`; `k` is a required argument of the battery with no default, because an optional
+  override leaves the incomparability available to the next caller. A candidate that
+  subsampled below what the registered k can support is refused, naming the subsample,
+  rather than quietly scored at a smaller k.
+
+  The retry loop survives all of this, which was the constraint that shaped the freeze.
+  A candidate that failed, timed out or crashed can still be diagnosed, revised,
+  re-registered and re-run; one that succeeded is frozen and must be re-registered under a
+  new id. Invalidation happens before every attempt rather than only when stages change,
+  because the commonest retry is the same stages with a bigger budget — reproduced, that
+  left a timed-out candidate ranked on the scores of the run before it.
+
+  Rejected: warning instead of refusing, which would have put a caveat in the report where
+  a guarantee belongs. Rejected: implementing Amendment now — it stays a defined term with
+  no mechanism, and every refusal that would need one says so plainly.
+
+  Two things worth recording because they were only caught late. Five of the nine tasks
+  had a fix that reintroduced the class of defect it was closing, which is why every task
+  got an independent review. And the mixed-k hole survived all nine of those reviews: the
+  reference recorded `settings.k`, `evaluate` read it, and nothing passed it on. Each task
+  matched its own brief, so only the whole-branch review could see it. The plan contained
+  the hole, not the implementations.
+
+  Day 9 inherits: `rank`'s status check reads the artefact rather than the decision log,
+  `prepare-reference` has no freeze, `write_cache` converts twice, `_invalidate_candidate`
+  globs an unsanitised candidate id on a delete path, and `recon` still carries its own
+  `--k` so the agent can still tune the evidence that justifies its own plan.
+
+- **Day 7** — The schedule re-indexed, and GPLVM spent.
+
+  Day 7 was briefed as the three contracts *and* the five skills. The contracts took the
+  day on their own, which the day 7 design had said outright they would. The skills move
+  to day 8 and everything after shifts by one.
+
+  That shift needs a slot, and the cut order settled on day 6 supplies it. GPLVM is
+  therefore spent rather than merely at risk, and section 7 moves it to future work. What
+  a further slip would cost is the hedge, which is worth more: it is the ablation showing
+  where the agent's judgment beat a rule engine, and it is how a grader without Claude
+  Code still gets a working system.
+
+  The rescheduled day 10 carries more than "fix what day 9 broke". It inherits the nine
+  defects queued on day 6 and the five day 7 left behind: `rank`'s status check reads the
+  artefact rather than the decision log, `prepare-reference` has no freeze, `write_cache`
+  converts twice, `_invalidate_candidate` globs an unsanitised candidate id on a delete
+  path, and `recon` still carries its own `--k`, so the agent can tune the evidence that
+  justifies its own plan. The entry above was written before the re-index and calls that
+  day nine.
+
+  Rejected: moving day 14, and compressing day 13's tests to keep GPLVM. Both were
+  foreclosed on day 6 — trading a deliverable the report can demonstrate for one method it
+  could only mention is the wrong direction on a rubric that rewards reproducibility.
+
+- **Day 7** — Day 7 lifted from an archived branch, day 8 left on it.
+
+  Days 7 and 8 were attempted once already, on `archive/day-7-8`, and the attempt was
+  interrupted partway through day 8: the planning ceremony outgrew the work it was
+  planning, and the task stopped being tractable. Both days were parked on that branch
+  rather than abandoned, which is why the record of them is not in this file.
+
+  Day 7 is taken. Its five commits — the design, the revision the adversarial pass forced,
+  the implementation plan and its one restructuring, and the implementation — are
+  cherry-picked onto main, and the 272 tests pass here as they did there. What made that
+  liftable is that day 7 had been classified architectural and so had a reviewed spec: the
+  work arrives with its reasoning attached rather than as a diff to be reverse-engineered.
+
+  Day 8 is not taken. Thirteen further commits on that branch are groundwork the
+  interrupted attempt laid down in the toolbox — status derived rather than described, a
+  budget with a consumer and a cap that refuses, attempt counting that survives
+  interruption, `log-decision` refusing to forge the records the freeze trusts, citation
+  resolution, the re-plan round defined by a grown portfolio rather than by a ranking, and
+  reconnaissance's rule offered as the planner's base-preprocessing default. They stay
+  where they are. A day whose plan exploded is not a day whose output should be inherited;
+  those commits are reference for the second attempt, not its starting point.
+
+  Two things follow. The five skills and `/analyze` exist nowhere — `skills/` and
+  `commands/` are empty on that branch too, so day 8's actual deliverable was never
+  written, and nothing is being redone twice. And the day 6 item deferred to day 7 —
+  reconnaissance's rule as the default *suggestion* for base preprocessing, which the
+  planner accepts or overrides with a logged reason — is still open, and belongs to day 8.
+
+  Rejected: merging the branch, which would import a partial day 8 whose shape the
+  interruption had already judged wrong. Rejected: rebuilding day 7 alongside it, which
+  would spend a day re-finding defects that branch's own review had found — five of its
+  nine tasks needed a fix that reintroduced the class of defect it was closing.
+
+- **Day 8** — The candidate ceiling, and the loop three correct components made.
+
+  Day 8's toolbox half was lifted from `archive/day-7-8` and reviewed as a whole against
+  this file rather than against the plan that produced it, which is the one way a
+  plan-level hole is visible. It found one.
+
+  Attempts were capped per candidate id at two. A replacement — add an id, abandon an id
+  — was deliberately not counted as a re-plan round, with a test asserting so. And
+  nothing capped the id set. Each of those is right on its own; composed, they gave an
+  unbounded loop: exhaust an id, abandon it, register a replacement, get two more,
+  forever. Section 3.1 had rejected exactly this as "unbounded in cost". The refusal at
+  the exhausted boundary completed it, by advising *"Register a new candidate id for a
+  further variant"* — true, helpful, and the instruction that resets the allowance.
+
+  The fix caps the registered candidate set by budget: 8, 7 and 6 for fast, standard and
+  thorough. The ceiling shrinks as the per-candidate wall-clock grows, which states the
+  trade rather than hiding it. It sits strictly above section 3.4's 3-5 portfolio
+  guidance, and that gap is deliberate: a ceiling of 5 would bound the loop by forbidding
+  the sanctioned repair, destroying the retry this design calls its best evidence of
+  agency. The `embed` refusal now computes the room left and only offers a replacement
+  when one exists; at the ceiling it names evaluation and the report instead.
+
+  What makes this cheap is that the counter already existed. Re-registration refuses to
+  let a registered id disappear — written for record integrity, not for this — so the id
+  set is monotone, already digested, and already in the append-only log. The bound is two
+  refusals that were already there plus one comparison, and it needs no new trust.
+
+  A plan may also declare `max_candidates` below the budget's ceiling. That enforces
+  nothing by itself, since a bound the agent sets on itself is not a bound, but under the
+  hard ceiling it is a checkable claim about self-restraint — the same thing
+  pre-registering the weighting buys for the evaluation.
+
+  Section 4's wording is amended rather than implemented: it said one retry per *method*,
+  which predates section 3.2's settling of the pipeline as the unit. Enforcing it
+  literally would newly forbid something the design requires, since the mandatory PCA
+  baseline can share a terminal method with another candidate and would have its
+  allowance consumed by it.
+
+  Rejected: a pooled per-run attempt budget, which was the first instinct. A pool asks
+  the agent to forecast the failure rate of candidates it has not yet run, and it has no
+  basis for that forecast — the council found the two opposite failure shapes, hoarding
+  and front-loading, which is itself the diagnosis. A per-candidate allowance asks for no
+  forecast: "may I retry this?" is always local. Also rejected: lineage tracking through a
+  declared `replaces=` field, because an invariant cannot rest on a field whose omission
+  is free. And rejected: bounding it in skill prose, which this defect is the argument
+  against — the message that taught the bypass *was* prose, and was correct.
+
+  Known limits, stated rather than left to be found. The ceiling bounds a run, not a
+  dataset: nothing stops a fresh run, though that is a separate decision log and a
+  separate report, so the flailing stays visible. And it bounds count, not breadth — eight
+  ids all running the same method is legal. Section 3.4's family-spanning requirement is
+  the answer to that and is still unenforced; it is day 10 work, because as an error at
+  re-registration it could refuse a legitimate replacement.
+
+- **Day 8** — Four smaller findings from the same review, and one pattern shared
+  between two of them.
+
+  *The re-plan trigger.* Section 3.1 said the round comes "after evaluation"; the code
+  offers it once anything has been attempted. The code is right and the sentence was
+  amended to match: a run where every candidate failed has nothing to evaluate, and is
+  exactly the run that needs to re-plan. Reading it literally would have offered the
+  round forever to the runs least able to take it.
+
+  *`status` trusted the file.* It enumerated candidates from `plan.registered.json`
+  while taking outcomes, attempts and the re-plan round from the decision log. `rank`
+  cross-checks the two and refuses, so a rewritten file could never change a ranking —
+  but it could change what `status` reported, and `status` is what the agent reads to
+  choose its next move, so a forged candidate would have redirected the run long before
+  `rank` refused. The registration record already carries the id list; it is now the
+  source, with the file kept only as the fallback for a run that never froze a plan.
+
+  *`_ranked` failed open.* A `ranking.json` with no registration recorded was taken at
+  its word. `rank` refuses unless the log records a registration, so that state cannot
+  be produced by this toolbox — which makes reading it as ranked a way for a
+  hand-written file to declare the run finished. It now fails closed.
+
+  *The in-process gate named its own key.* `--in-process` escapes the wall-clock cap
+  and is held behind an environment variable, and both the refusal and the `--help`
+  text said which variable. That is the same defect as the retry refusal that advised
+  registering a new candidate id: correct, helpful, and the one sentence that hands over
+  the bypass. Both now name only the legitimate route.
+
+  The limit is worth stating rather than leaving to be found: the variable still exists,
+  because the suite needs it, and an agent with a shell could set it. What changed is
+  that nothing in the toolbox tells it so. That is a speed bump, not a barrier — the
+  barrier would be removing the flag and having the tests reach `run_pipeline` directly,
+  which costs the outcome recording the CLI path gives them.
+
+  Two of the four are the same shape, and it is worth naming because it has now
+  appeared three times in two days: a refusal that explains the way around itself. A
+  message is the surface the agent acts on, so a true sentence in it is an instruction,
+  not a note.
+
+- **Day 8** — Missing values are out of scope, and three files now say so.
+
+  Day 6's adversarial pass found the loader, the contract and the registry mutually
+  unsatisfiable on a CSV with a hole in it. `_load_table` refused and called imputation
+  "a preprocessing decision for the agent to make explicitly"; the contract demanded
+  missingness be "resolved or explicitly encoded by the loader"; and the registry had
+  no op that imputes. The only route those three left open was an adapter filling the
+  holes in silently, after which audited metrics treat fabricated numbers as
+  observations and `meta` has nowhere to say otherwise.
+
+  The measurement that settled it: **none of the ten reductions tolerates NaN.** Every
+  one raises, and most name it — "PCA does not accept missing values encoded as NaN",
+  "NearestNeighbors does not accept missing values". Nor is there a back door: sklearn's
+  `nan_euclidean_distances` works and several methods take precomputed matrices, but no
+  executor exposes that route — `spectral.py` hardcodes `affinity="nearest_neighbors"`,
+  and the registry offers no distance metric for MDS, Isomap or t-SNE.
+
+  So admitting NaN into the contract would have bought exactly one thing: carrying it
+  from the loader to an `impute` stage. That reframed the question as *where imputation
+  happens* rather than whether — at load, recorded in `meta`, or in the plan, recorded as
+  a Stage that is pre-registered, validated, cited and comparable between candidates.
+
+  The plan-stage version is the better design and is not being built. It costs a
+  contract change, two executors, a validator rule, and a clause in reconnaissance's
+  probe rule, on a day already over its scope, to serve an input neither graded dataset
+  has. PBMC3k is a count matrix and PathMNIST is images; neither has missing values.
+
+  What changes is that the three files agree, and agree on refusal. Both messages
+  previously named a route — the contract told the loader to resolve it, the loader
+  called it the agent's decision — and those sentences were the whole opening. They now
+  say the dataset is out of scope and why filling the holes would be worse than
+  stopping. Section 7 lists it as future work with the measurement behind it.
+
+  Rejected: required `meta` provenance recording what an adapter did about missingness.
+  It is the honest half-measure and merges with the adapter-digest work, but a mandatory
+  field is a declaration, not a verification, and this project already has one
+  overstated guarantee it had to walk back. A narrower promise kept exactly is worth
+  more here than a wider one qualified in a footnote.
+
+  One thing found while measuring, not fixed: `mds.metric` is the metric-versus-
+  non-metric flag, a boolean, while `umap.metric` is a distance-function name. Same key,
+  two meanings, in a registry the planner reasons over. Day 10.
+
+- **Day 8** — Adapter provenance, the narrowed 2.3 claim, and a fifteenth day.
+
+  The adapter is the one piece of agent-written code in an analysis, and a run recorded
+  only its path. That dates badly: `my_adapter.py` describes a matrix produced by
+  whatever that file holds when someone later opens it. `meta['adapter']` is now a
+  record carrying the path, a sha256 of the source that ran, and its size.
+
+  It is also assigned rather than defaulted. `setdefault` let an adapter supply its own
+  `adapter` key and keep it — the one field saying which code produced the matrix was
+  writable by that code. This is the toolbox recording what it executed, not the
+  adapter describing itself.
+
+  Provenance is deliberately separate from the dataset digest. Day 7 kept adapter source
+  out of identity so an adapter could be tidied without invalidating a run; the
+  corollary is that identity cannot then answer which code ran, so provenance has to.
+  A test pins both halves: the same matrix from an edited adapter keeps its identity and
+  changes its provenance.
+
+  *Section 2.3 is narrowed, which day 6 said to do and nothing did.* It claimed evidence
+  keys mean the agent "structurally cannot claim a decision it did not make". They do
+  not. `log-decision` refuses a citation that resolves to nothing and records what each
+  key resolved to, which buys citation integrity: no rationale rests on a number the run
+  never computed, and every claim leads back to an artefact. A real key with a false
+  reading still passes, and nothing binds `chosen` to an executed outcome. Day 5's rank
+  falsehood was that gap occurring. The notes and the README now claim the narrower
+  thing, which is the one the mechanism delivers.
+
+  *And the schedule gained a fifteenth day.* Day 8 was re-scoped to the toolbox surface
+  the skills need, and then absorbed the candidate ceiling, four review findings, the
+  missing-data decision and this. The skills move to day 9 and everything shifts. Paid
+  for with a day rather than with the hedge: the calendar has the room, and the hedge is
+  worth more than a day, being both the ablation and the working system for a grader
+  without Claude Code. It stays what a further slip would cost.
+
+- **Day 9** — The five skills and `/analyze`, and where an agent's own skills live.
+
+  The deliverable that no previous attempt reached. Each skill reads its position from
+  `drtools status` rather than from the conversation, so a resumed session restores
+  completely, and each ends by handing off to the next.
+
+  What the prose carries is what the toolbox cannot. The refusals already say what is
+  wrong and what to do instead, so the skills do not restate them; they carry the
+  judgement that does not reduce to a Capability record — that t-SNE and UMAP cluster
+  sizes and inter-cluster distances are not meaningful, that a Reference value is a
+  baseline an Embedding may exceed, that a failed Candidate indicts a configuration
+  rather than a method, and that spanning families is what makes disagreement between
+  Candidates informative.
+
+  *They were written under `.claude/` first, and that was wrong twice over.* `.claude/`
+  is the build configuration — instructions to whoever is building dr-agent — so the
+  product's runtime prose beside it made the two indistinguishable. The symptom arrived
+  immediately: the five skills appeared in the building session's own skill list, which
+  is not a feature but a namespace collision. And installation, not cloning, is how this
+  will actually be used, so the plugin root is where they belong. Section 8 is rewritten
+  to say install is the route rather than a "plus".
+
+  That exposed a dependency worth naming: installing the plugin delivers the prose, not
+  the toolbox. `drtools` is a console script from the Python package, and every skill
+  calls it. `/analyze` now checks for it first, so the likeliest first-run failure is a
+  sentence rather than a shell error the agent improvises around.
+
+  *`CONTEXT.md` gained three terms, and the reason is the day 6 lesson repeating.*
+  Writing the skills in the glossary's vocabulary surfaced that day 8 had introduced
+  three concepts the prose leans on and the glossary never carried: **Portfolio**, the
+  Candidates a Plan registers; **Ceiling**, the largest Portfolio a Run may register;
+  and **Attempt**, one execution of a Candidate. Two of them collided with words the
+  glossary explicitly told the skills to avoid — `ceiling` under Reference value,
+  `allowance` under Budget — which is what made the gap visible. "Portfolio" was already
+  in eleven places across the notes, the skills and the code, defined nowhere.
+
+  Writing prose in a glossary's terms is a better test of the glossary than reviewing it
+  is: an undefined concept is invisible until something has to be said in its words.
+
+  *The skills got a test.* `tests/test_skills.py` checks that every `drtools` command and
+  flag the prose names exists, that the chain holds all five, that frontmatter carries a
+  name matching its directory and a description stating when to use the skill, and that
+  the manifest declares the version `pyproject.toml` declares. Prose cannot be
+  type-checked; the names in it can.
+
+  It was broken when written — it passed with a deliberately bogus `--candidate-id`
+  injected, because the flag pattern matched only contiguous flags and stopped at the
+  first one taking a value. Found by injecting the error on purpose, which is the only
+  thing that makes a test written after the code worth anything.
+
+- **Day 9** — An external review of days 7 to 9, and the five defects it found.
+
+  A Codex review over `847d138...HEAD` — the whole of days 7, 8 and 9, 47 files and
+  some 7,500 inserted lines. Five findings, all five real when checked against the
+  code, two of them changing a decision rather than repairing an implementation of one.
+  No false positives, which is worth recording: the previous external pass on day 6
+  also landed, and reviewing a whole scope at once is what keeps finding the defects
+  that sit between correct pieces.
+
+  *A refusal that destroyed the evidence it was refusing to replace.* `embed` cleared
+  the previous attempt's embeddings and metrics and then resolved the seed, which can
+  refuse. A retry carrying a seed the run was not created with deleted the record of
+  the previous failure and then declined to produce a new one, and the decision log
+  does not close the gap: it records how an attempt ended, not why. The op, the error
+  type and the message existed only in `embeddings/<id>.json`.
+
+  The invariant was already written thirty lines above, over the `--in-process`
+  refusal — a request the run cannot honour must leave the run exactly as it found it —
+  and the budget and attempt-count refusals sit above the invalidation and keep it.
+  One refusal sat below it. Every individual rule here was correct; the defect was
+  only in where one of them sat relative to a destructive step. That is the third time
+  this project has found a defect at a seam rather than inside a rule.
+
+  *`/analyze` opened every new analysis on a refusal.* It said a Run is resumed or
+  started and that "either way, the next command is `drtools status`". There is no
+  either way: `status` reads a Run through `_require_run`, which refuses a path that
+  does not exist. `profile-dataset` had the same circularity at the top — read your
+  position from `status`, and only then, at step 1, run the `profile` that creates the
+  directory `status` needs. Both now branch on the case. The refusal carries the route
+  out too, which `_open_run` already did for its own case and `_require_run` did not.
+
+  Prose only, for the two documents. The branch a skill takes is not mechanically
+  checkable, and a test that pattern-matched the wording would pass for the wrong
+  reason; the refusal is tested instead.
+
+  *A declared ceiling was not frozen, and this changes a decision.* Day 8 recorded that
+  a plan declaring `max_candidates` below the budget's ceiling "enforces nothing by
+  itself, since a bound the agent sets on itself is not a bound, but under the hard
+  ceiling it is a checkable claim about self-restraint — the same thing pre-registering
+  the weighting buys for the evaluation". Re-registration froze the budget, the
+  weighting and the base preprocessing and left this open, so a run could declare 2,
+  register 2, then re-register at 5 and spend 5. The `register_plan` record carried the
+  digest, the weights and the candidate ids but not the declaration, and
+  `plan.registered.json` is overwritten by the next registration — so afterwards
+  nothing showed that 2 had ever been claimed.
+
+  That day 8 sentence is superseded, and both halves of it are why. *Checkable* needs
+  the claim to survive in the append-only log. And the comparison to the weighting is
+  not decoration: the weighting is frozen by refusal, so a field said to buy the same
+  thing cannot be freely rewritten. The declaration is made before any candidate has
+  run, which is what separates a claim about restraint from a report of what the run
+  turned out to need. Loosening now refuses, tightening stays legal, omitting the field
+  counts as loosening rather than as saying nothing, and `max_candidates` joins
+  `LIFECYCLE_FIELDS` so the agent's own write route cannot forge it.
+
+  Rejected: recording the declaration and leaving it loosenable, which was the smaller
+  change and keeps the day 8 sentence intact. It buys a record of the loosening and
+  nothing that stops it, and a pre-registration the run may revise is the thing this
+  project has refused everywhere else.
+
+  *One re-plan round, enforced rather than reported.* Section 3.1 permits one round
+  once the portfolio has been attempted, and `evaluate-embeddings` says so. Nothing
+  refused a second. `status` computed `replan_round_spent` correctly and spent it on
+  one decision — whether a run with no successes goes back to plan or on to report —
+  while `validate-plan` registered a third and fourth extension without comment.
+
+  The refusal reuses `status`'s own scan rather than restating the rule. The round has
+  four distinctions in it and every one lives at an edge, so a second implementation
+  would disagree with the first somewhere and the two commands would then describe
+  different runs.
+
+  This exposed a test that was not testing what it said. The exhaust-abandon-replace
+  cycle test described exhausting an id, abandoning it and registering a replacement,
+  and never recorded the abandonment — which under the design's own definition made
+  every cycle a re-plan round, and it passed only because nothing refused one. It now
+  abandons through `log-decision` and still ends where it did, at the Ceiling. The
+  Ceiling remains what bounds the replacement route; the round bounds the other one.
+
+  *Malformed JSON escaped the error contract.* `--plan` and `log-decision --json` both
+  parsed with a bare `json.loads`, and `main` catches neither `JSONDecodeError` nor the
+  `ValueError` it derives from, so a mistyped brace left a traceback and exit 1 — not
+  one of the four documented exit codes, and no route out. `_plan_from` had already
+  closed this class for pydantic's `ValidationError`, which is raised only once the
+  document has parsed. The message names the source, because `@path` and an inline
+  document are two of them and fixing the wrong one is a loop.
+
+  Day 10's brief is unchanged: the report template and the first end-to-end run. These
+  five were repairs to days 7 to 9 and are recorded here rather than spending a day.
+
+  385 tests.
+
+- **Day 10** — The report contract, and what the toolbox contributes to a document the
+  agent writes.
+
+  Briefed as "report template + pandoc render". The notes fixed the requirement and not
+  the mechanism — section 5 fixes the nine-section skeleton and names pandoc, section
+  2.3 fixes that the report is generated from the Decision log, and nothing anywhere
+  said whether `drtools` contributes to the document at all. That is the *make X hold*
+  shape, so the day was architectural and got a design before any code:
+  `design/specs/2026-09-20-report-contract.md`, then a plan, then six tasks.
+
+  *The decision: the toolbox emits the numbers; the agent writes the prose.* Generated
+  sections carry fenced blocks the toolbox owns and can regenerate; everything outside a
+  fence is the agent's. The property this buys is that **the agent never retypes a
+  number** — a figure in the report cannot disagree with the artefact it came from,
+  because there was no opportunity to transcribe it. That is stronger than citation
+  integrity and composes with it: citation integrity says a cited key resolves, and this
+  says the value printed is the value it resolved to.
+
+  Rejected: *render only*, the agent writing everything and `render` just calling pandoc,
+  which leaves the grounding resting on prose discipline and makes every number a
+  transcription. Rejected: *fully generated*, which cannot write sections 8 and 9 without
+  squeezing paragraphs of interpretation through a field meant for one-line rationales,
+  inverting which of the log and the report is the record. Rejected: *write then verify*,
+  which needs a number-extraction parser over free prose — and a parser that misses one
+  case is worse than no parser, because it reports a clean check over a document it did
+  not fully read. Emitting achieves the same end with no parser at all.
+
+  Section 8, Interpretation, has no block. Nothing in the Run grounds one, and a
+  generated contribution there would lend the appearance of derivation to the one section
+  that is entirely the agent's judgment — the failure mode section 2.3 already had to
+  narrow a claim over once.
+
+  *Rendering last is a property, not an instruction.* Two chains go stale and ordering
+  fixes only one: the PDF against the Markdown, and the Markdown against the Run. The
+  second is the dangerous one, because it yields a clean, current-looking PDF of numbers
+  the Run has moved past. So `render` recomputes what each block would hold and refuses
+  if any would change. It does not refresh on the agent's behalf — silently changing the
+  numbers while producing the PDF would let the two artefacts a reader compares differ,
+  and section 5 already settles that the Markdown is the source of truth.
+
+  *Reading real artefacts corrected the design twice, and simplified it once.* The spec
+  said section 4's hyperparameters come from the registered Plan. They come from
+  `embeddings/<id>.json`: the Plan holds what was asked for, and the record holds what
+  ran, with registry defaults filled in and `param_provenance` marking every value
+  `specified` or `registry_default`. Only the record can say which hyperparameters the
+  agent chose. And `figures.json` stores absolute paths, so the block relativises them —
+  a report carrying an absolute path breaks the moment the Run is moved and pandoc cannot
+  resolve the image.
+
+  The simplification: the spec carried an exception for a Run where every Candidate
+  failed. It needs no code. `status._next_stage` already returns `report` once nothing
+  has succeeded and the re-plan round is spent, and `plan` while the round is unspent.
+  Both are the right answer, so `report` checks one condition and has no special case —
+  which is the same discipline as reading `status` for readiness at all, rather than
+  asking the question a second way and letting the two answers drift.
+
+  *A defect in the fence contract, found by the tests of the task after it.* `fence`
+  wrote the body verbatim, but `parse_blocks` strips trailing newlines, because the
+  closing comment sits on its own line. So any body ending in a blank line failed its own
+  digest the instant it was read back, and `--refresh` refused a block nobody had
+  touched. `_block_ranking` produces exactly such a body whenever a Run has no ranking
+  notes. The task that introduced it had six tests and every one used a body ending
+  mid-line, so the round trip was never exercised at its edge.
+
+  The fix is one canonical form applied wherever a body is written, hashed or compared.
+  Half of it would have been worse than none: normalising only the digest makes the
+  hand-edit check pass while leaving the staleness comparison weighing a stripped parsed
+  body against an unstripped generated one, so every block reads as changed on every
+  refresh and `refreshed` stops meaning anything the agent can act on. Two tests pin the
+  two halves.
+
+  Day 10's second half — the first end-to-end run on PBMC3k — is not done. It carries one
+  decision the design deliberately left open: whether PBMC3k gets derived Leiden
+  reference labels. Labels from a PCA-neighbour-graph-Leiden pipeline would flatter
+  embeddings preserving that same neighbourhood structure, so using them as a metric
+  input would bias the ranking toward methods resembling the pipeline that produced them.
+
+  416 tests, 61s.

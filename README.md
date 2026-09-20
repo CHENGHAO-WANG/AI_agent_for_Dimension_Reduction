@@ -26,27 +26,36 @@ Three properties shape the design:
   unfamiliar formats are handled by an agent-written adapter that is contract-checked
   before use.
 - **The run directory is the only state.** Nothing lives in conversation context.
-  Every decision lands in `runs/<id>/decisions.jsonl` with an `evidence` field
-  pointing at a key that actually exists in `profile.json` or `metrics.json`, and the
-  report is generated *from* that log — so the agent cannot claim a decision it did
-  not make.
+  Every decision lands in `runs/<id>/decisions.jsonl` with an `evidence` field whose
+  keys must resolve in `profile.json` or `metrics.json`, and the report is generated
+  *from* that log — so no rationale can rest on a number the run never computed, and
+  every claim can be followed back to the artefact behind it.
 - **Pre-registered evaluation.** The agent declares how it will weight the evaluation
   metrics *before* any embedding is computed, which rules out choosing a weighting
   that flatters whichever method happened to win.
 
 ## Quick start
 
+Two pieces: the plugin carries the agent's skills and the `/analyze` command, and the
+`drtools` toolbox does the mathematics they drive. Both are needed.
+
+```bash
+pip install dr-agent            # the toolbox
+```
+
+Then install the plugin from this repository in Claude Code, and run:
+
+```
+/analyze pbmc3k
+```
+
+Working in a clone instead:
+
 ```bash
 git clone <repo-url> && cd dr-agent
 python -m venv .venv
 .venv/Scripts/activate          # Windows;  source .venv/bin/activate elsewhere
 pip install -r requirements.txt
-```
-
-Then open Claude Code in the repository and run:
-
-```
-/analyze pbmc3k
 ```
 
 The toolbox is also usable on its own, with a rule-based planner and no LLM:
@@ -62,6 +71,8 @@ drtools run --planner=rules --data pbmc3k --out runs/
 | `drtools/` | Deterministic toolbox: loaders, profiler, executors, metrics, viz |
 | `skills/` | The five agent skills |
 | `commands/` | The `/analyze` command |
+| `.claude-plugin/` | Plugin manifest, so installing this repository delivers both |
+| `.claude/` | Build configuration for working *on* dr-agent, not part of the product |
 | `runs/` | Run directories (git-ignored) |
 | `tests/` | Pipeline and agent-behaviour tests over synthetic fixtures |
 | `design/notes.md` | Design decisions and their rationale |
