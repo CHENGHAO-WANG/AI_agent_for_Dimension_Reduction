@@ -835,3 +835,36 @@ would cost. Never the tests, never day 14.
   Rejected: moving day 14, and compressing day 13's tests to keep GPLVM. Both were
   foreclosed on day 6 — trading a deliverable the report can demonstrate for one method it
   could only mention is the wrong direction on a rubric that rewards reproducibility.
+
+- **Day 7** — Day 7 lifted from an archived branch, day 8 left on it.
+
+  Days 7 and 8 were attempted once already, on `archive/day-7-8`, and the attempt was
+  interrupted partway through day 8: the planning ceremony outgrew the work it was
+  planning, and the task stopped being tractable. Both days were parked on that branch
+  rather than abandoned, which is why the record of them is not in this file.
+
+  Day 7 is taken. Its five commits — the design, the revision the adversarial pass forced,
+  the implementation plan and its one restructuring, and the implementation — are
+  cherry-picked onto main, and the 272 tests pass here as they did there. What made that
+  liftable is that day 7 had been classified architectural and so had a reviewed spec: the
+  work arrives with its reasoning attached rather than as a diff to be reverse-engineered.
+
+  Day 8 is not taken. Thirteen further commits on that branch are groundwork the
+  interrupted attempt laid down in the toolbox — status derived rather than described, a
+  budget with a consumer and a cap that refuses, attempt counting that survives
+  interruption, `log-decision` refusing to forge the records the freeze trusts, citation
+  resolution, the re-plan round defined by a grown portfolio rather than by a ranking, and
+  reconnaissance's rule offered as the planner's base-preprocessing default. They stay
+  where they are. A day whose plan exploded is not a day whose output should be inherited;
+  those commits are reference for the second attempt, not its starting point.
+
+  Two things follow. The five skills and `/analyze` exist nowhere — `skills/` and
+  `commands/` are empty on that branch too, so day 8's actual deliverable was never
+  written, and nothing is being redone twice. And the day 6 item deferred to day 7 —
+  reconnaissance's rule as the default *suggestion* for base preprocessing, which the
+  planner accepts or overrides with a logged reason — is still open, and belongs to day 8.
+
+  Rejected: merging the branch, which would import a partial day 8 whose shape the
+  interruption had already judged wrong. Rejected: rebuilding day 7 alongside it, which
+  would spend a day re-finding defects that branch's own review had found — five of its
+  nine tasks needed a fix that reintroduced the class of defect it was closing.
