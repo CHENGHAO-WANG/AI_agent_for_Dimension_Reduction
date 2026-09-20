@@ -36,17 +36,26 @@ Three properties shape the design:
 
 ## Quick start
 
+Two pieces: the plugin carries the agent's skills and the `/analyze` command, and the
+`drtools` toolbox does the mathematics they drive. Both are needed.
+
+```bash
+pip install dr-agent            # the toolbox
+```
+
+Then install the plugin from this repository in Claude Code, and run:
+
+```
+/analyze pbmc3k
+```
+
+Working in a clone instead:
+
 ```bash
 git clone <repo-url> && cd dr-agent
 python -m venv .venv
 .venv/Scripts/activate          # Windows;  source .venv/bin/activate elsewhere
 pip install -r requirements.txt
-```
-
-Then open Claude Code in the repository and run:
-
-```
-/analyze pbmc3k
 ```
 
 The toolbox is also usable on its own, with a rule-based planner and no LLM:
@@ -62,6 +71,8 @@ drtools run --planner=rules --data pbmc3k --out runs/
 | `drtools/` | Deterministic toolbox: loaders, profiler, executors, metrics, viz |
 | `skills/` | The five agent skills |
 | `commands/` | The `/analyze` command |
+| `.claude-plugin/` | Plugin manifest, so installing this repository delivers both |
+| `.claude/` | Build configuration for working *on* dr-agent, not part of the product |
 | `runs/` | Run directories (git-ignored) |
 | `tests/` | Pipeline and agent-behaviour tests over synthetic fixtures |
 | `design/notes.md` | Design decisions and their rationale |

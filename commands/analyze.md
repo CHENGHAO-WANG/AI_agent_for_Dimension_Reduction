@@ -17,12 +17,26 @@ profile-dataset -> plan-analysis -> execute-plan -> evaluate-embeddings -> write
 Invoke each skill when you reach its stage, and follow it. They are the instructions;
 this command only orders them.
 
+## Check the toolbox is there
+
+Installing this plugin delivers these instructions. It does not deliver `drtools`,
+which is a Python package. Before anything else:
+
+```
+drtools datasets
+```
+
+If that is not found, stop and say so: the skills are installed but the toolbox is not.
+It installs with `pip install dr-agent`, or from a clone of the repository with
+`pip install -r requirements.txt`. Do not improvise around a missing `drtools` — every
+number in the report has to come from it.
+
 ## Start or resume
 
 If a `--run-id` was given and that Run exists, or if `runs/` holds an unfinished Run for
 this dataset, resume it. Otherwise start one.
 
-Either way, the first command is:
+Either way, the next command is:
 
 ```
 drtools status --run-dir runs/<id>

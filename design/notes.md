@@ -310,9 +310,21 @@ dataset caching and `.gitignore` handling.
 
 ## 8. Deliverables
 
-Public GitHub repo as the front door. `.claude/` for zero-install use (clone, install
-requirements, open Claude Code, type `/analyze`) plus a plugin manifest so it can be
-installed elsewhere. Project-local `.venv` with a curated pinned `requirements.txt`.
+Public GitHub repo as the front door, and **installing the plugin is the route**, not a
+fallback: `.claude-plugin/plugin.json` at the repo root, the five skills under `skills/`
+and `/analyze` under `commands/`, so an install delivers them. Working in a clone stays
+possible and is the convenience, not the path most users take.
+
+`.claude/` holds the build configuration and nothing else. The skills were first written
+there, which conflated the product with the instructions to whoever is building it — and
+the symptom was immediate: the five skills appeared in the building session's own skill
+list.
+
+Installing the plugin delivers the prose, not the toolbox. `drtools` is a Python console
+script and installs separately, so `/analyze` checks for it before anything else and says
+what is missing rather than letting the agent meet a shell error and improvise.
+
+Project-local `.venv` with a curated pinned `requirements.txt`.
 Docs kept lean: `README.md`, `CONTEXT.md`, this file, and one ADR. No prose `docs/`
 tree: an architecture page would be a third copy of what the README, the four-page
 report and these notes already carry between them.
@@ -1070,3 +1082,53 @@ what a further slip costs. Never the tests, never the last day.
   for with a day rather than with the hedge: the calendar has the room, and the hedge is
   worth more than a day, being both the ablation and the working system for a grader
   without Claude Code. It stays what a further slip would cost.
+
+- **Day 9** — The five skills and `/analyze`, and where an agent's own skills live.
+
+  The deliverable that no previous attempt reached. Each skill reads its position from
+  `drtools status` rather than from the conversation, so a resumed session restores
+  completely, and each ends by handing off to the next.
+
+  What the prose carries is what the toolbox cannot. The refusals already say what is
+  wrong and what to do instead, so the skills do not restate them; they carry the
+  judgement that does not reduce to a Capability record — that t-SNE and UMAP cluster
+  sizes and inter-cluster distances are not meaningful, that a Reference value is a
+  baseline an Embedding may exceed, that a failed Candidate indicts a configuration
+  rather than a method, and that spanning families is what makes disagreement between
+  Candidates informative.
+
+  *They were written under `.claude/` first, and that was wrong twice over.* `.claude/`
+  is the build configuration — instructions to whoever is building dr-agent — so the
+  product's runtime prose beside it made the two indistinguishable. The symptom arrived
+  immediately: the five skills appeared in the building session's own skill list, which
+  is not a feature but a namespace collision. And installation, not cloning, is how this
+  will actually be used, so the plugin root is where they belong. Section 8 is rewritten
+  to say install is the route rather than a "plus".
+
+  That exposed a dependency worth naming: installing the plugin delivers the prose, not
+  the toolbox. `drtools` is a console script from the Python package, and every skill
+  calls it. `/analyze` now checks for it first, so the likeliest first-run failure is a
+  sentence rather than a shell error the agent improvises around.
+
+  *`CONTEXT.md` gained three terms, and the reason is the day 6 lesson repeating.*
+  Writing the skills in the glossary's vocabulary surfaced that day 8 had introduced
+  three concepts the prose leans on and the glossary never carried: **Portfolio**, the
+  Candidates a Plan registers; **Ceiling**, the largest Portfolio a Run may register;
+  and **Attempt**, one execution of a Candidate. Two of them collided with words the
+  glossary explicitly told the skills to avoid — `ceiling` under Reference value,
+  `allowance` under Budget — which is what made the gap visible. "Portfolio" was already
+  in eleven places across the notes, the skills and the code, defined nowhere.
+
+  Writing prose in a glossary's terms is a better test of the glossary than reviewing it
+  is: an undefined concept is invisible until something has to be said in its words.
+
+  *The skills got a test.* `tests/test_skills.py` checks that every `drtools` command and
+  flag the prose names exists, that the chain holds all five, that frontmatter carries a
+  name matching its directory and a description stating when to use the skill, and that
+  the manifest declares the version `pyproject.toml` declares. Prose cannot be
+  type-checked; the names in it can.
+
+  It was broken when written — it passed with a deliberately bogus `--candidate-id`
+  injected, because the flag pattern matched only contiguous flags and stopped at the
+  first one taking a value. Found by injecting the error on purpose, which is the only
+  thing that makes a test written after the code worth anything.
