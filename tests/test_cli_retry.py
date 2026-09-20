@@ -2,6 +2,9 @@ import json
 
 import pytest
 
+from drtools.isolation import BUDGET_MAX_CANDIDATES
+from drtools.status import MAX_ATTEMPTS
+
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 # perplexity must stay well below n/3 for the 60-row fixture dataset, or validate-plan
 # refuses the candidate outright (see validate_plan's perplexity_too_large finding).
@@ -383,3 +386,86 @@ def test_a_changed_registration_after_ranking_does_spend_the_round(
     after = cli("status", "--run-dir", run).payload
     assert after["replan_round_spent"] is True
     assert after["ranked"] is False
+
+
+def test_the_exhausted_retry_refusal_names_the_remaining_room(
+    cli, csv_dataset, tmp_path
+):
+    """Advising a new id is only true while the plan has room for one.
+
+    The refusal is what the agent acts on, so unconditional advice to register a
+    replacement is the instruction that resets the allowance. It has to say how much
+    room is left, or it is the loop's own instruction manual.
+    """
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
+    _append_embed_decision(run, "a", "failed")
+    _append_embed_decision(run, "a", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+
+    assert result.code == 2
+    assert "6 further" in result.stderr, "one of the standard budget's 7 ids is used"
+
+
+def test_at_the_ceiling_the_refusal_stops_advising_a_new_id(
+    cli, csv_dataset, tmp_path
+):
+    """At the ceiling there is no replacement to register, so it must not be offered."""
+    full = [
+        {"id": f"c{i}", "stages": PCA} for i in range(BUDGET_MAX_CANDIDATES["standard"])
+    ]
+    run = _prepared(cli, csv_dataset, tmp_path, full)
+    _append_embed_decision(run, "c0", "failed")
+    _append_embed_decision(run, "c0", "failed")
+
+    result = cli("embed", "--run-dir", run, "--id", "c0", "--in-process")
+
+    assert result.code == 2
+    assert "new candidate id" not in result.stderr
+    assert "report" in result.stderr
+
+
+def test_the_exhaust_abandon_replace_cycle_terminates(cli, csv_dataset, tmp_path):
+    """The whole point of the ceiling: the replacement loop cannot run forever.
+
+    Each piece was individually correct before this. Attempts were capped per
+    candidate id, replacement was deliberately not counted as a re-plan round, and
+    nothing capped the id set — so exhausting an id, abandoning it and registering a
+    replacement bought two more executions, without limit. The defect existed only in
+    composition, which is why no per-piece test caught it.
+    """
+    runs = tmp_path / "runs"
+    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+        "--runs-root", runs, "--run-id", "r1")
+    run = runs / "r1"
+
+    candidates = [{"id": "c0", "stages": PCA}]
+    for cycle in range(1, 50):
+        (run / "plan.json").write_text(json.dumps(_plan(candidates)), encoding="utf-8")
+        # The validator returns a report rather than raising, so refusal shows as
+        # `valid: false` and an unwritten plan.registered.json, not an exit code.
+        result = cli("validate-plan", "--run-dir", run)
+        if not result.payload["valid"]:
+            break
+
+        # Spend the id's whole allowance, give up on it, and replace it — the cycle
+        # that used to be free.
+        _append_embed_decision(run, candidates[-1]["id"], "failed")
+        _append_embed_decision(run, candidates[-1]["id"], "failed")
+        candidates = candidates + [{"id": f"c{cycle}", "stages": PCA}]
+    else:  # pragma: no cover - reached only if the loop never terminates
+        raise AssertionError("the replacement cycle was never refused")
+
+    ceiling = BUDGET_MAX_CANDIDATES["standard"]
+    assert "candidates_exceed_ceiling" in json.dumps(result.payload)
+    # Refused on the registration that would have made the plan one over.
+    assert len(candidates) == ceiling + 1
+
+    # And the refusal is enforcement, not advice: the plan that exceeded the
+    # ceiling was never registered, so `embed` cannot reach its candidates.
+    registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
+    assert len(registered["candidates"]) == ceiling
+
+    # Which is the bound: `ceiling` ids, two attempts each, and no route to a
+    # further id. Before the ceiling existed this loop had no end at all.
+    assert ceiling * MAX_ATTEMPTS == 14

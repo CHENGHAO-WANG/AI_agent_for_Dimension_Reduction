@@ -38,6 +38,27 @@ def budget_timeout(budget: str) -> float:
     """
     return BUDGET_TIMEOUTS_S[budget]
 
+
+BUDGET_MAX_CANDIDATES = {"fast": 8, "standard": 7, "thorough": 6}
+"""How many Candidates one Run may ever register, by Budget.
+
+Attempts are capped per candidate id and the id set only grows, so this is what
+bounds a Run: at most `MAX_ATTEMPTS x ceiling` executions. Without it the id set is
+the one spendable quantity nothing declares, and it is precisely what an agent mints
+to reset the per-candidate allowance — exhaust two attempts, abandon, register a
+replacement, repeat.
+
+The ceiling shrinks as `BUDGET_TIMEOUTS_S` grows, which states the trade rather than
+hiding it: a larger time allowance per candidate buys fewer of them. It sits strictly
+above section 3.4's 3-5 portfolio guidance, and that gap is the repair headroom — a
+ceiling of 5 would bound the loop by forbidding the sanctioned retry instead.
+"""
+
+
+def max_candidates(budget: str) -> int:
+    """The size of the Plan one Run may register under this Budget."""
+    return BUDGET_MAX_CANDIDATES[budget]
+
 # Signals worth naming, because the remedy differs. A process killed by the OS for
 # memory needs a smaller problem; one that aborted needs a different method.
 KILLED_BY_MEMORY = {137, -9}

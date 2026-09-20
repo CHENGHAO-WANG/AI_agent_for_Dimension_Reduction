@@ -199,8 +199,12 @@ to Y". That is a working agent loop demonstrated with evidence.
 
 Every method runs in an isolated subprocess with a wall-clock cap. Failures produce a
 structured record — exception class, message, parameters used — not a traceback dump.
-The agent gets exactly **one** diagnose-and-retry per method before recording a
-permanent failure and continuing with the rest.
+The agent gets exactly **one** diagnose-and-retry per candidate before recording a
+permanent failure and continuing with the rest. Per *candidate*, not per method:
+section 3.2 settled the pipeline as the unit of comparison, and two candidates may
+legitimately end in the same method — the mandatory PCA baseline alongside a PCA on
+variable features, say — so a per-method allowance would let the first consume the
+second's.
 
 Not hypothetical: spectral methods die on disconnected neighbourhood graphs, MDS
 exhausts memory, numba throws version errors, and anything on a large matrix can hang.
@@ -209,9 +213,18 @@ A report sentence like *"Laplacian Eigenmaps failed on the first attempt due to 
 disconnected k-NN graph; the agent increased n_neighbors to 30 and succeeded"* is the
 most convincing single piece of evidence of agency the system can produce.
 
-`--budget fast|standard|thorough` caps per-method wall-clock and controls whether the
-hyperparameter sweep runs. This turns "too big for Isomap" from an implicit constraint
-into an explicit resource the agent reasons about and allocates.
+`--budget fast|standard|thorough` declares two resources: the wall-clock one candidate
+may spend, and how many candidates the run may ever register — 8, 7 and 6, shrinking as
+the time allowance grows, because a longer leash per candidate buys fewer of them. This
+turns "too big for Isomap" from an implicit constraint into an explicit resource the
+agent reasons about and allocates. The budget also controls whether the hyperparameter
+sweep runs.
+
+The second cap is what bounds a run. Candidate ids only ever grow — a registered
+candidate cannot be dropped, since one that ran and lost is part of the record — so the
+size of the plan caps total compute at attempts x ceiling. Without it the id set is the
+one quantity the agent can spend that nothing declares, and it is exactly what mints a
+fresh per-candidate allowance.
 
 ---
 
@@ -868,3 +881,57 @@ would cost. Never the tests, never day 14.
   interruption had already judged wrong. Rejected: rebuilding day 7 alongside it, which
   would spend a day re-finding defects that branch's own review had found — five of its
   nine tasks needed a fix that reintroduced the class of defect it was closing.
+
+- **Day 8** — The candidate ceiling, and the loop three correct components made.
+
+  Day 8's toolbox half was lifted from `archive/day-7-8` and reviewed as a whole against
+  this file rather than against the plan that produced it, which is the one way a
+  plan-level hole is visible. It found one.
+
+  Attempts were capped per candidate id at two. A replacement — add an id, abandon an id
+  — was deliberately not counted as a re-plan round, with a test asserting so. And
+  nothing capped the id set. Each of those is right on its own; composed, they gave an
+  unbounded loop: exhaust an id, abandon it, register a replacement, get two more,
+  forever. Section 3.1 had rejected exactly this as "unbounded in cost". The refusal at
+  the exhausted boundary completed it, by advising *"Register a new candidate id for a
+  further variant"* — true, helpful, and the instruction that resets the allowance.
+
+  The fix caps the registered candidate set by budget: 8, 7 and 6 for fast, standard and
+  thorough. The ceiling shrinks as the per-candidate wall-clock grows, which states the
+  trade rather than hiding it. It sits strictly above section 3.4's 3-5 portfolio
+  guidance, and that gap is deliberate: a ceiling of 5 would bound the loop by forbidding
+  the sanctioned repair, destroying the retry this design calls its best evidence of
+  agency. The `embed` refusal now computes the room left and only offers a replacement
+  when one exists; at the ceiling it names evaluation and the report instead.
+
+  What makes this cheap is that the counter already existed. Re-registration refuses to
+  let a registered id disappear — written for record integrity, not for this — so the id
+  set is monotone, already digested, and already in the append-only log. The bound is two
+  refusals that were already there plus one comparison, and it needs no new trust.
+
+  A plan may also declare `max_candidates` below the budget's ceiling. That enforces
+  nothing by itself, since a bound the agent sets on itself is not a bound, but under the
+  hard ceiling it is a checkable claim about self-restraint — the same thing
+  pre-registering the weighting buys for the evaluation.
+
+  Section 4's wording is amended rather than implemented: it said one retry per *method*,
+  which predates section 3.2's settling of the pipeline as the unit. Enforcing it
+  literally would newly forbid something the design requires, since the mandatory PCA
+  baseline can share a terminal method with another candidate and would have its
+  allowance consumed by it.
+
+  Rejected: a pooled per-run attempt budget, which was the first instinct. A pool asks
+  the agent to forecast the failure rate of candidates it has not yet run, and it has no
+  basis for that forecast — the council found the two opposite failure shapes, hoarding
+  and front-loading, which is itself the diagnosis. A per-candidate allowance asks for no
+  forecast: "may I retry this?" is always local. Also rejected: lineage tracking through a
+  declared `replaces=` field, because an invariant cannot rest on a field whose omission
+  is free. And rejected: bounding it in skill prose, which this defect is the argument
+  against — the message that taught the bypass *was* prose, and was correct.
+
+  Known limits, stated rather than left to be found. The ceiling bounds a run, not a
+  dataset: nothing stops a fresh run, though that is a separate decision log and a
+  separate report, so the flailing stays visible. And it bounds count, not breadth — eight
+  ids all running the same method is legal. Section 3.4's family-spanning requirement is
+  the answer to that and is still unenforced; it is day 10 work, because as an error at
+  re-registration it could refuse a legitimate replacement.

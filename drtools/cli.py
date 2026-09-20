@@ -28,7 +28,7 @@ from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
 from drtools.heuristics import suggest, suggest_base
-from drtools.isolation import budget_timeout, run_candidate
+from drtools.isolation import BUDGET_MAX_CANDIDATES, budget_timeout, run_candidate
 from drtools.loaders import available, load
 from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
 from drtools.pipeline import PipelineError, run_pipeline
@@ -598,11 +598,7 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
 
     tries = candidate_attempts(run, args.id)
     if len(tries) >= MAX_ATTEMPTS:
-        raise ContractError(
-            f"candidate {args.id} has already had two attempts, which is one run and "
-            "the one diagnose-and-retry the design allows. Register a new candidate id "
-            "for a further variant, so that what was already tried stays on the record."
-        )
+        raise ContractError(_exhausted_message(args.id, plan))
 
     _invalidate_candidate(run, args.id)
 
@@ -809,6 +805,37 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
                 "be revised. Register a new candidate id for the variant."
             )
 
+
+def _exhausted_message(candidate_id: str, plan: Plan) -> str:
+    """Why a third attempt is refused, and what is actually available instead.
+
+    The advice has to be conditional. Registering a new candidate id is what mints a
+    fresh allowance, so offering it unconditionally makes this refusal the instruction
+    manual for the loop the ceiling exists to bound — true, helpful, and the exact
+    sentence that lets an exhausted run keep spending.
+    """
+    ceiling = BUDGET_MAX_CANDIDATES[plan.budget]
+    if plan.max_candidates is not None:
+        ceiling = min(plan.max_candidates, ceiling)
+    remaining = ceiling - len(plan.candidates)
+
+    opening = (
+        f"candidate {candidate_id} has already had two attempts, which is one run "
+        "and the one diagnose-and-retry the design allows. "
+    )
+    if remaining > 0:
+        return opening + (
+            "Register a new candidate id for a further variant, so that what was "
+            f"already tried stays on the record: {remaining} further "
+            f"{'id is' if remaining == 1 else 'ids are'} available under this run's "
+            f"ceiling of {ceiling}."
+        )
+    return opening + (
+        f"This run has registered all {ceiling} candidates its budget allows, so "
+        "there is no further variant to register and no route that would add one. "
+        "What was tried is on the record: evaluate the candidates that succeeded "
+        "and report the run."
+    )
 
 def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     """Compute the representation every candidate is scored against.
