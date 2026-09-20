@@ -264,12 +264,13 @@ Scheduled late (day 12), so slipping costs only the ablation.
 
 **In:** PBMC3k and PathMNIST. Nine library-backed methods (PCA, Kernel PCA, Sparse
 PCA, metric and non-metric MDS, Isomap, LLE + Modified LLE, Laplacian Eigenmaps,
-Diffusion Maps, t-SNE, UMAP) plus a minimal MAP-GPLVM in torch, timeboxed to 3 hours
-on day 11.
+Diffusion Maps, t-SNE, UMAP).
 
-**Out, and named as future work in the report:** ensemble/consensus embeddings; a
-cross-run experience store (with two datasets the prior would be n=2, worse than no
-prior, and it would introduce hidden state that breaks reproducibility); CI.
+**Out, and named as future work in the report:** a minimal MAP-GPLVM in torch, which
+was first on the cut order and is what day 7's contract work spent; ensemble/consensus
+embeddings; a cross-run experience store (with two datasets the prior would be n=2,
+worse than no prior, and it would introduce hidden state that breaks reproducibility);
+CI.
 
 **Deliberately deferred** — to be decided when reached, mostly *by the agent*:
 PathMNIST subsampling policy, whether PBMC3k gets derived Leiden reference labels,
@@ -301,11 +302,11 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 4 | Manifold and neighbour-embedding executors; subprocess isolation, timeouts |
 | 5 | Metrics battery, rank, pre-registered weighting, plan validator |
 | 6 | CONTEXT.md; viz house style, size-adaptive rendering |
-| 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol; then the five skills, /analyze, decisions.jsonl |
-| 8 | Report template + pandoc render; first end-to-end run, dataset 1 |
-| 9 | Fix what day 8 broke; clean run on dataset 1 |
-| 10 | End-to-end on dataset 2 (large) |
-| 11 | GPLVM, timeboxed |
+| 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol |
+| 8 | The five skills, /analyze, the decision-log write route |
+| 9 | Report template + pandoc render; first end-to-end run, dataset 1 |
+| 10 | Fix what day 9 broke, plus the queued defect lists; clean run on dataset 1 |
+| 11 | End-to-end on dataset 2 (large) |
 | 12 | Rules-planner hedge + ablation run |
 | 13 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
 | 14 | Final graded runs, reports, submit |
@@ -313,8 +314,9 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
 the full pipeline running on toy data in under a minute.
 
-Cut order if the schedule slips: GPLVM first, then the hedge. Never the tests, never
-day 14.
+The cut order was GPLVM first, then the hedge. GPLVM is spent: day 7's contract work
+took it, and the skills it displaced now hold day 8. The hedge is what a further slip
+would cost. Never the tests, never day 14.
 
 ---
 
@@ -808,3 +810,27 @@ day 14.
   `prepare-reference` has no freeze, `write_cache` converts twice, `_invalidate_candidate`
   globs an unsanitised candidate id on a delete path, and `recon` still carries its own
   `--k` so the agent can still tune the evidence that justifies its own plan.
+
+- **Day 7** — The schedule re-indexed, and GPLVM spent.
+
+  Day 7 was briefed as the three contracts *and* the five skills. The contracts took the
+  day on their own, which the day 7 design had said outright they would. The skills move
+  to day 8 and everything after shifts by one.
+
+  That shift needs a slot, and the cut order settled on day 6 supplies it. GPLVM is
+  therefore spent rather than merely at risk, and section 7 moves it to future work. What
+  a further slip would cost is the hedge, which is worth more: it is the ablation showing
+  where the agent's judgment beat a rule engine, and it is how a grader without Claude
+  Code still gets a working system.
+
+  The rescheduled day 10 carries more than "fix what day 9 broke". It inherits the nine
+  defects queued on day 6 and the five day 7 left behind: `rank`'s status check reads the
+  artefact rather than the decision log, `prepare-reference` has no freeze, `write_cache`
+  converts twice, `_invalidate_candidate` globs an unsanitised candidate id on a delete
+  path, and `recon` still carries its own `--k`, so the agent can tune the evidence that
+  justifies its own plan. The entry above was written before the re-index and calls that
+  day nine.
+
+  Rejected: moving day 14, and compressing day 13's tests to keep GPLVM. Both were
+  foreclosed on day 6 — trading a deliverable the report can demonstrate for one method it
+  could only mention is the wrong direction on a rubric that rewards reproducibility.
