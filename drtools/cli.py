@@ -35,6 +35,7 @@ from drtools.pipeline import PipelineError, run_pipeline
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
+from drtools.render import render_pdf
 from drtools.report import (
     BLOCK_IDS,
     assemble,
@@ -279,6 +280,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "leaving the prose around them untouched",
     )
     report.set_defaults(handler=_cmd_report)
+
+    render = subparsers.add_parser(
+        "render", help="render report.md to report.pdf, refusing a stale one"
+    )
+    _add_run_arguments(render)
+    render.set_defaults(handler=_cmd_render)
 
     return parser
 
@@ -1259,6 +1266,34 @@ def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
     return suggest_base(profile, recon)
+
+
+def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:
+    """Render the report, and refuse one whose numbers the run has moved past.
+
+    Rendering does not refresh on the agent's behalf. Silently changing the document's
+    numbers while producing the PDF would let the two artefacts a reader compares
+    differ, and the Markdown is the declared source of truth. So it refuses and names
+    the route instead, which is what makes rendering last a property of the toolbox
+    rather than an instruction in a skill.
+    """
+    run = _require_run(args)
+    source = run.path / "report.md"
+    if not source.exists():
+        raise ContractError(
+            f"there is no report at {source} to render. Run `drtools report --run-dir "
+            f"{run.path}` to write one."
+        )
+
+    stale = stale_blocks(run, source.read_text(encoding="utf-8"))
+    if stale:
+        raise ContractError(
+            f"block(s) {', '.join(stale)} no longer match this run, so the PDF would "
+            "carry numbers the run has moved past. Run `drtools report --refresh "
+            f"--run-dir {run.path}` and render again."
+        )
+
+    return render_pdf(source, run.path / "report.pdf")
 
 
 def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
