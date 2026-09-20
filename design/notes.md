@@ -262,9 +262,10 @@ Scheduled late (day 12), so slipping costs only the ablation.
 
 ## 7. Scope boundaries
 
-**In:** PBMC3k and PathMNIST. Nine library-backed methods (PCA, Kernel PCA, Sparse
-PCA, metric and non-metric MDS, Isomap, LLE + Modified LLE, Laplacian Eigenmaps,
-Diffusion Maps, t-SNE, UMAP).
+**In:** PBMC3k and PathMNIST. The registry's ten reductions: nine library-backed —
+PCA, Kernel PCA, Sparse PCA, MDS both metric and non-metric, Isomap, LLE with its four
+variants under one op, Laplacian Eigenmaps, t-SNE, UMAP — plus Diffusion Maps, written
+directly after `datafold` proved unusable against modern scikit-learn.
 
 **Out, and named as future work in the report:** a minimal MAP-GPLVM in torch, which
 was first on the cut order and is what day 7's contract work spent; ensemble/consensus
