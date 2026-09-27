@@ -14,6 +14,12 @@ One analysis of one dataset, from profiling through to the report. Everything it
 produces lives in a single directory named for it.
 _Avoid_: session, job, experiment
 
+**Purpose**:
+What a Run's deliverable is: a representation that downstream analysis can use, or a
+picture. Each Run has exactly one, and it decides which Ops may be Candidates and whether
+Candidates are ranked.
+_Avoid_: mode, goal, task, objective
+
 **Plan**:
 The declaration of what a Run will do — its Candidates, its Rejections, and its
 Pre-registered weighting — fixed before any Embedding exists.
@@ -29,17 +35,26 @@ One Op together with the parameter values it will run with.
 _Avoid_: step, node, layer
 
 **Op**:
-A transformation the registry declares and the toolbox implements: either preprocessing
-or a Reduction. The set of Ops is the whole vocabulary a Plan can be written in.
+A transformation the registry declares and the toolbox implements: preprocessing, a
+Reduction, or a Visualization method. The set of Ops is the whole vocabulary a Plan can be
+written in.
 _Avoid_: operation, tool, transform
 
 **Reduction**:
-An Op that lowers dimensionality.
+An Op that lowers dimensionality to give a representation downstream analysis can use.
+It remains one at any output dimension, including when it is run at two dimensions to
+draw a picture.
 _Avoid_: DR method, embedder, projector
 
+**Visualization method**:
+An Op that lowers dimensionality to give coordinates for viewing only, never a
+representation for downstream analysis. The class is declared in the registry, not
+inferred from which structure the method keeps.
+_Avoid_: embedding method, plotting method, nonlinear DR
+
 **Terminal method**:
-A Reduction whose output is coordinates for viewing rather than a representation another
-Stage can consume.
+An Op that may stand only in a Candidate's last Stage. It says where the Op may sit, not
+what its output may be used for.
 _Avoid_: final method, leaf, sink
 
 **Embedding**:
@@ -118,6 +133,18 @@ _Avoid_: ceiling, upper bound, best case
 **Profile**:
 What a dataset is, measured before anything is done to it.
 _Avoid_: summary, stats, description
+
+**Features of one type**:
+Features that all measure the same kind of quantity on a common scale, such as the
+expression of different genes or the intensity at different wavelengths, so that their
+variances are directly comparable. A Run's judgment on this is a decision, not a
+measurement.
+_Avoid_: homogeneous features, commensurate features, same-type features
+
+**Features of mixed types**:
+Features that measure different kinds of quantity in unrelated units, such as age, sex,
+height and weight in one table, so that their variances cannot be compared.
+_Avoid_: heterogeneous features, tabular features, mixed data
 
 **Reconnaissance**:
 The cheap structural probes run before planning — spectrum, intrinsic dimension,
