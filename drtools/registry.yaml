@@ -10,7 +10,13 @@
 # same fields. One source of truth, so the LLM path and the no-LLM path cannot drift
 # apart in what they believe about a method.
 #
-# Adding a method means adding an entry here and one executor function. No skill edits.
+# Adding a method takes an entry here and one executor function, and no skill edits.
+# Every property a check reads is declared in the entry: the class, whether the method
+# works through Euclidean geometry, whether it is nested in d, whether it needs a
+# connected graph, its emphasis, how it reaches new rows, and the named limits on d it
+# obeys. A method may also bring a suggestion rule or a check on its own parameters;
+# tests/test_extension_point.py lists every place outside the executors that names a
+# method, and why a new method can be absent from each.
 
 version: 1
 
