@@ -176,7 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
     methods.add_argument(
         "--kind",
         default=None,
-        choices=["preprocessing", "reduction"],
+        choices=["preprocessing", "reduction", "visualization"],
         help="restrict the listing to one kind of op",
     )
     methods.set_defaults(handler=_cmd_methods)
@@ -307,6 +307,11 @@ def _add_data_arguments(parser: argparse.ArgumentParser) -> None:
         "--label-column",
         default=None,
         help="column holding labels, for tabular and AnnData inputs",
+    )
+    parser.add_argument(
+        "--id-column",
+        default=None,
+        help="column holding sample identifiers, for tabular and AnnData inputs",
     )
 
 
@@ -1581,6 +1586,8 @@ def _load(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:
     kwargs: dict[str, Any] = {}
     if getattr(args, "label_column", None):
         kwargs["label_column"] = args.label_column
+    if getattr(args, "id_column", None):
+        kwargs["id_column"] = args.id_column
     return load(args.data, adapter=args.adapter, **kwargs)
 
 

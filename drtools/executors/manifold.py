@@ -17,6 +17,7 @@ from scipy.sparse.csgraph import connected_components
 from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding
 from sklearn.neighbors import kneighbors_graph
 
+from drtools.constraints import lle_neighbour_minimum
 from drtools.contract import Matrix
 from drtools.executors import (
     Context,
@@ -25,16 +26,6 @@ from drtools.executors import (
     require_dense,
     require_pairwise_affordable,
 )
-
-# Minimum neighbours each LLE variant needs, as a function of the output dimension.
-# scikit-learn enforces these deep inside the fit, where the error names no parameter
-# the plan actually set.
-LLE_NEIGHBOUR_MINIMUM = {
-    "standard": lambda d: d + 1,
-    "modified": lambda d: d + 1,
-    "hessian": lambda d: 1 + d * (d + 3) // 2,
-    "ltsa": lambda d: d + 1,
-}
 
 
 @executor("mds")
@@ -135,7 +126,9 @@ def lle(
             "available"
         )
 
-    minimum = LLE_NEIGHBOUR_MINIMUM[method](n_components)
+    # The same function day 12's validator refuses with, so a plan refused at
+    # registration and a stage refused here are refused by one rule.
+    minimum = lle_neighbour_minimum(method, n_components)
     if n_neighbors < minimum:
         raise ExecutionError(
             f"lle(method={method!r}) needs at least {minimum} neighbours to produce "

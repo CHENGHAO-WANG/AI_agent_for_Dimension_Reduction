@@ -21,12 +21,13 @@ from typing import Any, Callable
 import numpy as np
 import scipy.sparse as sp
 
-from drtools.contract import ContractError, Dataset, check_dataset
+from drtools.contract import ContractError, Dataset, check_dataset, resolve_sample_ids
 from drtools.synthetic import GENERATORS, generate
 
 FileLoader = Callable[..., Dataset]
 
 LABEL_COLUMN_CANDIDATES = ("label", "labels", "class", "target", "y", "cell_type")
+COLUMN_SUFFIXES = (".csv", ".tsv", ".txt", ".h5ad")
 
 
 def data_dir() -> Path:
@@ -39,6 +40,19 @@ def data_dir() -> Path:
 
 def load(spec: str, *, adapter: str | Path | None = None, **kwargs: Any) -> Dataset:
     """Load `spec` and verify it against the loader contract before returning it."""
+    id_column = kwargs.get("id_column")
+    has_columns = (
+        spec not in GENERATORS
+        and spec not in NAMED_DATASETS
+        and Path(spec).suffix.lower() in COLUMN_SUFFIXES
+    )
+    if id_column is not None and adapter is None and not has_columns:
+        raise ContractError(
+            f"--id-column names a column, and {spec!r} has none: only .csv, .tsv, .txt "
+            "and .h5ad inputs do. Its rows are named by its loader or numbered in "
+            "order; drop the option."
+        )
+
     if adapter is not None:
         X, labels, meta = _load_via_adapter(spec, adapter, **kwargs)
         origin = f"adapter {Path(adapter).name}"
@@ -54,6 +68,10 @@ def load(spec: str, *, adapter: str | Path | None = None, **kwargs: Any) -> Data
 
     check_dataset(X, labels, meta, origin=origin)
     meta.setdefault("spec", spec)
+    # Assigned, never defaulted: whether the loader named the rows or the toolbox
+    # numbered them is the toolbox's record, not a claim a loader makes for itself.
+    meta["sample_ids_source"] = "loader" if meta.get("sample_ids") is not None else "row_order"
+    meta["sample_ids"], _ = resolve_sample_ids(meta, X.shape[0])
     return X, labels, meta
 
 
@@ -95,14 +113,53 @@ def _load_npz(path: Path, **_: Any) -> Dataset:
         if key in archive:
             labels = archive[key].ravel().astype(np.int64)
             break
-    return _as_float(archive["X"]), labels, {"name": path.stem, "source": str(path)}
+    meta: dict[str, Any] = {"name": path.stem, "source": str(path)}
+    if "sample_ids" in archive.files:
+        try:
+            names = archive["sample_ids"]
+        except ValueError:
+            raise ContractError(
+                f"{path.name}: sample_ids is stored as an object array, which cannot be "
+                "read without unpickling. Store it as a string array, "
+                "np.array(ids, dtype=str)."
+            ) from None
+        meta["sample_ids"] = [str(v) for v in names.ravel()]
+    return _as_float(archive["X"]), labels, meta
 
 
-def _load_table(path: Path, *, label_column: str | None = None, **_: Any) -> Dataset:
+def _load_table(
+    path: Path,
+    *,
+    label_column: str | None = None,
+    id_column: str | None = None,
+    **_: Any,
+) -> Dataset:
     import pandas as pd
 
     separator = "\t" if path.suffix.lower() in {".tsv", ".txt"} else ","
     frame = pd.read_csv(path, sep=separator)
+
+    # read_csv builds no index, so row names arrive as an ordinary column. Named, it is
+    # taken out of the features; not named, nothing guesses which column is not data.
+    sample_ids = None
+    if id_column is not None:
+        if id_column not in frame.columns:
+            raise ContractError(
+                f"{path.name}: no column named {id_column!r} to take sample identifiers "
+                f"from; its columns are {[str(c) for c in frame.columns][:20]}"
+            )
+        if id_column == label_column:
+            raise ContractError(
+                f"{path.name}: {id_column!r} is named as both the identifier and the "
+                "label column; they must be different columns"
+            )
+        # Re-read as literal text: the frame above has already parsed '001' as 1 and
+        # 'NA' as missing, which would rename samples and can make two collide. NA
+        # parsing stays on for the features, where the missing-value refusal needs it.
+        sample_ids = pd.read_csv(
+            path, sep=separator, usecols=[id_column], dtype=str, keep_default_na=False
+        )[id_column].tolist()
+        frame = frame.drop(columns=[id_column])
 
     column = label_column or next(
         (c for c in frame.columns if str(c).lower() in LABEL_COLUMN_CANDIDATES), None
@@ -119,7 +176,8 @@ def _load_table(path: Path, *, label_column: str | None = None, **_: Any) -> Dat
         dropped = sorted(set(frame.columns) - set(numeric.columns))
         raise ContractError(
             f"{path.name}: non-numeric column(s) {dropped} cannot be embedded. Encode "
-            "them, drop them, or name one with --label-column."
+            "them, drop them, or name one with --label-column, or with --id-column if "
+            "it holds the samples' names."
         )
     if numeric.isna().any().any():
         n_missing = int(numeric.isna().sum().sum())
@@ -140,10 +198,18 @@ def _load_table(path: Path, *, label_column: str | None = None, **_: Any) -> Dat
         meta["label_names"] = label_names
         meta["label_kind"] = "ground_truth"
         meta["label_column"] = str(column)
+    if sample_ids is not None:
+        meta["sample_ids"] = sample_ids
     return _as_float(numeric.to_numpy()), labels, meta
 
 
-def _load_h5ad(path: Path, *, label_column: str | None = None, **_: Any) -> Dataset:
+def _load_h5ad(
+    path: Path,
+    *,
+    label_column: str | None = None,
+    id_column: str | None = None,
+    **_: Any,
+) -> Dataset:
     import anndata as ad
 
     adata = ad.read_h5ad(path)
@@ -159,6 +225,13 @@ def _load_h5ad(path: Path, *, label_column: str | None = None, **_: Any) -> Data
         "source": str(path),
         "feature_names": [str(v) for v in adata.var_names],
     }
+    if id_column is not None and id_column not in adata.obs.columns:
+        raise ContractError(
+            f"{path.name}: no obs column named {id_column!r}; obs_names already name "
+            "the rows, so omit the option to use them"
+        )
+    names = adata.obs[id_column] if id_column is not None else adata.obs_names
+    meta["sample_ids"] = [str(v) for v in names]
     if column is not None:
         import pandas as pd
 
@@ -270,6 +343,7 @@ def load_pbmc3k(**_: Any) -> Dataset:
         "value_kind": "raw UMI counts",
         "label_kind": None,
         "feature_names": [str(v) for v in adata.var_names],
+        "sample_ids": [str(v) for v in adata.obs_names],
         "citation": "Zheng et al. 2017, 10x Genomics",
     }
     return X, None, meta

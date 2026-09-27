@@ -290,27 +290,48 @@ def test_subsampling_first_makes_the_same_method_acceptable() -> None:
     assert report["valid"] is True
 
 
-def test_raw_counts_into_a_euclidean_method_are_rejected() -> None:
-    profile = {
-        "shape": {"n_samples": 2700, "n_features": 32000, "storage": "sparse_csr"},
-        "values": {"suspected_kind": "counts"},
-    }
+COUNTS_PROFILE = {
+    "shape": {"n_samples": 2700, "n_features": 32000, "storage": "sparse_csr"},
+    "values": {"suspected_kind": "counts"},
+}
 
-    report = validate_plan(
-        make_plan(
-            candidates=[
-                {"id": "pca2", "stages": [{"op": "pca"}]},
-                {"id": "t", "stages": [{"op": "densify"}, {"op": "tsne", "params": {"perplexity": 30}}]},
-            ]
-        ),
-        profile,
-    )
 
-    finding = next(
-        f for f in report["findings"] if f["code"] == "raw_counts_into_euclidean_method"
+def _raw_count_findings(candidates):
+    report = validate_plan(make_plan(candidates=candidates), COUNTS_PROFILE)
+    return [f for f in report["findings"] if f["code"] == "raw_counts_not_normalised"]
+
+
+def test_raw_counts_into_any_method_are_rejected() -> None:
+    findings = _raw_count_findings(
+        [{"id": "t", "stages": [{"op": "densify"}, {"op": "tsne", "params": {"perplexity": 30}}]}]
     )
-    assert "sequencing depth" in finding["message"]
-    assert "log1p" in finding["fix"]
+    assert [f["op"] for f in findings] == ["tsne"]
+    assert "sequencing depth" in findings[0]["message"]
+    assert "log1p" in findings[0]["fix"]
+
+
+def test_pca_on_raw_counts_is_rejected() -> None:
+    """Its leading component would track sample total (the registry's own sparse_note)."""
+    findings = _raw_count_findings([{"id": "p", "stages": [{"op": "pca"}]}])
+    assert [f["op"] for f in findings] == ["pca"]
+
+
+def test_a_pca_first_stage_does_not_carry_raw_counts_past_the_check() -> None:
+    """pca(50) -> tsne passed before day 11: pca was unchecked and cleared the flag."""
+    findings = _raw_count_findings(
+        [{"id": "c", "stages": [{"op": "pca", "params": {"n_components": 50}},
+                                {"op": "tsne", "params": {"perplexity": 30}}]}]
+    )
+    assert [f["op"] for f in findings] == ["pca"]
+
+
+def test_a_non_euclidean_kernel_on_raw_counts_is_still_rejected() -> None:
+    """The objection is heteroscedasticity and depth, which no kernel removes."""
+    findings = _raw_count_findings(
+        [{"id": "k", "stages": [{"op": "densify"},
+                                {"op": "kernel_pca", "params": {"kernel": "poly"}}]}]
+    )
+    assert [f["op"] for f in findings] == ["kernel_pca"]
 
 
 def test_normalising_first_clears_the_raw_counts_objection() -> None:
@@ -331,7 +352,7 @@ def test_normalising_first_clears_the_raw_counts_objection() -> None:
     )
 
     codes = {f["code"] for f in report["findings"]}
-    assert "raw_counts_into_euclidean_method" not in codes
+    assert "raw_counts_not_normalised" not in codes
 
 
 def test_a_dense_only_method_on_sparse_data_is_rejected_with_the_memory_cost() -> None:
@@ -440,3 +461,20 @@ def test_the_plan_schema_rejects_unknown_fields() -> None:
     """A typo'd key that was silently ignored would leave the plan lying about itself."""
     with pytest.raises(Exception, match="extra_forbidden|Extra inputs"):
         Plan.model_validate(make_plan(unexpected_field="surprise"))
+
+
+def test_the_connected_graph_warning_follows_the_declaration(blobs) -> None:
+    """Laplacian Eigenmaps declares requires_connected_graph; UMAP does not."""
+    _, _, profile = blobs
+    recon = {"neighbourhood": {"k": 15, "n_connected_components": 5}}
+    report = validate_plan(
+        make_plan(candidates=[
+            {"id": "pca2", "stages": [{"op": "pca"}]},
+            {"id": "le", "stages": [{"op": "laplacian_eigenmaps", "params": {"n_neighbors": 10}}]},
+            {"id": "u", "stages": [{"op": "umap", "params": {"n_neighbors": 10}}]},
+        ]),
+        profile,
+        recon,
+    )
+    warned = {f["candidate"] for f in report["findings"] if f["code"] == "likely_disconnected_graph"}
+    assert warned == {"le"}

@@ -7,9 +7,16 @@ method the planner can select and never run.
 
 from __future__ import annotations
 
+import numpy as np
+import openTSNE
 import pytest
+import umap
+from sklearn.decomposition import PCA, KernelPCA, MiniBatchSparsePCA, TruncatedSVD
+from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
 
-from drtools.executors import EXECUTORS
+from drtools.constraints import RULES
+from drtools.executors import EXECUTORS, Context, get_executor
+from drtools.loaders import load
 from drtools.registry import RegistryError, load_registry
 
 
@@ -28,12 +35,22 @@ def test_every_op_declares_what_it_is_for(registry) -> None:
         assert spec.summary, f"{name} has no summary for the planner to read"
 
 
-def test_reductions_declare_the_properties_selection_depends_on(registry) -> None:
-    """These are the fields the planner reasons over; a missing one is a blind spot."""
-    required = {"preserves", "assumes", "scales_to", "handles_sparse", "roles"}
-    for name, spec in registry.reductions().items():
-        missing = required - set(spec.raw)
+METHOD_FIELDS = {
+    "preserves", "assumes", "scales_to", "handles_sparse", "roles",
+    "euclidean", "nested_in_d", "requires_connected_graph", "emphasis", "new_rows",
+}
+
+
+def _methods(registry):
+    return {**registry.reductions(), **registry.visualization_methods()}
+
+
+def test_every_method_declares_the_properties_checks_read(registry) -> None:
+    """A missing one is a question a check asks and the registry cannot answer."""
+    for name, spec in _methods(registry).items():
+        missing = METHOD_FIELDS - set(spec.raw)
         assert not missing, f"{name} does not declare {sorted(missing)}"
+        assert "out_of_sample" not in spec.raw, f"{name} still declares out_of_sample"
 
 
 def test_defaults_are_used_and_recorded_as_defaults(registry) -> None:
@@ -99,3 +116,105 @@ def test_sparse_capability_matches_what_the_executors_accept(registry) -> None:
     assert registry["pca"].handles_sparse
     assert not registry["standardise"].handles_sparse
     assert not registry["diffusion_maps"].handles_sparse
+
+
+def test_t_sne_and_umap_are_visualization_methods(registry) -> None:
+    """Section 3.11: their output is a picture, never a representation."""
+    for name in ("tsne", "umap"):
+        assert registry[name].is_visualization
+        assert not registry[name].is_reduction
+
+
+def test_methods_lists_the_visualization_class(cli) -> None:
+    result = cli("methods", "--kind", "visualization")
+    assert result.code == 0
+    listed = result.payload["ops"]
+    assert {"tsne", "umap"} <= set(listed)
+    assert all(record["kind"] == "visualization" for record in listed.values())
+
+
+def test_only_a_deterministic_op_may_stand_before_another_method(registry) -> None:
+    """Section 3.9. Vacuous today; it catches granting the role to LLE or Laplacian
+    Eigenmaps, which are cheap and look like reasonable pre-steps."""
+    for name, spec in registry.ops.items():
+        if "intermediate" in spec.roles:
+            assert not spec.stochastic, f"{name} is stochastic but may be intermediate"
+
+
+def test_every_limit_on_d_is_named_by_some_method(registry) -> None:
+    named = {rule for spec in registry.ops.values() for rule in spec.d_limits}
+    assert named == set(RULES)
+
+
+def test_lle_is_described_with_its_neighbour_minimum(registry) -> None:
+    rules = registry.describe("lle")["d_limit_rules"]
+    assert [r["name"] for r in rules] == ["lle_neighbour_minimum"]
+
+
+# The library class each executor fits, for every method whose record says it can
+# place new rows by `transform`. PCA's executor uses TruncatedSVD on sparse input.
+TRANSFORM_CLASSES = {
+    "pca": (PCA, TruncatedSVD),
+    "kernel_pca": (KernelPCA,),
+    "sparse_pca": (MiniBatchSparsePCA,),
+    "isomap": (Isomap,),
+    "lle": (LocallyLinearEmbedding,),
+    "tsne": (openTSNE.TSNEEmbedding,),
+    "umap": (umap.UMAP,),
+}
+
+
+def test_every_method_declaring_a_transform_has_one_in_its_library(registry) -> None:
+    declared = {n for n, s in _methods(registry).items() if s.raw["new_rows"] == "transform"}
+    assert declared == set(TRANSFORM_CLASSES)
+    for name, classes in TRANSFORM_CLASSES.items():
+        for cls in classes:
+            assert hasattr(cls, "transform"), f"{name}: {cls.__name__} has no transform"
+
+
+def test_the_methods_declared_without_a_transform_really_lack_one(registry) -> None:
+    """Diffusion Maps is written in the toolbox and has none; its Nystrom extension is day 14's."""
+    assert registry["laplacian_eigenmaps"].raw["new_rows"] == "nystrom"
+    assert registry["diffusion_maps"].raw["new_rows"] == "nystrom"
+    assert registry["mds"].raw["new_rows"] == "none"
+    assert not hasattr(SpectralEmbedding, "transform")
+    assert not hasattr(MDS, "transform")
+
+
+def _default_rule_cases():
+    registry = load_registry()
+    cases = []
+    for op, spec in registry.ops.items():
+        for name, param in spec.params.items():
+            for condition, label in param.default_rule:
+                branches = (
+                    [{}] if condition is True
+                    else [{p: v} for p, values in condition.items() for v in values]
+                )
+                cases += [(op, name, branch, label) for branch in branches]
+    return cases
+
+
+@pytest.mark.parametrize("op, param, branch, label", _default_rule_cases())
+def test_the_executor_records_the_default_rule_the_registry_declares(
+    registry, op, param, branch, label
+) -> None:
+    """Two copies, checked against each other: the likely edit changes the rule and
+    its label together in the executor, and this fails until the registry agrees."""
+    X = np.abs(load("blobs", n_samples=120, n_features=6)[0])
+    resolved, _ = registry.resolve_params(op, branch)
+    _, notes = get_executor(op)(X, Context(seed=0), **resolved)
+    assert notes[f"{param}_source"] == label
+
+
+def test_every_null_default_is_covered_by_the_equality_test(registry) -> None:
+    covered = {(op, param) for op, param, _, _ in _default_rule_cases()}
+    nulls = {
+        (op, name)
+        for op, spec in registry.ops.items()
+        for name, p in spec.params.items()
+        if p.default is None
+    }
+    assert nulls == covered == {
+        ("normalise_total", "target"), ("kernel_pca", "gamma"), ("diffusion_maps", "epsilon"),
+    }

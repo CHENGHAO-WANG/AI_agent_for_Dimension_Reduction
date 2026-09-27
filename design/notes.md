@@ -256,8 +256,9 @@ project: entering **both** `umap(raw)` and `pca50 -> umap` as candidates and let
 the metrics settle whether the pre-step helped. That is the agent designing an
 experiment rather than executing a recipe.
 
-The registry declares each method's role (`can_be_intermediate` for PCA/Kernel PCA,
-`terminal_only` for t-SNE/UMAP). The plan declares a **shared base preprocessing**
+The registry declares each method's role: `intermediate` and `terminal` for PCA, the
+only op that may stand before another method, and `terminal` for every other (section
+3.9). The plan declares a **shared base preprocessing**
 applied to every candidate, with candidate-specific stages layered on top, so that
 when two candidates differ it is clear what differed.
 
@@ -283,7 +284,11 @@ isomap:
 YAML carries the hard constraints a validator can enforce; the skill prose carries the
 judgment that does not reduce to a table ("t-SNE cluster sizes and inter-cluster
 distances are not meaningful — do not interpret them"). The YAML is the extension
-point: adding a method is a registry entry plus one executor function, no skill edits.
+point: adding a method is a registry entry plus one executor function, no skill edits,
+and every property a check reads is declared in the entry. A method may also bring a
+suggestion rule or a check on its own parameters; `tests/test_extension_point.py` lists
+every place outside the executors that names a method, and why a new method can be
+absent from it.
 
 ### 3.4 Portfolio size
 
@@ -315,11 +320,11 @@ case: hyperparameter search now happens inside each candidate, so candidate slot
 different hypotheses, not for variants of one method.
 
 *Neither the count nor the spread is checked.* Only the ceiling and the PCA baseline are
-refused; a plan holding PCA alone passes. Spread cannot be checked yet, because the local
-and global axis lives only in the registry's prose `preserves` text -- the `family` labels
-do not encode it, and kernel PCA, linear in a kernel space and nonlinear in the original
-one, fits no role cleanly. The intended check is a warning keyed on a declared property,
-once that property exists.
+refused; a plan holding PCA alone passes. The property the spread check needs now exists:
+`emphasis`, declared on day 11 -- local, global or balanced, and null with a reason for
+kernel PCA, which is linear in a kernel space, nonlinear in the original one, and keeps
+long or short distances depending on its width. The check, a warning when no candidate
+other than the linear baseline is global or none is local, is not yet scheduled.
 
 ### 3.5 Hyperparameters
 
@@ -1227,7 +1232,7 @@ picture. The two call for different methods, different comparisons and different
 **Two classes of method, fixed by the registry.** Each reduction op is declared one of two
 things, and the declaration is a property of the op, not a judgment made per run.
 - *Reductions*, the methods whose output is a representation: PCA, sparse PCA, kernel PCA,
-  MDS, Isomap, Diffusion Maps, Laplacian Eigenmaps, LLE.
+  MDS, Isomap, Diffusion Maps, Laplacian Eigenmaps, LLE, and a GPLVM should one be added.
 - *Visualization methods*, whose output is coordinates for viewing only: t-SNE, UMAP,
   PHATE, TriMap, PaCMAP.
 
@@ -1640,8 +1645,8 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 8 | The toolbox surface the skills need: status, budget, retry accounting, log-decision, suggest-base; the candidate ceiling; adapter provenance |
 | 9 | The five skills, /analyze |
 | 10 | Report template + pandoc render; the question pass. Its first end-to-end run moves to day 20 |
-| 11 | Registry and contracts: each op's class, reduction or visualization method; declared properties in place of hardcoded name sets -- requiring a connected graph, working through Euclidean geometry, nested in d, having a `transform`, structural limits on d, local or global emphasis; the registry texts that misdescribe their executors; sample identifiers through the loader contract and the cache; the test that every op allowed as a first stage is deterministic (3.4, 3.9, 3.11, 3.12; defects 4, 5, 9, 12, 21) |
-| 12 | What registration refuses: unresolved evidence keys, unknown rejection names, an eligible method neither nominated nor rejected, a candidate without evidence, a reduction in the base preprocessing, a linear baseline that is not base preprocessing plus a single `pca`, a chain beyond the limit, LLE below its neighbour minimum, a subsample below a method's limit, MDS above its limit, label metrics without labels; runtime out of the weighting; the default weightings and evidence-cited departures; persisted suggestions and their provenance (2.4, 3.9, 3.12; defects 2, 3, 10, 11, 13-18, 20) |
+| 11 | Registry and contracts: each op's class, reduction or visualization method; declared properties in place of hardcoded name sets -- requiring a connected graph, working through Euclidean geometry, nested in d, having a `transform`, structural limits on d, local or global emphasis; the registry texts that misdescribe their executors; sample identifiers through the loader contract and the cache; the test that every op allowed as a first stage is deterministic (3.4, 3.9, 3.11, 3.12; defects 4, 5, 9, 10, 12, 21) |
+| 12 | What registration refuses: unresolved evidence keys, unknown rejection names, an eligible method neither nominated nor rejected, a candidate without evidence, a reduction in the base preprocessing, a linear baseline that is not base preprocessing plus a single `pca`, a chain beyond the limit, LLE below its neighbour minimum, a subsample below a method's limit, MDS above its limit, label metrics without labels; runtime out of the weighting; the default weightings and evidence-cited departures; persisted suggestions and their provenance (2.4, 3.9, 3.12; defects 2, 3, 11, 13-18, 20) |
 | 13 | Preprocessing: constant features dropped by the range test; raw counts normalised and logged, and the user told; the feature-type decision before reconnaissance, which the probe representation follows; z-scoring for mixed types, with its memory cost in the validator's estimate; the variance-selection rule (3.10; defect 19) |
 | 14 | Every row covered: fit on the subsample, project the rest through the fitted pipeline; Nyström extensions for Laplacian Eigenmaps and Diffusion Maps; chunked projection; fitted and projected rows recorded, and every candidate scored on the same rows (3.12) |
 | 15 | Choosing d and tuning: d_max and the grid; each method's own criterion; the battery elbow for the rest; the tuning subsample and derived seed streams; the multiplier grid; alternating updates for methods not nested in d; PCA's output dimension in chains; the refit; records and `tuned` provenance (3.5, 3.7; defect 1) |
@@ -2896,3 +2901,100 @@ first on the code about to change. No cut is planned for now; the rule above sta
   cut for now.
 
   416 tests, 61s.
+
+- **Day 11** — Registry and contracts: the registry declares what every check reads, and
+  a dataset's rows keep their names.
+
+  Classified architectural. The notes named the requirement and not the mechanism for
+  half of the day's items -- how a property that depends on a parameter is written, how
+  an op's class is written, what the raw-counts check reads, the emphasis values, how a
+  text is held to its executor, how sample identifiers travel -- and days 12 to 17 all
+  read these declarations. So a spec covering only those items,
+  `design/specs/2026-09-27-day-11-registry-contracts.md`, settled question by question,
+  then a plan of nine tasks. The items the notes already carried went straight into the
+  plan.
+
+  *Conditions for yes/no properties, named rules for limits on d.* Kernel PCA works
+  through Euclidean geometry only with the RBF kernel, UMAP only at a Euclidean metric,
+  and LLE is nested in d only in its standard variant, so a property is `true`, `false`
+  or `{when: {parameter: [values]}}`, validated when the registry loads, since a typo in
+  a condition would otherwise make a property silently false. A limit that is arithmetic
+  in d is a named rule in `drtools/constraints.py`, carrying a sentence the agent reads.
+  Rejected: an arithmetic language in the YAML, a second untested copy of rules that
+  must live in code anyway.
+
+  *A third kind, and no property joining it to the second.* `tsne` and `umap` are
+  `kind: visualization`, the division `CONTEXT.md` already draws; a GPLVM, should one be
+  added, is a reduction. The four readers that asked "does this op lower dimension?" now
+  name both classes. Rejected: a `class` field under `kind: reduction`, which would call
+  t-SNE a Reduction in the field the agent reads; and, at the user's direction, a combined
+  `lowers_dimension` property, which reads as covering `select_variable_features`, since
+  that too lowers the feature count.
+
+  *The raw-counts check covers every method and no longer reads a Euclidean set.* The
+  old seven-name set left out PCA, sparse PCA and UMAP with no recorded reason, and
+  because any reduction cleared the flag, `pca(50) -> tsne` on raw counts passed with no
+  finding. Raw counts mislead through varying totals and a variance that grows with the
+  mean, neither of which depends on the distance a method computes, so the check now
+  refuses any reduction or visualization method reached while the values are counts,
+  under the new code `raw_counts_not_normalised`. `euclidean` is declared for section
+  3.10's selection rule alone. Rejected: one property for both, which would also have
+  stopped refusing kernel PCA's polynomial and sigmoid kernels.
+
+  *Emphasis.* Local for Laplacian Eigenmaps, LLE, t-SNE and UMAP; global for MDS, Isomap,
+  Diffusion Maps, PCA and sparse PCA; null with a required reason for kernel PCA, whose
+  emphasis follows its width. PCA is global on section 3.11's definition, so the future
+  spread check asks for a global method other than the linear baseline.
+
+  *Two copies and an equality test, not one copy.* Each null default declares a
+  `default_rule`, the label its executor records in `<parameter>_source`, and a test runs
+  every branch and compares. The two texts the day 10 log named were both wrong -- `gamma`
+  claimed `1/n_features`, `epsilon` advertised the heuristic its executor rejects -- and a
+  third error was in the executor itself: a polynomial kernel does use gamma, and was
+  recorded as "not applicable". Rejected: the executor reading its label from the
+  registry, under which a changed rule keeps its old label and nothing fails.
+
+  *New rows and limits on d.* `new_rows: transform | nystrom | none` replaces
+  `out_of_sample`, which graded quality rather than naming a mechanism and marked
+  Diffusion Maps `approximate` with no way to place a row. The user pointed out that
+  t-SNE is a visualization method and so runs at d = 2, which made an n-dependent openTSNE
+  limit describe a case the class already excludes: the class's d = 2 is enforced in
+  `validate_stages` instead, and defect 10 closed a day early. One rule remains,
+  `lle_neighbour_minimum`, now shared by the executor and day 12's validator. Measured
+  while planning: only Hessian LLE's minimum, 1 + d(d + 3)/2, is scikit-learn's own; the
+  library fits the other three variants one below the toolbox's d + 1, whose basis is
+  mathematical -- d + 1 points are the fewest whose affine span is d-dimensional -- and the
+  rule's sentence now says so.
+
+  *Nested in d, measured.* Through the pipeline, on a noisy Swiss roll with five padding
+  columns, the fit at d = 2 matched the first two columns of the fit at d = 5 at a
+  correlation of 1.0 to six places for PCA, kernel PCA, Isomap, Laplacian Eigenmaps,
+  Diffusion Maps and standard LLE, against 0.91 for modified LLE and 0.87 for MDS. The
+  test asserts every claim and keeps modified LLE as a negative control, so it is known
+  to be able to fail. Sparse PCA is declared not nested, unmeasured, which costs refits
+  and never overstates fidelity.
+
+  *The extension claim, narrowed to what a test can hold.* The neighbour suggestion now
+  goes to any op with an `n_neighbors` parameter, from that op's registry default, which
+  moves LLE's suggestion at n >= 1,000 from 10 to 12, inside its measured range. Every
+  other method named outside the executors is a rule about that method's own parameter,
+  and `tests/test_extension_point.py` lists each with its reason, failing on a new name
+  and on a stale entry. The registry's header and section 3.3 say exactly that.
+
+  *Sample identifiers.* Carried in `meta["sample_ids"]`, so every existing adapter still
+  passes; checked by the contract for type, length and duplicates; numbered by position
+  and recorded as `row_order` when a loader has none; cached in their own file; and
+  hashed into the dataset digest, since an export names its rows by them. A CSV's row
+  names arrive as an ordinary column, so `--id-column` takes one out of the features --
+  a numeric index written by pandas was otherwise embedded as a feature. Rejected: a
+  fourth return value, which breaks every adapter; excluding identifiers from the
+  digest; and guessing which CSV column is the index. A Run cached before today is told
+  its cache predates the rule, not that its data changed.
+
+  *Found by the review.* Codex's whole-branch review found that the CSV route still
+  renamed samples: `read_csv` had parsed the identifier column before it was converted
+  to text, so `001` became `1`, `NA` became missing, and `001` and `1` collided into one
+  identifier. The column is now read a second time as literal text, and NA parsing stays
+  on for the features, where the missing-value refusal depends on it.
+
+  502 tests, 65s.

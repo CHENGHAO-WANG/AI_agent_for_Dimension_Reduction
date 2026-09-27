@@ -92,11 +92,20 @@ def kernel_pca(
 
     # scikit-learn's default gamma of 1/n_features ignores the scale of the data
     # entirely. Tying it to the median pairwise distance at least puts the kernel
-    # width in the range where the kernel actually varies.
-    gamma_source = "specified"
-    if gamma is None and kernel in {"rbf", "sigmoid"}:
-        gamma = _median_heuristic_gamma(dense, ctx.seed)
+    # width in the range where the kernel actually varies. The polynomial kernel keeps
+    # scikit-learn's default, and the cosine kernel has no width at all. Each label is
+    # the registry's default_rule for that kernel, and a test holds the two together.
+    recorded_gamma = gamma
+    if kernel == "cosine":
+        gamma_source = "not applicable"
+    elif gamma is not None:
+        gamma_source = "specified"
+    elif kernel in {"rbf", "sigmoid"}:
+        gamma = recorded_gamma = _median_heuristic_gamma(dense, ctx.seed)
         gamma_source = "median pairwise distance heuristic"
+    else:
+        recorded_gamma = 1.0 / dense.shape[1]
+        gamma_source = "1/n_features (scikit-learn default)"
 
     model = KernelPCA(
         n_components=n_components,
@@ -114,8 +123,8 @@ def kernel_pca(
         )
     return embedding, {
         "kernel": kernel,
-        "gamma": float(gamma) if gamma is not None else None,
-        "gamma_source": gamma_source if kernel in {"rbf", "sigmoid"} else "not applicable",
+        "gamma": float(recorded_gamma) if recorded_gamma is not None else None,
+        "gamma_source": gamma_source,
     }
 
 

@@ -32,12 +32,6 @@ from drtools.registry import Registry, load_registry
 
 Severity = Literal["error", "warning"]
 
-# Methods whose geometry is Euclidean, and which therefore read raw counts as if
-# sequencing depth were biology.
-EUCLIDEAN_METHODS = frozenset(
-    {"mds", "isomap", "lle", "laplacian_eigenmaps", "diffusion_maps", "tsne", "kernel_pca"}
-)
-
 
 # --------------------------------------------------------------------- the schema
 
@@ -130,7 +124,7 @@ class PlanState:
         elif op == "l2_normalise":
             self.normalised_per_sample = True
 
-        if spec.is_reduction:
+        if spec.is_reduction or spec.is_visualization:
             self.n_features = int(params.get("n_components") or 2)
             self.is_raw_counts = False
         if not spec.preserves_sparsity:
@@ -389,7 +383,11 @@ def _check_stage_against_state(
     findings: list[Finding] = []
     n = state.n_samples
 
-    if spec.is_reduction and spec.scales_to is not None and n > spec.scales_to:
+    if (
+        (spec.is_reduction or spec.is_visualization)
+        and spec.scales_to is not None
+        and n > spec.scales_to
+    ):
         findings.append(
             Finding(
                 code="exceeds_scale_limit",
@@ -418,17 +416,22 @@ def _check_stage_against_state(
             )
         )
 
-    if state.is_raw_counts and op in EUCLIDEAN_METHODS:
+    # Raw counts mislead whatever distance or kernel a method uses: sample totals vary,
+    # and a count's variance grows with its mean. So the check covers every reduction
+    # and visualization method, and does not read `euclidean`, which answers a different
+    # question (section 3.10's selection rule).
+    if state.is_raw_counts and (spec.is_reduction or spec.is_visualization):
         findings.append(
             Finding(
-                code="raw_counts_into_euclidean_method",
+                code="raw_counts_not_normalised",
                 severity="error",
                 candidate=candidate_id,
                 op=op,
-                message=f"{op} measures Euclidean distance, but the values reaching it "
-                "are still raw counts. Counts are heteroscedastic and their sample "
-                "totals vary, so the leading structure recovered would be sequencing "
-                "depth rather than anything biological.",
+                message=f"the values reaching {op} are still raw counts. Sample totals "
+                "vary from sample to sample and a count's variance grows with its "
+                "mean, so whatever distance or kernel the method uses, the leading "
+                "structure it recovers would be sequencing depth and the most highly "
+                "expressed features rather than the biology.",
                 fix="add normalise_total and log1p before this method",
             )
         )
@@ -467,7 +470,7 @@ def _check_stage_against_state(
     if (
         neighbours is not None
         and recon is not None
-        and op in {"isomap", "lle", "laplacian_eigenmaps"}
+        and spec.holds("requires_connected_graph", params)
     ):
         graph = recon.get("neighbourhood", {})
         probe_k, parts = graph.get("k"), graph.get("n_connected_components")

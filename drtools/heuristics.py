@@ -17,6 +17,8 @@ from typing import Any
 
 import numpy as np
 
+from drtools.registry import Registry, load_registry
+
 
 def suggest_base(
     profile: dict[str, Any], recon: dict[str, Any] | None = None
@@ -55,9 +57,14 @@ def suggest_base(
 
 
 def suggest(
-    op: str, profile: dict[str, Any], recon: dict[str, Any] | None = None
+    op: str,
+    profile: dict[str, Any],
+    recon: dict[str, Any] | None = None,
+    registry: Registry | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Suggested parameters for `op` on this data, each with a rationale."""
+    registry = registry or load_registry()
+    spec = registry.ops.get(op)
     n = int(profile.get("shape", {}).get("n_samples", 0))
     suggestions: dict[str, dict[str, Any]] = {}
 
@@ -72,8 +79,11 @@ def suggest(
             ["profile.shape.n_samples"],
         )
 
-    if op in {"umap", "laplacian_eigenmaps", "isomap", "lle"}:
-        suggestions.update(_neighbour_suggestion(op, n, recon))
+    # Any op with a neighbourhood size gets the size-aware suggestion, starting from its
+    # own registry default, so a new neighbour-graph method is offered one unedited.
+    if spec is not None and "n_neighbors" in spec.params:
+        base = int(spec.params["n_neighbors"].default)
+        suggestions.update(_neighbour_suggestion(op, base, n, recon))
 
     if op == "pca":
         suggestions.update(_component_suggestion(recon))
@@ -91,9 +101,8 @@ def suggest(
 
 
 def _neighbour_suggestion(
-    op: str, n: int, recon: dict[str, Any] | None
+    op: str, base: int, n: int, recon: dict[str, Any] | None
 ) -> dict[str, dict[str, Any]]:
-    base = {"lle": 10, "isomap": 10, "laplacian_eigenmaps": 15, "umap": 15}[op]
     value = int(np.clip(base if n >= 1000 else max(5, n // 50), 5, 50))
     reasons = [f"a neighbourhood of {value} is a reasonable starting point at n = {n:,}"]
     evidence = ["profile.shape.n_samples"]

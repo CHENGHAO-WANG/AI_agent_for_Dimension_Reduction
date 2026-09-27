@@ -11,6 +11,8 @@ path, which is why this lives in one function rather than at each call site.
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Sequence
 
 import numpy as np
 import scipy.sparse as sp
@@ -18,8 +20,16 @@ import scipy.sparse as sp
 from drtools.contract import Matrix
 
 
-def content_hash(X: Matrix, labels: np.ndarray | None) -> str:
-    """A stable digest of the matrix and its label codes."""
+def content_hash(
+    X: Matrix, labels: np.ndarray | None, sample_ids: Sequence[str] | None = None
+) -> str:
+    """A stable digest of the matrix, its label codes and its sample identifiers.
+
+    Identifiers are part of identity because an export names its rows by them: the same
+    numbers under different names would be a different claim about which sample is
+    which. Rows with no names hash as their positions, so leaving them unnamed and
+    numbering them 0..n-1 agree.
+    """
     digest = hashlib.sha256()
 
     if sp.issparse(X):
@@ -51,5 +61,9 @@ def content_hash(X: Matrix, labels: np.ndarray | None) -> str:
         digest.update(b"labels")
         digest.update(np.asarray(codes.shape, dtype="<i8").tobytes())
         digest.update(codes.astype("<i8").tobytes())
+
+    ids = sample_ids if sample_ids is not None else [str(i) for i in range(X.shape[0])]
+    digest.update(b"sample_ids")
+    digest.update(json.dumps(list(ids), ensure_ascii=False).encode("utf-8"))
 
     return digest.hexdigest()

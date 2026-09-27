@@ -9,7 +9,9 @@ every loader — built in or agent written — must satisfy this contract:
 
     X       (n_samples, n_features), float32/float64, dense ndarray or CSR.
     labels  1-D integer array of length n_samples, or None when unlabelled.
-    meta    dict carrying at minimum `name` and `source`.
+    meta    dict carrying at minimum `name` and `source`. It may carry `sample_ids`:
+            a list of distinct strings, one per sample, in row order. A loader that
+            has none leaves it out, and the toolbox numbers the rows.
 
 Complete matrices only. Missing values are out of scope, and the refusal above says
 so rather than asking a loader to resolve them: measured against this toolbox, all
@@ -51,6 +53,7 @@ def check_dataset(X: Any, labels: Any, meta: Any, *, origin: str = "loader") -> 
     _check_matrix(X, origin)
     _check_labels(labels, X.shape[0], origin)
     _check_meta(meta, origin)
+    _check_sample_ids(meta.get("sample_ids"), X.shape[0], origin)
 
 
 def _check_matrix(X: Any, origin: str) -> None:
@@ -114,3 +117,41 @@ def _check_meta(meta: Any, origin: str) -> None:
         raise ContractError(
             f"{origin}: meta is missing required key(s) {sorted(missing)}"
         )
+
+
+def _check_sample_ids(ids: Any, n_samples: int, origin: str) -> None:
+    if ids is None:
+        return
+    if not isinstance(ids, list) or not all(isinstance(v, str) for v in ids):
+        raise ContractError(
+            f"{origin}: meta['sample_ids'] must be a list of strings, one per sample, "
+            f"got {type(ids).__name__}. Convert in the loader, for example "
+            "[str(v) for v in index]."
+        )
+    if len(ids) != n_samples:
+        raise ContractError(
+            f"{origin}: meta['sample_ids'] holds {len(ids)} identifiers for "
+            f"{n_samples} samples — the two are misaligned"
+        )
+    seen: set[str] = set()
+    repeated = [v for v in ids if v in seen or seen.add(v)]
+    if repeated:
+        raise ContractError(
+            f"{origin}: meta['sample_ids'] repeats {len(set(repeated))} identifier(s), "
+            f"for example {sorted(set(repeated))[:3]}. Each sample needs its own name, "
+            "or an exported row cannot say which sample it is; make the names unique in "
+            "the loader."
+        )
+
+
+def resolve_sample_ids(meta: dict[str, Any], n_samples: int) -> tuple[list[str], str]:
+    """The identifiers a dataset's rows go by, and where they came from.
+
+    Rows a loader did not name are numbered by position, recorded as `row_order`, so
+    every reader can rely on identifiers existing and an export can say which kind it
+    holds.
+    """
+    ids = meta.get("sample_ids")
+    if ids is None:
+        return [str(i) for i in range(n_samples)], "row_order"
+    return list(ids), str(meta.get("sample_ids_source", "loader"))

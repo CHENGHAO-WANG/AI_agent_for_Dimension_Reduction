@@ -152,28 +152,43 @@ def validate_stages(
         op = stage["op"]
         try:
             spec = registry[op]
-            registry.resolve_params(op, stage["params"])
+            resolved, _ = registry.resolve_params(op, stage["params"])
         except RegistryError as error:
             raise PipelineError(f"stage {position} ({op}): {error}") from None
 
         is_last = position == len(stages) - 1
         if not is_last and not spec.can_be_intermediate():
             following = stages[position + 1]["op"]
+            allowed = ", ".join(
+                sorted(n for n, s in registry.ops.items() if "intermediate" in s.roles)
+            )
             raise PipelineError(
-                f"stage {position} ({op}) cannot be followed by {following!r}: "
-                f"{op} is a terminal method whose output is an embedding for viewing, "
-                "not a representation to reduce further. Its coordinates have no "
-                "meaningful metric for a downstream method to consume."
+                f"stage {position} ({op}) cannot be followed by {following!r}: {op} is "
+                "a terminal method, which may stand only in a candidate's last stage. "
+                f"Only {allowed} may come before a reduction or a visualization method."
+            )
+
+        # Section 3.11: a visualization method's output is a picture, drawn at two
+        # dimensions. Keyed on the class, so a method added to it needs no entry here.
+        if spec.is_visualization and resolved.get("n_components") != 2:
+            raise PipelineError(
+                f"stage {position} ({op}) asks for "
+                f"n_components={resolved.get('n_components')}, but {op} is a "
+                "visualization method, and a visualization method runs at "
+                "n_components = 2: its output is a picture, never a representation of "
+                "more dimensions. Set n_components to 2, or choose a reduction if the "
+                "analysis needs more dimensions."
             )
 
     # Base preprocessing is the exception: it is a stage list by construction made only
     # of preprocessing, since its output is the common representation candidates are
     # measured against rather than an embedding.
-    if require_terminal_reduction and not registry[stages[-1]["op"]].is_reduction:
+    final = registry[stages[-1]["op"]]
+    if require_terminal_reduction and not (final.is_reduction or final.is_visualization):
         raise PipelineError(
-            f"a candidate must end in a reduction; this one ends in "
-            f"{stages[-1]['op']!r}, which is preprocessing and leaves the data in its "
-            "original dimensionality"
+            f"a candidate must end in a reduction or a visualization method; this one "
+            f"ends in {stages[-1]['op']!r}, which is preprocessing and leaves the data "
+            "in its original dimensionality"
         )
     return stages
 

@@ -10,7 +10,13 @@
 # same fields. One source of truth, so the LLM path and the no-LLM path cannot drift
 # apart in what they believe about a method.
 #
-# Adding a method means adding an entry here and one executor function. No skill edits.
+# Adding a method takes an entry here and one executor function, and no skill edits.
+# Every property a check reads is declared in the entry: the class, whether the method
+# works through Euclidean geometry, whether it is nested in d, whether it needs a
+# connected graph, its emphasis, how it reaches new rows, and the named limits on d it
+# obeys. A method may also bring a suggestion rule or a check on its own parameters;
+# tests/test_extension_point.py lists every place outside the executors that names a
+# method, and why a new method can be absent from each.
 
 version: 1
 
@@ -47,7 +53,8 @@ ops:
       target:
         type: float
         default: null
-        describes: common total to scale to; null uses the median sample total
+        default_rule: median sample total
+        describes: common total to scale every sample to; left null, the median sample total
 
   log1p:
     kind: preprocessing
@@ -167,8 +174,12 @@ ops:
       sample magnitude.
     complexity: O(n d k) with a randomised solver
     scales_to: 2000000
-    out_of_sample: exact
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: transform
     params:
       n_components:
         type: int
@@ -194,8 +205,16 @@ ops:
     handles_sparse: true
     complexity: O(n^2 d) to build the kernel, O(n^3) to decompose it
     scales_to: 10000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: {when: {kernel: [rbf]}}
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: null
+    emphasis_reason: >
+      Which distances it keeps depends on the kernel and its width: close to PCA, and so
+      global, with a wide RBF kernel; mainly neighbours with a narrow one. Reopen when
+      tuning shows its chosen widths consistently favour one side.
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       kernel:
@@ -205,7 +224,16 @@ ops:
       gamma:
         type: float
         default: null
-        describes: kernel width; null uses 1/n_features, which is rarely well scaled
+        default_rule:
+          - {when: {kernel: [rbf, sigmoid]}, rule: median pairwise distance heuristic}
+          - {when: {kernel: [poly]}, rule: "1/n_features (scikit-learn default)"}
+          - {when: {kernel: [cosine]}, rule: not applicable}
+        describes: >
+          kernel width, used by the rbf, sigmoid and poly kernels. Left null, rbf and
+          sigmoid take the reciprocal of the median squared pairwise distance, measured
+          on up to 1,000 sampled rows, which puts the width where the kernel varies;
+          poly takes scikit-learn's 1/n_features; cosine has no width. The stage record's
+          gamma_source says which rule ran.
     fails_when:
       - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
 
@@ -222,8 +250,14 @@ ops:
     handles_sparse: false
     complexity: iterative dictionary learning; substantially slower than PCA
     scales_to: 50000
-    out_of_sample: exact
     stochastic: true
+    euclidean: true
+    # Not measured. Declared false, which costs a refit at every d and never overstates
+    # fidelity; a claim of true would have to pass tests/test_nested_in_d.py.
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       alpha:
@@ -252,8 +286,12 @@ ops:
     handles_sparse: true
     complexity: O(n k) to build the graph, then a sparse eigenproblem
     scales_to: 50000
-    out_of_sample: none
     stochastic: true
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: true
+    emphasis: local
+    new_rows: nystrom
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -280,16 +318,24 @@ ops:
     handles_sparse: false
     complexity: O(n^2) memory for the dense kernel, O(n^3) to decompose
     scales_to: 10000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: nystrom
     params:
       n_components: {type: int, default: 2, min: 1}
       epsilon:
         type: float
         default: null
+        default_rule: kernel-sum scaling criterion (Coifman and Singer)
         describes: >
-          kernel bandwidth; null uses the median squared k-NN distance, which adapts to
-          the scale of the data
+          kernel bandwidth. Left null, it is chosen by Coifman and Singer's kernel-sum
+          scaling criterion: the lower edge of the range of bandwidths over which the log
+          kernel sum rises linearly with log bandwidth, where the kernel has just begun to
+          resolve the manifold. The stage record's epsilon_source says so, and
+          dimension_implied_by_bandwidth reports the intrinsic dimension the slope implies.
       alpha:
         type: float
         default: 1.0
@@ -327,8 +373,12 @@ ops:
     handles_sparse: false
     complexity: O(n^2) memory, iterative SMACOF
     scales_to: 5000
-    out_of_sample: none
     stochastic: true
+    euclidean: true
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: none
     params:
       n_components: {type: int, default: 2, min: 1}
       metric:
@@ -364,8 +414,12 @@ ops:
     handles_sparse: false
     complexity: O(n^2 log n) for all-pairs shortest paths, O(n^2) memory
     scales_to: 5000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: true
+    emphasis: global
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -394,8 +448,13 @@ ops:
     handles_sparse: false
     complexity: O(n k^3) for the weights, then a sparse eigenproblem
     scales_to: 20000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: true
+    nested_in_d: {when: {method: [standard]}}
+    requires_connected_graph: true
+    emphasis: local
+    new_rows: transform
+    d_limits: [lle_neighbour_minimum]
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -427,7 +486,7 @@ ops:
   # --------------------------------------------------------- neighbour embeddings
 
   tsne:
-    kind: reduction
+    kind: visualization
     family: neighbour_embedding
     roles: [terminal]
     summary: t-distributed stochastic neighbour embedding.
@@ -445,10 +504,14 @@ ops:
     handles_sparse: false
     complexity: O(n log n) with the FFT-accelerated gradient
     scales_to: 500000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: true
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: local
+    new_rows: transform
     params:
-      n_components: {type: int, default: 2, min: 1, max: 3}
+      n_components: {type: int, default: 2, min: 1}
       perplexity:
         type: float
         default: 30.0
@@ -471,7 +534,7 @@ ops:
       - perplexity at or above n_samples / 3
 
   umap:
-    kind: reduction
+    kind: visualization
     family: neighbour_embedding
     roles: [terminal]
     summary: Uniform manifold approximation and projection.
@@ -488,8 +551,14 @@ ops:
     handles_sparse: true
     complexity: approximate nearest neighbours, then stochastic optimisation
     scales_to: 1000000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: {when: {metric: [euclidean]}}
+    # A smaller fit agrees with a larger one only through the spectral initialiser,
+    # which is itself nested; under random initialisation it does not (section 3.5).
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: local
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
