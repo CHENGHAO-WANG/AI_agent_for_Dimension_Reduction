@@ -1130,8 +1130,8 @@ section states this whenever the features were judged mixed.
 
 **Candidate-specific stages, by rule.** *Revised later on day 10; the day 10 log gives
 the earlier rule, which selected only before a linear first reduction.* The rule looks at
-the candidate's *first* dimension-lowering stage -- a reduction or a visualization method
--- because selection happens once, before that stage, and shapes only what it sees. In
+the candidate's *first* reduction or visualization method, because selection happens once,
+before that stage, and shapes only what it sees. In
 `pca -> kernel_pca(kernel=poly)` the first stage is PCA, so selection applies, and the
 polynomial kernel then sees PCA's output rather than the raw features.
 
@@ -1420,7 +1420,8 @@ refused above its limit.**
   the global structure these methods are chosen for.
 
 **Subsampling only where it is needed.** A candidate may subsample only when its first
-dimension-lowering stage would otherwise receive more rows than that op's `scales_to`.
+reduction or visualization method would otherwise receive more rows than that op's
+`scales_to`.
 PCA's limit is 2,000,000, so `subsample(n_samples=50) -> pca` -- one route to a degenerate
 baseline, registered on day 10 without a finding -- is refused.
 
