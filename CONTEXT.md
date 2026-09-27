@@ -14,6 +14,12 @@ One analysis of one dataset, from profiling through to the report. Everything it
 produces lives in a single directory named for it.
 _Avoid_: session, job, experiment
 
+**Sample identifier**:
+The name a Run gives one row of its dataset: the row name the data came with, or the
+row's position when it came with none, and a record of which. Part of what the dataset
+is, so the same values under different identifiers are a different dataset.
+_Avoid_: row name, index, observation name, barcode
+
 **Purpose**:
 What a Run's deliverable is: a representation that downstream analysis can use, or a
 picture. Each Run has exactly one, and it decides which Ops may be Candidates and whether
