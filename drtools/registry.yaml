@@ -167,8 +167,12 @@ ops:
       sample magnitude.
     complexity: O(n d k) with a randomised solver
     scales_to: 2000000
-    out_of_sample: exact
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: transform
     params:
       n_components:
         type: int
@@ -194,8 +198,16 @@ ops:
     handles_sparse: true
     complexity: O(n^2 d) to build the kernel, O(n^3) to decompose it
     scales_to: 10000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: {when: {kernel: [rbf]}}
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: null
+    emphasis_reason: >
+      Which distances it keeps depends on the kernel and its width: close to PCA, and so
+      global, with a wide RBF kernel; mainly neighbours with a narrow one. Reopen when
+      tuning shows its chosen widths consistently favour one side.
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       kernel:
@@ -222,8 +234,14 @@ ops:
     handles_sparse: false
     complexity: iterative dictionary learning; substantially slower than PCA
     scales_to: 50000
-    out_of_sample: exact
     stochastic: true
+    euclidean: true
+    # Not measured. Declared false, which costs a refit at every d and never overstates
+    # fidelity; a claim of true would have to pass tests/test_nested_in_d.py.
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       alpha:
@@ -252,8 +270,12 @@ ops:
     handles_sparse: true
     complexity: O(n k) to build the graph, then a sparse eigenproblem
     scales_to: 50000
-    out_of_sample: none
     stochastic: true
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: true
+    emphasis: local
+    new_rows: nystrom
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -280,8 +302,12 @@ ops:
     handles_sparse: false
     complexity: O(n^2) memory for the dense kernel, O(n^3) to decompose
     scales_to: 10000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: nystrom
     params:
       n_components: {type: int, default: 2, min: 1}
       epsilon:
@@ -327,8 +353,12 @@ ops:
     handles_sparse: false
     complexity: O(n^2) memory, iterative SMACOF
     scales_to: 5000
-    out_of_sample: none
     stochastic: true
+    euclidean: true
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: none
     params:
       n_components: {type: int, default: 2, min: 1}
       metric:
@@ -364,8 +394,12 @@ ops:
     handles_sparse: false
     complexity: O(n^2 log n) for all-pairs shortest paths, O(n^2) memory
     scales_to: 5000
-    out_of_sample: approximate
     stochastic: false
+    euclidean: true
+    nested_in_d: true
+    requires_connected_graph: true
+    emphasis: global
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -394,8 +428,13 @@ ops:
     handles_sparse: false
     complexity: O(n k^3) for the weights, then a sparse eigenproblem
     scales_to: 20000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: true
+    nested_in_d: {when: {method: [standard]}}
+    requires_connected_graph: true
+    emphasis: local
+    new_rows: transform
+    d_limits: [lle_neighbour_minimum]
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:
@@ -445,8 +484,12 @@ ops:
     handles_sparse: false
     complexity: O(n log n) with the FFT-accelerated gradient
     scales_to: 500000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: true
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: local
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       perplexity:
@@ -488,8 +531,14 @@ ops:
     handles_sparse: true
     complexity: approximate nearest neighbours, then stochastic optimisation
     scales_to: 1000000
-    out_of_sample: approximate
     stochastic: true
+    euclidean: {when: {metric: [euclidean]}}
+    # A smaller fit agrees with a larger one only through the spectral initialiser,
+    # which is itself nested; under random initialisation it does not (section 3.5).
+    nested_in_d: false
+    requires_connected_graph: false
+    emphasis: local
+    new_rows: transform
     params:
       n_components: {type: int, default: 2, min: 1}
       n_neighbors:

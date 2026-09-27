@@ -7,8 +7,13 @@ method the planner can select and never run.
 
 from __future__ import annotations
 
+import openTSNE
 import pytest
+import umap
+from sklearn.decomposition import PCA, KernelPCA, MiniBatchSparsePCA, TruncatedSVD
+from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
 
+from drtools.constraints import RULES
 from drtools.executors import EXECUTORS
 from drtools.registry import RegistryError, load_registry
 
@@ -28,12 +33,22 @@ def test_every_op_declares_what_it_is_for(registry) -> None:
         assert spec.summary, f"{name} has no summary for the planner to read"
 
 
-def test_reductions_declare_the_properties_selection_depends_on(registry) -> None:
-    """These are the fields the planner reasons over; a missing one is a blind spot."""
-    required = {"preserves", "assumes", "scales_to", "handles_sparse", "roles"}
-    for name, spec in {**registry.reductions(), **registry.visualization_methods()}.items():
-        missing = required - set(spec.raw)
+METHOD_FIELDS = {
+    "preserves", "assumes", "scales_to", "handles_sparse", "roles",
+    "euclidean", "nested_in_d", "requires_connected_graph", "emphasis", "new_rows",
+}
+
+
+def _methods(registry):
+    return {**registry.reductions(), **registry.visualization_methods()}
+
+
+def test_every_method_declares_the_properties_checks_read(registry) -> None:
+    """A missing one is a question a check asks and the registry cannot answer."""
+    for name, spec in _methods(registry).items():
+        missing = METHOD_FIELDS - set(spec.raw)
         assert not missing, f"{name} does not declare {sorted(missing)}"
+        assert "out_of_sample" not in spec.raw, f"{name} still declares out_of_sample"
 
 
 def test_defaults_are_used_and_recorded_as_defaults(registry) -> None:
@@ -114,3 +129,51 @@ def test_methods_lists_the_visualization_class(cli) -> None:
     listed = result.payload["ops"]
     assert {"tsne", "umap"} <= set(listed)
     assert all(record["kind"] == "visualization" for record in listed.values())
+
+
+def test_only_a_deterministic_op_may_stand_before_another_method(registry) -> None:
+    """Section 3.9. Vacuous today; it catches granting the role to LLE or Laplacian
+    Eigenmaps, which are cheap and look like reasonable pre-steps."""
+    for name, spec in registry.ops.items():
+        if "intermediate" in spec.roles:
+            assert not spec.stochastic, f"{name} is stochastic but may be intermediate"
+
+
+def test_every_limit_on_d_is_named_by_some_method(registry) -> None:
+    named = {rule for spec in registry.ops.values() for rule in spec.d_limits}
+    assert named == set(RULES)
+
+
+def test_lle_is_described_with_its_neighbour_minimum(registry) -> None:
+    rules = registry.describe("lle")["d_limit_rules"]
+    assert [r["name"] for r in rules] == ["lle_neighbour_minimum"]
+
+
+# The library class each executor fits, for every method whose record says it can
+# place new rows by `transform`. PCA's executor uses TruncatedSVD on sparse input.
+TRANSFORM_CLASSES = {
+    "pca": (PCA, TruncatedSVD),
+    "kernel_pca": (KernelPCA,),
+    "sparse_pca": (MiniBatchSparsePCA,),
+    "isomap": (Isomap,),
+    "lle": (LocallyLinearEmbedding,),
+    "tsne": (openTSNE.TSNEEmbedding,),
+    "umap": (umap.UMAP,),
+}
+
+
+def test_every_method_declaring_a_transform_has_one_in_its_library(registry) -> None:
+    declared = {n for n, s in _methods(registry).items() if s.raw["new_rows"] == "transform"}
+    assert declared == set(TRANSFORM_CLASSES)
+    for name, classes in TRANSFORM_CLASSES.items():
+        for cls in classes:
+            assert hasattr(cls, "transform"), f"{name}: {cls.__name__} has no transform"
+
+
+def test_the_methods_declared_without_a_transform_really_lack_one(registry) -> None:
+    """Diffusion Maps is written in the toolbox and has none; its Nystrom extension is day 14's."""
+    assert registry["laplacian_eigenmaps"].raw["new_rows"] == "nystrom"
+    assert registry["diffusion_maps"].raw["new_rows"] == "nystrom"
+    assert registry["mds"].raw["new_rows"] == "none"
+    assert not hasattr(SpectralEmbedding, "transform")
+    assert not hasattr(MDS, "transform")
