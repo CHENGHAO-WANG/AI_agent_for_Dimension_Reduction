@@ -45,3 +45,12 @@ def test_labels_are_part_of_identity():
     b = np.array([1, 0])
     assert content_hash(BASE, a) != content_hash(BASE, b)
     assert content_hash(BASE, a) != content_hash(BASE, None)
+
+
+def test_sample_identifiers_are_part_of_identity():
+    assert content_hash(BASE, None, ["a", "b"]) != content_hash(BASE, None, ["b", "a"])
+
+
+def test_rows_without_names_hash_as_their_positions():
+    n = BASE.shape[0]
+    assert content_hash(BASE, None) == content_hash(BASE, None, [str(i) for i in range(n)])

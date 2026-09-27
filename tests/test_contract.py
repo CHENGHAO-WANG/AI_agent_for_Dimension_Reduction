@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from drtools.contract import ContractError, check_dataset
+from drtools.contract import ContractError, check_dataset, resolve_sample_ids
 from drtools.runs import MISSING, RunDir, resolve_evidence
 
 VALID_META = {"name": "example", "source": "test"}
@@ -126,3 +126,31 @@ def test_the_non_finite_refusal_does_not_ask_the_loader_to_resolve_it() -> None:
     message = str(error.value)
     assert "out of scope" in message
     assert "resolved or explicitly encoded by the loader" not in message
+
+
+def test_accepts_one_string_identifier_per_sample() -> None:
+    meta = {**VALID_META, "sample_ids": [f"s{i}" for i in range(10)]}
+    check_dataset(np.zeros((10, 3)), None, meta)
+
+
+def test_rejects_identifiers_that_are_not_a_list_of_strings_and_says_how_to_convert() -> None:
+    """Review focus 2: an array or an Index is the natural thing for an adapter to return."""
+    meta = {**VALID_META, "sample_ids": np.array([f"s{i}" for i in range(10)])}
+    with pytest.raises(ContractError, match=r"list of strings.*\[str\(v\)"):
+        check_dataset(np.zeros((10, 3)), None, meta)
+
+
+def test_rejects_identifiers_misaligned_with_the_samples() -> None:
+    meta = {**VALID_META, "sample_ids": ["a", "b"]}
+    with pytest.raises(ContractError, match="misaligned"):
+        check_dataset(np.zeros((10, 3)), None, meta)
+
+
+def test_rejects_duplicated_identifiers_naming_one() -> None:
+    meta = {**VALID_META, "sample_ids": ["a"] * 2 + [f"s{i}" for i in range(8)]}
+    with pytest.raises(ContractError, match="'a'"):
+        check_dataset(np.zeros((10, 3)), None, meta)
+
+
+def test_rows_without_names_are_numbered_in_order() -> None:
+    assert resolve_sample_ids({}, 3) == (["0", "1", "2"], "row_order")

@@ -15,9 +15,15 @@ import numpy as np
 import scipy.sparse as sp
 
 from drtools import jsonio
-from drtools.contract import ContractError, Matrix
+from drtools.contract import ContractError, Matrix, resolve_sample_ids
 from drtools.digest import content_hash
 from drtools.runs import RunDir
+
+_PREDATES_IDENTIFIERS = (
+    "this run's cache was written before sample identifiers became part of a dataset's "
+    "identity, so its digest cannot be compared with the data just loaded. Analyse the "
+    "data in a new run."
+)
 
 
 def cache_dir(run: RunDir):
@@ -36,6 +42,10 @@ def write_cache(
 ) -> dict[str, Any]:
     directory = cache_dir(run)
     sparse = sp.issparse(X)
+    ids, ids_source = resolve_sample_ids(meta, X.shape[0])
+    # Their own file: at n = 107,000 the list is a megabyte or two, and meta.json is
+    # read by the report and on every run lookup.
+    jsonio.write(directory / "sample_ids.json", ids)
 
     if sparse:
         sp.save_npz(directory / "X.npz", sp.csr_matrix(X))
@@ -45,12 +55,14 @@ def write_cache(
         np.save(directory / "labels.npy", labels)
 
     descriptor = {
-        **meta,
+        **{key: value for key, value in meta.items() if key != "sample_ids"},
         "cached_storage": "sparse_csr" if sparse else "dense",
         "cached_shape": list(X.shape),
         "cached_dtype": str(X.dtype),
         "has_labels": labels is not None,
-        "dataset_digest": content_hash(X, labels),
+        "sample_ids_source": ids_source,
+        "n_sample_ids": len(ids),
+        "dataset_digest": content_hash(X, labels, ids),
     }
     jsonio.write(directory / "meta.json", descriptor)
     return descriptor
@@ -84,7 +96,10 @@ def ensure_cache(
         return write_cache(run, X, labels, meta)
 
     cached = jsonio.read(run.path / "data" / "meta.json")
-    incoming = content_hash(X, labels)
+    if "sample_ids_source" not in cached:
+        raise ContractError(_PREDATES_IDENTIFIERS)
+    ids, _ = resolve_sample_ids(meta, X.shape[0])
+    incoming = content_hash(X, labels, ids)
     if cached.get("dataset_digest") != incoming:
         raise ContractError(
             f"this run was created from a different dataset. The cache holds "
@@ -93,3 +108,11 @@ def ensure_cache(
             f"changed data in a new run rather than reusing this one."
         )
     return cached
+
+
+def read_sample_ids(run: RunDir) -> list[str]:
+    """The cached rows' identifiers, in row order."""
+    path = run.path / "data" / "sample_ids.json"
+    if not path.exists():
+        raise ContractError(_PREDATES_IDENTIFIERS)
+    return jsonio.read(path)

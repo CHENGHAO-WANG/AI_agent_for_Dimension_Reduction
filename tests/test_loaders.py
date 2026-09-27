@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import hashlib
 
+import pandas as pd
 import pytest
 
 from drtools.contract import ContractError
@@ -195,3 +196,64 @@ def test_editing_an_adapter_moves_provenance_but_not_dataset_identity(tmp_path) 
 
     assert content_hash(X1, y1) == content_hash(X2, y2), "same matrix, same identity"
     assert meta1["adapter"]["sha256"] != meta2["adapter"]["sha256"]
+
+
+def test_a_csv_names_its_rows_from_the_id_column(tmp_path) -> None:
+    path = tmp_path / "named.csv"
+    pd.DataFrame({"sample": ["x", "y", "z"], "f0": [1.0, 2.0, 3.0],
+                  "f1": [0.0, 1.0, 0.5]}).to_csv(path, index=False)
+    X, _, meta = load(str(path), id_column="sample")
+    assert X.shape == (3, 2)
+    assert meta["sample_ids"] == ["x", "y", "z"]
+    assert meta["sample_ids_source"] == "loader"
+
+
+def test_an_unknown_id_column_is_refused_naming_the_columns(tmp_path) -> None:
+    path = tmp_path / "named.csv"
+    pd.DataFrame({"f0": [1.0, 2.0], "f1": [0.0, 1.0]}).to_csv(path, index=False)
+    with pytest.raises(ContractError, match="no column named 'sample'"):
+        load(str(path), id_column="sample")
+
+
+def test_an_id_column_for_a_format_without_columns_is_refused() -> None:
+    """Review focus 4: silently ignoring it would leave the rows numbered unasked."""
+    with pytest.raises(ContractError, match="has none"):
+        load("blobs", id_column="sample")
+
+
+def test_rows_a_loader_cannot_name_are_numbered_and_say_so() -> None:
+    X, _, meta = load("blobs", n_samples=30)
+    assert meta["sample_ids"] == [str(i) for i in range(30)]
+    assert meta["sample_ids_source"] == "row_order"
+
+
+def test_a_loader_cannot_claim_the_source_for_itself(tmp_path) -> None:
+    adapter = tmp_path / "adapter.py"
+    adapter.write_text(
+        "import numpy as np\n"
+        "def load(path, **_):\n"
+        "    return np.ones((3, 2)), None, {'name': 'a', 'source': 'a',\n"
+        "                                   'sample_ids_source': 'loader'}\n",
+        encoding="utf-8",
+    )
+    _, _, meta = load("anything", adapter=adapter)
+    assert meta["sample_ids_source"] == "row_order"
+
+
+def test_an_npz_may_carry_its_row_names(tmp_path) -> None:
+    path = tmp_path / "d.npz"
+    np.savez(path, X=np.ones((3, 2)), sample_ids=np.array(["p", "q", "r"]))
+    _, _, meta = load(str(path))
+    assert meta["sample_ids"] == ["p", "q", "r"]
+
+
+def test_the_cli_carries_an_id_column_into_the_run(tmp_path, cli) -> None:
+    path = tmp_path / "named.csv"
+    pd.DataFrame({"sample": [f"c{i}" for i in range(40)],
+                  "f0": np.arange(40.0), "f1": np.arange(40.0) ** 0.5}).to_csv(path, index=False)
+    result = cli("profile", "--data", path, "--runs-root", tmp_path / "runs",
+                 "--run-id", "r1", "--id-column", "sample")
+    assert result.code == 0, result.stderr
+    from drtools.cache import read_sample_ids
+    from drtools.runs import RunDir
+    assert read_sample_ids(RunDir(tmp_path / "runs" / "r1"))[:2] == ["c0", "c1"]
