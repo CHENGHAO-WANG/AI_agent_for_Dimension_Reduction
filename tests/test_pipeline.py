@@ -57,7 +57,7 @@ def test_an_empty_candidate_is_rejected() -> None:
 
 
 def test_a_terminal_method_cannot_feed_another_stage() -> None:
-    """t-SNE-like coordinates have no metric for a downstream method to consume."""
+    """A terminal method may stand only in a candidate's last stage."""
     with pytest.raises(PipelineError, match="terminal method"):
         validate_stages([{"op": "diffusion_maps"}, {"op": "pca"}])
 
@@ -255,3 +255,32 @@ def test_a_pipeline_is_deterministic_under_a_fixed_seed() -> None:
     second = run_pipeline(X, labels, stages, seed=11)
 
     np.testing.assert_allclose(first.embedding, second.embedding)
+
+
+def test_a_visualization_method_runs_only_at_two_dimensions() -> None:
+    """Review focus 1: a plan valid yesterday asking t-SNE for 3 is refused, saying 2."""
+    for op in ("tsne", "umap"):
+        with pytest.raises(PipelineError, match="n_components = 2"):
+            validate_stages([{"op": op, "params": {"n_components": 3}}])
+
+
+def test_the_refusal_says_what_a_visualization_method_is_for() -> None:
+    with pytest.raises(PipelineError) as error:
+        validate_stages([{"op": "tsne", "params": {"n_components": 3}}])
+    assert "visualization method" in str(error.value)
+    assert "reduction" in str(error.value)
+
+
+def test_a_candidate_may_end_in_a_visualization_method() -> None:
+    stages = validate_stages([{"op": "pca", "params": {"n_components": 10}},
+                              {"op": "umap", "params": {"n_components": 2}}])
+    assert stages[-1]["op"] == "umap"
+
+
+def test_the_terminal_refusal_is_about_position_not_about_metric() -> None:
+    """Section 3.9: Isomap's and Diffusion Maps' outputs do have a metric."""
+    with pytest.raises(PipelineError) as error:
+        validate_stages([{"op": "isomap"}, {"op": "umap"}])
+    message = str(error.value)
+    assert "last stage" in message and "pca" in message
+    assert "no meaningful metric" not in message

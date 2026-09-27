@@ -427,7 +427,7 @@ ops:
   # --------------------------------------------------------- neighbour embeddings
 
   tsne:
-    kind: reduction
+    kind: visualization
     family: neighbour_embedding
     roles: [terminal]
     summary: t-distributed stochastic neighbour embedding.
@@ -448,7 +448,7 @@ ops:
     out_of_sample: approximate
     stochastic: true
     params:
-      n_components: {type: int, default: 2, min: 1, max: 3}
+      n_components: {type: int, default: 2, min: 1}
       perplexity:
         type: float
         default: 30.0
@@ -471,7 +471,7 @@ ops:
       - perplexity at or above n_samples / 3
 
   umap:
-    kind: reduction
+    kind: visualization
     family: neighbour_embedding
     roles: [terminal]
     summary: Uniform manifold approximation and projection.

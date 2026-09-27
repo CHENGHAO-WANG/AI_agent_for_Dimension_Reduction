@@ -31,7 +31,7 @@ def test_every_op_declares_what_it_is_for(registry) -> None:
 def test_reductions_declare_the_properties_selection_depends_on(registry) -> None:
     """These are the fields the planner reasons over; a missing one is a blind spot."""
     required = {"preserves", "assumes", "scales_to", "handles_sparse", "roles"}
-    for name, spec in registry.reductions().items():
+    for name, spec in {**registry.reductions(), **registry.visualization_methods()}.items():
         missing = required - set(spec.raw)
         assert not missing, f"{name} does not declare {sorted(missing)}"
 
@@ -99,3 +99,18 @@ def test_sparse_capability_matches_what_the_executors_accept(registry) -> None:
     assert registry["pca"].handles_sparse
     assert not registry["standardise"].handles_sparse
     assert not registry["diffusion_maps"].handles_sparse
+
+
+def test_t_sne_and_umap_are_visualization_methods(registry) -> None:
+    """Section 3.11: their output is a picture, never a representation."""
+    for name in ("tsne", "umap"):
+        assert registry[name].is_visualization
+        assert not registry[name].is_reduction
+
+
+def test_methods_lists_the_visualization_class(cli) -> None:
+    result = cli("methods", "--kind", "visualization")
+    assert result.code == 0
+    listed = result.payload["ops"]
+    assert {"tsne", "umap"} <= set(listed)
+    assert all(record["kind"] == "visualization" for record in listed.values())

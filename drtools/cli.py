@@ -176,7 +176,7 @@ def _build_parser() -> argparse.ArgumentParser:
     methods.add_argument(
         "--kind",
         default=None,
-        choices=["preprocessing", "reduction"],
+        choices=["preprocessing", "reduction", "visualization"],
         help="restrict the listing to one kind of op",
     )
     methods.set_defaults(handler=_cmd_methods)

@@ -130,7 +130,7 @@ class PlanState:
         elif op == "l2_normalise":
             self.normalised_per_sample = True
 
-        if spec.is_reduction:
+        if spec.is_reduction or spec.is_visualization:
             self.n_features = int(params.get("n_components") or 2)
             self.is_raw_counts = False
         if not spec.preserves_sparsity:
@@ -389,7 +389,11 @@ def _check_stage_against_state(
     findings: list[Finding] = []
     n = state.n_samples
 
-    if spec.is_reduction and spec.scales_to is not None and n > spec.scales_to:
+    if (
+        (spec.is_reduction or spec.is_visualization)
+        and spec.scales_to is not None
+        and n > spec.scales_to
+    ):
         findings.append(
             Finding(
                 code="exceeds_scale_limit",
