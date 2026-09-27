@@ -257,3 +257,12 @@ def test_the_cli_carries_an_id_column_into_the_run(tmp_path, cli) -> None:
     from drtools.cache import read_sample_ids
     from drtools.runs import RunDir
     assert read_sample_ids(RunDir(tmp_path / "runs" / "r1"))[:2] == ["c0", "c1"]
+
+
+def test_an_id_column_keeps_its_text_exactly(tmp_path) -> None:
+    """read_csv would turn '001' into 1 and 'NA' into NaN, and '001' and '1' would collide."""
+    path = tmp_path / "coded.csv"
+    path.write_text("sample,f0,f1\n001,1.0,0.0\n1,2.0,1.0\nNA,3.0,0.5\n", encoding="utf-8")
+    X, _, meta = load(str(path), id_column="sample")
+    assert meta["sample_ids"] == ["001", "1", "NA"]
+    assert X.shape == (3, 2)

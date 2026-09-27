@@ -153,7 +153,12 @@ def _load_table(
                 f"{path.name}: {id_column!r} is named as both the identifier and the "
                 "label column; they must be different columns"
             )
-        sample_ids = [str(v) for v in frame[id_column]]
+        # Re-read as literal text: the frame above has already parsed '001' as 1 and
+        # 'NA' as missing, which would rename samples and can make two collide. NA
+        # parsing stays on for the features, where the missing-value refusal needs it.
+        sample_ids = pd.read_csv(
+            path, sep=separator, usecols=[id_column], dtype=str, keep_default_na=False
+        )[id_column].tolist()
         frame = frame.drop(columns=[id_column])
 
     column = label_column or next(

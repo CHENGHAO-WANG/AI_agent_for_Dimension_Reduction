@@ -2991,4 +2991,10 @@ first on the code about to change. No cut is planned for now; the rule above sta
   digest; and guessing which CSV column is the index. A Run cached before today is told
   its cache predates the rule, not that its data changed.
 
-  501 tests, 61s.
+  *Found by the review.* Codex's whole-branch review found that the CSV route still
+  renamed samples: `read_csv` had parsed the identifier column before it was converted
+  to text, so `001` became `1`, `NA` became missing, and `001` and `1` collided into one
+  identifier. The column is now read a second time as literal text, and NA parsing stays
+  on for the features, where the missing-value refusal depends on it.
+
+  502 tests, 65s.
