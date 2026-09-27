@@ -3,9 +3,10 @@
 Running record of decisions and their rationale. Raw material for the manually
 written 4-page `report.pdf`. Append as decisions are made; do not rewrite history.
 
-Fifteen work days against a 2026-09-28 deadline. Days are indexed rather than dated:
-the build has run ahead of the calendar, and the index is what the schedule actually
-tracks. It was fourteen until day 8, which grew a day rather than spending the hedge.
+Twenty-four work days against a 2026-09-28 deadline. Days are indexed rather than dated:
+a day is a unit of work, not a calendar day, and the index is what the schedule actually
+tracks. It was fourteen until day 8, which grew a day rather than spending the hedge, and
+fifteen until day 10, whose question pass added the work that section 9 now schedules.
 
 ---
 
@@ -1051,7 +1052,7 @@ per-chain cost check inside `validate-plan`, evaluating the inequality above aga
 profile. It would refuse `kernel_pca -> umap` by naming the actual problem -- this chain
 costs more than the method it wraps -- instead of refusing a category, and it would admit
 any future pairing that does satisfy the inequality without a data edit. It needs per-op
-cost functions rather than complexity strings, which is why it is not day 11 work. When
+cost functions rather than complexity strings, which is why no day schedules it. When
 it lands it takes over the Budget purpose entirely, and `roles` shrinks to whatever
 remains of the representation purpose -- possibly nothing, at which point the field
 should be deleted rather than left standing.
@@ -1638,12 +1639,21 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 7 | Contract repairs: ingestion identity, plan registration, evaluation protocol |
 | 8 | The toolbox surface the skills need: status, budget, retry accounting, log-decision, suggest-base; the candidate ceiling; adapter provenance |
 | 9 | The five skills, /analyze |
-| 10 | Report template + pandoc render; first end-to-end run, dataset 1 |
-| 11 | Fix what day 10 broke, plus the queued defect lists; clean run on dataset 1 |
-| 12 | End-to-end on dataset 2 (large) |
-| 13 | Rules-planner hedge + ablation run |
-| 14 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
-| 15 | Final graded runs, reports, submit |
+| 10 | Report template + pandoc render; the question pass. Its first end-to-end run moves to day 20 |
+| 11 | Registry and contracts: each op's class, reduction or visualization method; declared properties in place of hardcoded name sets -- requiring a connected graph, working through Euclidean geometry, nested in d, having a `transform`, structural limits on d, local or global emphasis; the registry texts that misdescribe their executors; sample identifiers through the loader contract and the cache; the test that every op allowed as a first stage is deterministic (3.4, 3.9, 3.11, 3.12; defects 4, 5, 9, 12, 21) |
+| 12 | What registration refuses: unresolved evidence keys, unknown rejection names, an eligible method neither nominated nor rejected, a candidate without evidence, a reduction in the base preprocessing, a linear baseline that is not base preprocessing plus a single `pca`, a chain beyond the limit, LLE below its neighbour minimum, a subsample below a method's limit, MDS above its limit, label metrics without labels; runtime out of the weighting; the default weightings and evidence-cited departures; persisted suggestions and their provenance (2.4, 3.9, 3.12; defects 2, 3, 10, 11, 13-18, 20) |
+| 13 | Preprocessing: constant features dropped by the range test; raw counts normalised and logged, and the user told; the feature-type decision before reconnaissance, which the probe representation follows; z-scoring for mixed types, with its memory cost in the validator's estimate; the variance-selection rule (3.10; defect 19) |
+| 14 | Every row covered: fit on the subsample, project the rest through the fitted pipeline; Nyström extensions for Laplacian Eigenmaps and Diffusion Maps; chunked projection; fitted and projected rows recorded, and every candidate scored on the same rows (3.12) |
+| 15 | Choosing d and tuning: d_max and the grid; each method's own criterion; the battery elbow for the rest; the tuning subsample and derived seed streams; the multiplier grid; alternating updates for methods not nested in d; PCA's output dimension in chains; the refit; records and `tuned` provenance (3.5, 3.7; defect 1) |
+| 16 | Comparing candidates: the non-inferiority margin, the smallest d winning inside it; close competitors in the data model and the decision log; the path of winners and its sentences; the jackknife standard error; ranking notes carrying a kind (3.7, 3.8; defects 6, 7, 8) |
+| 17 | Two purposes: purpose and focus at the checkpoint; plots A and B in representation runs; visualization runs at d = 2, with at most one PCA stage of picked dimension, scores for tuning only, no ranking, a second checkpoint and caveats per method; the five skills updated (3.11) |
+| 18 | PHATE, PaCMAP and TriMap: capability records, executors, size-aware suggestions, installation (7) |
+| 19 | Results and report: the `results/` folder and the winner's export; report blocks for the d curves, the path of winners, standard errors, plots A and B, close competitors' diagnostics, coverage and run times; the reproducibility line in the limitations (2.2, 3.8, 5) |
+| 20 | First end-to-end run on dataset 1 under the new design; fix what it breaks |
+| 21 | End-to-end on dataset 2 (large) |
+| 22 | Rules-planner hedge + ablation run |
+| 23 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
+| 24 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
 the full pipeline running on toy data in under a minute.
@@ -1653,6 +1663,15 @@ work. Day 8 then overran too, and took a fifteenth day rather than the hedge: th
 calendar had the room, and the hedge is worth more than a day — it is both the
 ablation and the working system for a grader without Claude Code. The hedge is still
 what a further slip costs. Never the tests, never the last day.
+
+*Re-planned on day 10*, after the question pass, from fifteen days to twenty-four. The
+order follows the dependencies: what the registry and the loader contract declare comes
+first, since every later check reads it; then what registration refuses and what the data
+become before a method runs; then fitting every row, choosing d and tuning, which share
+their machinery, and comparing candidates, which section 3.8 already placed after section
+3.7; then what consumes all of it -- the two purposes, the new methods, the report and the
+export; then the runs. Day 10's own end-to-end run is folded into day 20 rather than run
+first on the code about to change. No cut is planned for now; the rule above stands.
 
 ---
 
@@ -2867,5 +2886,13 @@ what a further slip costs. Never the tests, never the last day.
   ordered: 3.8 after 3.7, because pricing d changes the scores whose margin it measures,
   and the tuning in 3.5 shares its machinery with 3.7's choice of d. The schedule needs
   revisiting once the pass closes.
+
+  *The schedule re-planned, once the pass closed.* Section 9 now runs to day 24, with every
+  change the pass recorded and all 21 defects assigned to a day, in dependency order.
+  Decided with it: day 10 closes without its end-to-end run, which moves to day 20 and runs
+  once, under the new design -- the alternative, a run now on the code about to change,
+  would have found faults in the existing report path early and given day 20 a baseline,
+  at the price of a day. Choosing d and tuning share one day rather than two. Nothing is
+  cut for now.
 
   416 tests, 61s.
