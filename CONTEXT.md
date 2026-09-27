@@ -47,13 +47,14 @@ written in.
 _Avoid_: operation, tool, transform
 
 **Reduction**:
-An Op that lowers dimensionality to give a representation downstream analysis can use.
+An Op that replaces the features with fewer new coordinates, giving a representation
+downstream analysis can use.
 It remains one at any output dimension, including when it is run at two dimensions to
 draw a picture.
 _Avoid_: DR method, embedder, projector
 
 **Visualization method**:
-An Op that lowers dimensionality to give coordinates for viewing only, never a
+An Op that replaces the features with new coordinates for viewing only, never a
 representation for downstream analysis. The class is declared in the registry, not
 inferred from which structure the method keeps.
 _Avoid_: embedding method, plotting method, nonlinear DR
