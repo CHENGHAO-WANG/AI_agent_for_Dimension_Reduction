@@ -1,7 +1,7 @@
 # dr-agent
 
 A Claude Code plugin that runs dimension-reduction analyses autonomously, built over
-fifteen work days against a 2026-09-28 deadline. The schedule in `design/notes.md` is
+twenty-four work days against a 2026-09-28 deadline. The schedule in `design/notes.md` is
 indexed by day number, not dated: the build has run ahead of the calendar, and the
 index is what it tracks.
 
@@ -13,7 +13,7 @@ reasoning behind them, while `CONTEXT.md` carries the vocabulary they are writte
 Append to the notes' decision log as each work day closes, keyed by day index — what
 was decided, why, and what was rejected. That log is how this project records a
 decision, and it stands in for the ADR the global rule asks of bounded work.
-`docs/adr/` is created on **day 13** for ADR-0001, on the locked-core/open-adapter
+`docs/adr/` is created on **day 23** for ADR-0001, on the locked-core/open-adapter
 action space, and is the whole of `docs/` — there is no prose documentation tree.
 
 `CONTEXT.md` is the glossary, and it governs rather than describes: the five skills are
