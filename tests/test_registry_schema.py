@@ -156,3 +156,12 @@ def test_a_default_rule_that_names_a_choice_twice_is_refused(tmp_path) -> None:
               - {when: {kernel: [rbf, poly]}, rule: median heuristic}
               - {when: {kernel: [poly, cosine]}, rule: library default}
         """))
+
+
+def test_a_null_default_without_a_rule_stops_the_registry_loading(tmp_path) -> None:
+    body = (
+        "toy:\n  kind: reduction\n  summary: a toy method\n  params:\n"
+        "    width: {type: float, default: null}\n"
+    )
+    with pytest.raises(RegistryError, match="default_rule"):
+        _registry(tmp_path, body)

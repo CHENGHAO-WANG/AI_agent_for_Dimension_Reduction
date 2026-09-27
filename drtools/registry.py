@@ -367,6 +367,13 @@ def _parse_op(name: str, raw: Any) -> OpSpec:
         )
         for param_name, param in params.items()
     }
+    unruled = [p for p, spec in params.items() if spec.default is None and not spec.default_rule]
+    if unruled:
+        raise RegistryError(
+            f"{name}: parameter(s) {unruled} default to null without a default_rule. "
+            "Name the rule the executor applies when a plan leaves them unset, as the "
+            "label it records in its <parameter>_source note."
+        )
 
     conditions = {
         prop: _parse_condition(raw[prop], f"{name}.{prop}", params)

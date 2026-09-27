@@ -7,6 +7,7 @@ method the planner can select and never run.
 
 from __future__ import annotations
 
+import numpy as np
 import openTSNE
 import pytest
 import umap
@@ -14,7 +15,8 @@ from sklearn.decomposition import PCA, KernelPCA, MiniBatchSparsePCA, TruncatedS
 from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
 
 from drtools.constraints import RULES
-from drtools.executors import EXECUTORS
+from drtools.executors import EXECUTORS, Context, get_executor
+from drtools.loaders import load
 from drtools.registry import RegistryError, load_registry
 
 
@@ -177,3 +179,42 @@ def test_the_methods_declared_without_a_transform_really_lack_one(registry) -> N
     assert registry["mds"].raw["new_rows"] == "none"
     assert not hasattr(SpectralEmbedding, "transform")
     assert not hasattr(MDS, "transform")
+
+
+def _default_rule_cases():
+    registry = load_registry()
+    cases = []
+    for op, spec in registry.ops.items():
+        for name, param in spec.params.items():
+            for condition, label in param.default_rule:
+                branches = (
+                    [{}] if condition is True
+                    else [{p: v} for p, values in condition.items() for v in values]
+                )
+                cases += [(op, name, branch, label) for branch in branches]
+    return cases
+
+
+@pytest.mark.parametrize("op, param, branch, label", _default_rule_cases())
+def test_the_executor_records_the_default_rule_the_registry_declares(
+    registry, op, param, branch, label
+) -> None:
+    """Two copies, checked against each other: the likely edit changes the rule and
+    its label together in the executor, and this fails until the registry agrees."""
+    X = np.abs(load("blobs", n_samples=120, n_features=6)[0])
+    resolved, _ = registry.resolve_params(op, branch)
+    _, notes = get_executor(op)(X, Context(seed=0), **resolved)
+    assert notes[f"{param}_source"] == label
+
+
+def test_every_null_default_is_covered_by_the_equality_test(registry) -> None:
+    covered = {(op, param) for op, param, _, _ in _default_rule_cases()}
+    nulls = {
+        (op, name)
+        for op, spec in registry.ops.items()
+        for name, p in spec.params.items()
+        if p.default is None
+    }
+    assert nulls == covered == {
+        ("normalise_total", "target"), ("kernel_pca", "gamma"), ("diffusion_maps", "epsilon"),
+    }
