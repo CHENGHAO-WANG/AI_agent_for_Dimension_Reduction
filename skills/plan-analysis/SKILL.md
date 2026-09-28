@@ -24,12 +24,21 @@ the neighbourhood graph's component count each change what is worth running:
 
 ## Build the Plan
 
-**Base preprocessing.** `drtools suggest-base --run-dir runs/<id>` returns Stages, a
-rationale, and Evidence keys, derived from the same rule Reconnaissance used to choose
-its Probe representation, and persists them in the Run. Adopt it or replace it —
-replacing it needs a logged reason, and registration records whether the base matches
-it. Its output becomes the Reference every Candidate is scored against, so it
-holds preprocessing only: a Reduction or Visualization method there is refused.
+**Base preprocessing.** It follows a rule from the data decision `recon` recorded:
+`drop_constant` first, always; then `normalise_total` and `log1p` for raw counts; then
+`standardise` for features of mixed types. `drtools suggest-base --run-dir runs/<id>`
+returns that base, the same rule Reconnaissance probed under, and persists it in the
+Run. A base that differs from the rule registers only with `base_departure: {"reason":
+..., "evidence": [...]}`, and `drop_constant` stays first whatever the reason. Its output
+becomes the Reference every Candidate is scored against, so it holds preprocessing
+only: a Reduction or Visualization method there is refused.
+
+**When the values are raw counts, tell the user before registering.** Say that the
+values look like raw counts and cite the evidence — non-negative integers, sample totals
+varying so many-fold — and say what will be done: each sample rescaled to the median
+total, then log(1 + x). Add that data already transformed should be declared as such,
+or supplied transformed. Under `--auto`, put the same statement in the Decision log.
+Report section 2 repeats it from the Run.
 
 **Candidates.** Three to five, each a Stage list ending in a Reduction or a
 Visualization method, deliberately spanning families: one Linear baseline, one
@@ -37,6 +46,20 @@ local-structure, one global-structure. The Linear baseline is required, and it i
 Candidate whose Stages are exactly one `pca` — without it there is nothing to measure
 the nonlinear methods against. Every other Candidate cites the Evidence keys that make it
 worth running, in its `evidence`, as a Rejection does.
+
+**Feature selection, by rule.** When the features are of one type, more than 2,000
+remain after the constants go, and a Candidate's first method works through Euclidean
+geometry at the parameters set — `drtools methods` shows each method's `euclidean` —
+the Candidate carries `select_variable_features(n_features=2000)`, then `standardise`,
+directly before that method. Otherwise it carries neither, and the Linear baseline
+never does. Registration refuses a Candidate that departs from this, and any other
+`n_features`.
+
+**Memory.** Registration estimates each Candidate's peak memory — the loaded data, plus
+its heaviest Stage's input, output and PCA's centred copy — and holds it to half this
+machine's memory. Over the limit, a Candidate with a method that can place new rows
+fits on a `subsample`, which is then allowed; one whose method cannot is refused and
+belongs in `rejected`. The finding names the Stage.
 
 A Candidate holds at most two methods: one `pca` pre-step, then a different method. A
 `subsample` is allowed only in front of a method that would otherwise receive more rows
@@ -104,9 +127,10 @@ Write `plan.json` into the Run, then:
 drtools validate-plan --run-dir runs/<id>
 ```
 
-This is the registration event. It simulates the Plan against the Profile — tracking
-sample count, feature count, sparsity, and whether values are still raw counts — so it
-knows what each method will actually receive. `"Isomap on 107,000 points"` is refused
+This is the registration event. It needs the data decision `recon` recorded, and
+simulates the Plan against the Profile — tracking sample count, feature count, sparsity,
+memory, and whether values are still raw counts — so it knows what each method will
+actually receive. `"Isomap on 107,000 points"` is refused
 where `"subsample to 3,000, then Isomap"` is not.
 
 Every Evidence key the Plan cites is resolved here, against the Run's `profile`,

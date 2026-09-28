@@ -36,12 +36,35 @@ remember doing — the Run is the only state, and a resumed session remembers no
    observations, and the keys they cite, are the raw material for every later
    rationale.
 
-3. **`drtools recon --run-dir runs/<id>`**
-   The cheap structural probes: PCA spectrum and its elbow, an intrinsic dimension
-   estimate, neighbourhood-graph connectivity, and a thumbnail image. Open the
-   thumbnail and look at it — it is evidence, not decoration.
+3. **Decide the two facts the preprocessing rules read.** Are the values raw counts?
+   Are the features all of one type — genes, intensities at a series of wavelengths —
+   or mixed, like age, sex, height and weight in one table? The matrix alone cannot
+   settle the second. Read `profile.features.column_kinds` (binary, integer and
+   continuous columns side by side mean mixed types), `source_format`, `names_head`,
+   and `profile.values.suspected_kind`. The spread of standard deviations is weak
+   evidence either way.
+   - The user declared either fact when starting (`/analyze --values`, `--features`):
+     that answer stands, `decided_by: user`.
+   - The evidence settles it: your call, `decided_by: agent`, citing the keys.
+   - The evidence is unclear and nothing was declared: ask the user now, before
+     reconnaissance, since the probes depend on the answer. The question counts
+     toward the checkpoint's two. Under `--auto`, take the default the refusal below
+     states — raw counts when the profile suspects them, features mixed — as
+     `decided_by: default`.
 
-4. **Read `probe_representation` before reading anything else in `recon`.** Every
+4. **`drtools recon --run-dir runs/<id> --decision @decision.json`**
+   ```json
+   {"values": "raw_counts", "features": "one_type", "decided_by": "agent",
+    "rationale": "...", "evidence": ["profile.features.column_kinds"]}
+   ```
+   The cheap structural probes, run on the base preprocessing the decision gives:
+   PCA spectrum and its elbow, an intrinsic dimension estimate, neighbourhood-graph
+   connectivity, and a thumbnail image. Open the thumbnail and look at it — it is
+   evidence, not decoration. Without `--decision` it refuses and states the default.
+   The decision changes only by running `recon` again, which a changed answer at the
+   checkpoint requires.
+
+5. **Read `probe_representation` before reading anything else in `recon`.** Every
    reconnaissance number is conditional on that transform. When you later cite an
    intrinsic dimension or a component count, the claim is about the probe, and the
    report must say so.

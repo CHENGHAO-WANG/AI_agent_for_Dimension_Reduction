@@ -1,6 +1,6 @@
 ---
 description: Analyse a dataset by dimension reduction, end to end, and write up what was decided and why.
-argument-hint: <dataset spec> [--auto] [--budget fast|standard|thorough] [--run-id <id>]
+argument-hint: <dataset spec> [--auto] [--budget fast|standard|thorough] [--values raw_counts|not_counts] [--features one_type|mixed] [--run-id <id>]
 ---
 
 Analyse `$ARGUMENTS` by dimension reduction, from profiling through to a written report.
@@ -66,6 +66,9 @@ the position completely.
 - **`--budget fast|standard|thorough`** — the compute this Run may spend. It caps each
   Candidate's wall-clock and how many Candidates the Run may ever register, and it is
   frozen when the Plan is registered. Default `standard`.
+- **`--values raw_counts|not_counts`**, **`--features one_type|mixed`** — declare either
+  fact the preprocessing rules read, when you know it. A declaration stands over the
+  agent's reading of the profile, and is recorded as the user's.
 - **`--run-id`** — name the Run directory. Otherwise it is named for the dataset and
   the time.
 

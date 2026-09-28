@@ -55,6 +55,12 @@ A Stage parameter whose value differs from its Suggestion, whether set explicitl
 at a registry default that differs, recorded with its reason.
 _Avoid_: departure, deviation
 
+**Departure**:
+A choice that differs from the default a rule gives — a Pre-registered weighting other
+than its default, or a Base preprocessing other than the rule's — allowed when argued
+from Evidence keys.
+_Avoid_: deviation, exception, override
+
 **Op**:
 A transformation the registry declares and the toolbox implements: preprocessing, a
 Reduction, or a Visualization method. The set of Ops is the whole vocabulary a Plan can be
@@ -135,15 +141,22 @@ than an artefact of scale. Chosen by a fixed published rule, and discarded once 
 measuring is done — it never produces an Embedding.
 _Avoid_: preprocessing, probe transform, normalisation
 
+**Data decision**:
+The two facts the preprocessing rules read — whether the values are raw counts, and
+whether the features are of one type — decided by the user, by the agent citing
+evidence, or by default, and recorded when Reconnaissance runs.
+_Avoid_: data type, data kind, preprocessing choice
+
 **Base preprocessing**:
-The Stages every Candidate in a Plan shares, chosen by the agent. Unlike the Probe
-representation it is part of the analysis rather than of measuring it, and its output
-survives as the Reference.
+The Stages every Candidate in a Plan shares, given by the rule the Data decision feeds,
+which the agent may leave only by a Departure. The Probe representation applies the
+same rule, but the Base preprocessing is part of the analysis rather than of measuring
+it, and its output survives as the Reference.
 _Avoid_: shared stages, common preprocessing, pipeline prefix
 
 **Reference**:
-The representation Candidates are scored against: the output of the Base preprocessing,
-or the dataset as loaded when a Plan declares none.
+The representation Candidates are scored against: the output of the Base
+preprocessing.
 _Avoid_: original space, input, raw data, ground truth
 
 **Reference value**:
