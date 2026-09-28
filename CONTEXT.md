@@ -36,9 +36,24 @@ A named pipeline proposed for comparison within a Run. A Candidate is a sequence
 Stages, never a bare method name.
 _Avoid_: method, model, algorithm, arm
 
+**Linear baseline**:
+The Candidate that runs the Base preprocessing followed by a single PCA and nothing else.
+Every Plan holds one, as the yardstick the other Candidates are measured against.
+_Avoid_: PCA baseline, control, reference candidate
+
 **Stage**:
 One Op together with the parameter values it will run with.
 _Avoid_: step, node, layer
+
+**Suggestion**:
+A value for one of an Op's parameters, derived from the Profile and Reconnaissance,
+carrying its rationale and Evidence keys and kept in the Run.
+_Avoid_: default, recommendation, heuristic
+
+**Override**:
+A Stage parameter whose value differs from its Suggestion, whether set explicitly or left
+at a registry default that differs, recorded with its reason.
+_Avoid_: departure, deviation
 
 **Op**:
 A transformation the registry declares and the toolbox implements: preprocessing, a
@@ -69,8 +84,9 @@ The low-dimensional coordinates a Candidate produces.
 _Avoid_: projection, layout, representation
 
 **Rejection**:
-A method the Plan deliberately does not run, recorded with its reason and the Evidence
-keys behind it.
+A method, or one configuration of a method, that the Plan deliberately does not run,
+recorded with its reason and the Evidence keys behind it. A method rejected in one
+configuration may still run in another.
 _Avoid_: exclusion, skip, omission
 
 **Budget**:
@@ -194,7 +210,7 @@ _Avoid_: weights, scoring config, priorities
 **Amendment**:
 A change to the Pre-registered weighting made once results exist, recorded with its
 reason. The only sanctioned way for a weighting to move.
-_Avoid_: adjustment, override, correction
+_Avoid_: adjustment, correction
 
 ### The agent's boundaries
 

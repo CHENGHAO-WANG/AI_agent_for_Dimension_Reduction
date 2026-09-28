@@ -50,8 +50,10 @@ record names the Stage and the parameters it ran with, which is what you revise 
 **You get one diagnose-and-retry per Candidate.** Two attempts is the whole allowance.
 To retry with different parameters, re-register the Plan with that Candidate's Stages
 revised — the freeze permits revising a Candidate that failed, timed out or crashed,
-and permits adding one. It refuses to move the weighting, the Base preprocessing, or
-the Stages of a Candidate that already succeeded.
+and permits adding one. It refuses to move the `evaluation` block, the Base
+preprocessing, or the Stages of a Candidate that already succeeded. A revised or added
+Candidate cites its Evidence keys, which may include the `metrics` of Candidates that
+succeeded.
 
 The worked case: Laplacian Eigenmaps fails on a disconnected neighbourhood graph, you
 raise `n_neighbors` well above the `k` Reconnaissance probed at, and it succeeds. Log
