@@ -174,8 +174,9 @@ Now:
   0.15 and 0.7 for a global one.
 - *Label metrics only with labels.* kNN label preservation and silhouette need labels.
   Without labels neither may carry weight, and `validate-plan` refuses a weighting that
-  names them; today it accepts one and the weight is redistributed silently at ranking
-  (defect 20 in the day 10 log). With labels both may carry weight in either kind of run.
+  names them; until day 12 it accepted one and the weight was redistributed silently at
+  ranking (defect 20 in the day 10 log). With labels both may carry weight in either kind
+  of run.
 - *A second default, for trusted labels.* Added later on day 10, because "may carry
   weight" left the numbers to the agent, the same unconstrained choice the default above
   exists to remove.
@@ -205,8 +206,8 @@ Now:
   neighbour graph, often on PCA, so weighting agreement with them rewards whichever
   candidate most resembles the pipeline that made them. Such labels, and any labels when
   the analysis is meant to find new groups, carry weight 0; both label metrics are then
-  reported as descriptive numbers only. *Open:* the numbers in the table are proposed and
-  await confirmation.
+  reported as descriptive numbers only. The numbers in the table were confirmed on day
+  12.
 - `runtime_s` carries no weight in any run (above).
 
 The weighting serves up to three jobs in a representation run: the objective that tunes
@@ -319,8 +320,9 @@ which isolates that factor as a controlled comparison would. Section 3.5 strengt
 case: hyperparameter search now happens inside each candidate, so candidate slots are for
 different hypotheses, not for variants of one method.
 
-*Neither the count nor the spread is checked.* Only the ceiling and the PCA baseline are
-refused; a plan holding PCA alone passes. The property the spread check needs now exists:
+*Neither the count nor the spread is checked.* The ceiling and the linear baseline are
+refused, and since day 12 so is a method neither nominated nor rejected; a plan holding
+PCA alone, with every other method rejected, passes. The property the spread check needs now exists:
 `emphasis`, declared on day 11 -- local, global or balanced, and null with a reason for
 kernel PCA, which is linear in a kernel space, nonlinear in the original one, and keeps
 long or short distances depending on its width. The check, a warning when no candidate
@@ -1025,7 +1027,8 @@ With the roles as they stand this has a corollary: every two-reduction candidate
 `pca -> X` with X not PCA, so any candidate ending in PCA holds exactly one reduction. That
 narrows the gap in `no_linear_baseline` but does not close it -- were kernel PCA ever made
 intermediate, `kernel_pca -> pca` would pass this rule and still pass as the linear
-baseline, so the baseline check still needs strengthening as queued.
+baseline, so the baseline check needed strengthening, and on day 12 it became exact: the
+linear baseline is a candidate whose stages are one `pca` and nothing else.
 
 **One test, and it is an implication.** Assert that every op declaring `intermediate` is
 `stochastic: false`. That is true independently of any downstream, so it is not a
@@ -1652,7 +1655,7 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 14 | Every row covered: fit on the subsample, project the rest through the fitted pipeline; Nyström extensions for Laplacian Eigenmaps and Diffusion Maps; chunked projection; fitted and projected rows recorded, and every candidate scored on the same rows (3.12) |
 | 15 | Choosing d and tuning: d_max and the grid; each method's own criterion; the battery elbow for the rest; the tuning subsample and derived seed streams; the multiplier grid; alternating updates for methods not nested in d; PCA's output dimension in chains; the refit; records and `tuned` provenance (3.5, 3.7; defect 1) |
 | 16 | Comparing candidates: the non-inferiority margin, the smallest d winning inside it; close competitors in the data model and the decision log; the path of winners and its sentences; the jackknife standard error; ranking notes carrying a kind (3.7, 3.8; defects 6, 7, 8) |
-| 17 | Two purposes: purpose and focus at the checkpoint; plots A and B in representation runs; visualization runs at d = 2, with at most one PCA stage of picked dimension, scores for tuning only, no ranking, a second checkpoint and caveats per method; the five skills updated (3.11) |
+| 17 | Two purposes: purpose and focus at the checkpoint; plots A and B in representation runs; visualization runs at d = 2, with at most one PCA stage of picked dimension, scores for tuning only, no ranking, a second checkpoint and caveats per method; the accounting rule narrowed to the run's own class of method; the five skills updated (3.11) |
 | 18 | PHATE, PaCMAP and TriMap: capability records, executors, size-aware suggestions, installation (7) |
 | 19 | Results and report: the `results/` folder and the winner's export; report blocks for the d curves, the path of winners, standard errors, plots A and B, close competitors' diagnostics, coverage and run times; the reproducibility line in the limitations (2.2, 3.8, 5) |
 | 20 | First end-to-end run on dataset 1 under the new design; fix what it breaks |
@@ -2999,3 +3002,115 @@ first on the code about to change. No cut is planned for now; the rule above sta
   on for the features, where the missing-value refusal depends on it.
 
   502 tests, 65s.
+
+- **Day 12** — What registration refuses: every method accounted for, every citation
+  resolved, every default and every departure visible as one.
+
+  Ten items the notes already carried went in as written: at most two methods per
+  candidate and not the same one twice; no reduction or visualization method in the base
+  preprocessing; the linear baseline exactly the base plus one `pca`; the `d_limits`
+  rules checked at registration, so LLE below its neighbour minimum no longer spends an
+  attempt; a subsample refused unless its method would otherwise exceed `scales_to`; a
+  method with `new_rows: none` refused above its limit even behind a subsample, with a
+  fix that says to reject it; rejection names checked against the registry; label
+  metrics refused without labels; `runtime_s` unweightable, and the within-cohort
+  runtime scaling and its note gone from `rank`; every evidence key resolved. Six items
+  the notes named only as a requirement were settled in chat, one question at a time,
+  and treated as bounded at the user's direction, so there is no spec.
+
+  *Defaults recognised by matching.* The validator compares the weights with section
+  2.4's two tables to within 1e-6, a zero weight counting as absent, and the
+  registration record names `default`, `default_trusted_labels` or `departure`. Without
+  labels only a departure must cite evidence; with labels every weighting must, since
+  choosing either default decides whether the labels are trusted. The trusted-labels
+  numbers are confirmed. The focus weightings wait for day 17 and its question; until
+  then a focus is a departure. Rejected: a field in which the plan names its default,
+  which restates the weights and can disagree with them; and trust as a separate logged
+  decision the validator looks up, which needs a linking convention for what evidence
+  in the plan already does.
+
+  *Nomination held to rejection's standard, both refused.* Candidates gain `evidence`. A
+  candidate citing nothing and a rejection citing nothing are both errors; the linear
+  baseline is exempt, since a rule and not the data puts it in the portfolio. Refusing
+  uncited candidates while only warning on uncited rejections would have inverted the
+  inequality defect 18 described rather than removed it. Rejected: both staying
+  warnings, which the accounting rule would turn into nine uncited rejections at a
+  warning each; and no exemption, which invites a filler citation. What is guaranteed is
+  that every key resolves, not that it supports the decision -- the limit `log-decision`
+  already has.
+
+  *Every method nominated, rejected, or both.* A method in neither list is refused. I
+  first proposed refusing a method both rejected and run, on the ground that report
+  section 3 would contradict section 4. The user did not see a contradiction, and was
+  right: "rejected: UMAP on raw features" beside `pca50 -> umap` is a coherent record,
+  because the reason says which configuration was ruled out, and it explains why the
+  single-factor comparison was not run. The user added the rule that separates the two
+  entries by structure: every candidate running a rejected method must hold another
+  method as well. Rejecting X and running X alone is refused, which also means `pca`
+  cannot be rejected. Until day 17 both classes are eligible in every run; day 17's row
+  now carries narrowing the rule to the run's own class.
+
+  *Suggestions persisted, and provenance in four states.* `suggest-params` writes
+  `suggestions/<op>.json` and `suggest-base` writes `suggestions/base.json`; `--params`
+  takes the settings a suggestion depends on. Registration records each parameter as
+  `registry_default`, `suggested`, `overridden` or `specified`, and refuses an override
+  whose stage gives no reason in `overrides: {param: {reason, evidence}}`, so report
+  section 4 prints the reason beside the value. The registration record freezes the
+  provenance with the suggestion it was compared against, a re-registration keeps it for
+  every candidate registered unchanged, and `embed` copies it into the embedding record.
+  So a suggestion requested after registration can neither relabel a value nor refuse a
+  candidate that registered cleanly. An op with suggestions never requested draws a
+  warning. The base only records whether it matched its suggestion, because day 13
+  replaces that suggestion with rules. Rejected: the reason as a `log-decision` entry,
+  which needs a convention linking a decision to a stage and a parameter; and the
+  candidate's free-text rationale, which nothing can check. A suggestion is cited as
+  `suggestions.<op>.suggested.<param>.value`.
+
+  *LLE's own neighbour rule.* Defect 11 was two rules colliding: connectivity raised k to
+  45, LLE's cap clamped it to 12, and the rationale still said 45. I proposed an
+  "unsuitable" verdict in place of a value; the user asked for a different rule, and LLE
+  now leaves the shared one. Its suggestion is the larger of its neighbour minimum and its
+  default, kept within the measured range of 6 to 12, and never raised for connectivity
+  or density, which is what makes LLE collapse. A disconnected graph is said in the
+  rationale and warned of by `likely_disconnected_graph`. Where the minimum exceeds 12 --
+  Hessian from d = 4 -- the minimum is suggested and the rationale says it lies outside
+  the measured range. Rejected: the unsuitable verdict.
+
+  *What a plan may cite.* `profile`, `recon`, `suggestions`, `metrics` and `ranking`,
+  through the resolver `log-decision` uses; never `plan.*`, which resolves because the plan
+  says so. Results stay citable, since a re-plan round exists to respond to them, so the
+  whole `evaluation` block is now frozen at re-registration, not only its weights:
+  otherwise a re-registration could keep the weights and swap in evidence citing
+  results they were registered before.
+
+  *Found on the way.* The third-method refusal cannot be reached while only PCA may be
+  intermediate, since `pca -> pca -> X` trips the repeat rule first; it is tested
+  against a registry with kernel PCA widened, so the rule does not rest on the roles
+  happening to forbid the case. `prepare-reference` began reporting base stages with an
+  empty `overrides` key, caught by its own test. The unresolved-key message, moved into
+  `runs.py` so the validator and `log-decision` share it, printed a U+2014 dash in one
+  branch despite its own comment requiring ASCII. Three tests subsampled 30 rows in
+  front of PCA, which registration now refuses; they cover evaluation's refusal of rows
+  too few to carry k, so they now subsample Isomap on 6,000 rows instead. The PCA
+  component suggestion is for a pre-step, as its rationale says, and compared against
+  every `pca` stage it would have refused the baseline's `n_components = 2` as an
+  unexplained override; a suggestion entry now declares `applies_to: intermediate`, and a
+  terminal stage is not compared against it.
+
+  *An unset parameter can override too.* As first built, a parameter left unset recorded
+  `registry_default` even when a suggestion for it existed and differed, so omitting the
+  parameter was a way around giving the reason. At the user's decision it is now
+  `overridden`, and refused without a reason, whenever the suggestion differs from the
+  default the stage will run with; when the two agree, leaving it unset follows the
+  suggestion and stays `registry_default`.
+
+  *The glossary.* `CONTEXT.md` gains Linear baseline, Suggestion and Override, and
+  Rejection now covers one configuration of a method as well as the method, since a
+  method rejected in one configuration may run in another. Override had been on
+  Amendment's list of words to avoid; it now names a Stage parameter that differs from
+  its Suggestion, which cannot be confused with a weighting changed after results
+  exist, so it leaves that list. Rejected: renaming the code's `overrides` to another
+  word, where the natural one, departure, already names a weighting that differs from
+  the default.
+
+  566 tests, 68s.
