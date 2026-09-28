@@ -1,5 +1,5 @@
 import json
-from plans import complete
+from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 # perplexity is kept well below n/3 = 20 for the 60-row dataset these tests profile;
@@ -20,6 +20,7 @@ def _prepared(cli, csv_dataset, tmp_path, weights):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(_plan(weights))), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     return runs / "r1"
@@ -67,6 +68,7 @@ def test_rank_stamps_the_digest_it_ranked_under(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
     for candidate in ("a", "b"):
         _embed(cli, run, candidate)
+        cli("prepare-reference", "--run-dir", run)
         cli("evaluate", "--run-dir", run, "--id", candidate)
 
     result = cli("rank", "--run-dir", run)
@@ -96,6 +98,7 @@ def test_rereg_after_tampering_refuses(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
     for candidate in ("a", "b"):
         _embed(cli, run, candidate)
+        cli("prepare-reference", "--run-dir", run)
         cli("evaluate", "--run-dir", run, "--id", candidate)
     first_rank = cli("rank", "--run-dir", run)
     assert first_rank.code == 0
@@ -126,6 +129,7 @@ def test_rereg_with_different_base_preprocessing_refuses(cli, csv_dataset, tmp_p
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = {
         "dataset": "d",
         "base_preprocessing": [{"op": "standardise", "params": {}}],
@@ -255,6 +259,7 @@ def _prepared_with_ceiling(cli, csv_dataset, tmp_path, ceiling):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = _plan({"trustworthiness": 1.0})  # candidates a and b
     plan["max_candidates"] = ceiling
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")

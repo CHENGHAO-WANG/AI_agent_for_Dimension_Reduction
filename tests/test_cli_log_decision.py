@@ -128,7 +128,7 @@ def test_a_regenerated_artefact_leaves_the_logged_reading_intact(
         "--runs-root", runs, "--run-id", "r1")
     run = runs / "r1"
 
-    cli("recon", "--run-dir", run, "--max-samples", 50)
+    cli("recon", "--run-dir", run, "--max-samples", 50, "--decision", decision())
     at_write_artefact = json.loads((run / "recon.json").read_text())["subsample"]["n_used"]
 
     result = cli(
@@ -139,7 +139,7 @@ def test_a_regenerated_artefact_leaves_the_logged_reading_intact(
     logged = _only(run, "plan")["evidence_resolved"]["recon.subsample.n_used"]
     assert logged == at_write_artefact
 
-    cli("recon", "--run-dir", run, "--max-samples", 30)
+    cli("recon", "--run-dir", run, "--max-samples", 30, "--decision", decision())
     now = json.loads((run / "recon.json").read_text())["subsample"]["n_used"]
 
     assert logged != now, "the artefact moved under the citation"
@@ -176,6 +176,7 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     run = runs / "r1"
     plan = {
         "dataset": "d",
@@ -221,7 +222,7 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
 
 
 import pytest
-from plans import complete
+from plans import complete, decision, reconnoitre
 
 
 @pytest.mark.parametrize(

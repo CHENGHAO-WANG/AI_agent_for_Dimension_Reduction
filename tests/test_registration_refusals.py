@@ -12,9 +12,14 @@ from dataclasses import replace
 import pytest
 
 from drtools.pipeline import PipelineError, validate_stages
-from drtools.plan import validate_plan
+from drtools.plan import validate_plan as _validate_plan
 from drtools.registry import load_registry
-from plans import complete
+from plans import RECON, complete, reconnoitre
+
+
+def validate_plan(document, profile, recon=RECON, *args, **kwargs):
+    """The validator with a recorded data decision, which registration requires."""
+    return _validate_plan(document, profile, recon, *args, **kwargs)
 
 
 def profile(n_samples: int = 300, n_features: int = 10, *, labels: bool = False) -> dict:
@@ -378,12 +383,11 @@ def test_matching_tolerates_rounding_in_the_written_weights() -> None:
 # ------------------------------------------------------------ through the CLI
 
 
-def _registered(cli, csv_dataset, tmp_path, document, *, recon=False):
+def _registered(cli, csv_dataset, tmp_path, document):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
-    if recon:
-        cli("recon", "--run-dir", runs / "r1")
+    reconnoitre(cli, runs / "r1")
     (runs / "r1" / "plan.json").write_text(json.dumps(document), encoding="utf-8")
     return runs / "r1", cli("validate-plan", "--run-dir", runs / "r1")
 
@@ -402,13 +406,13 @@ def test_the_registration_record_names_the_weighting(cli, csv_dataset, tmp_path)
 def test_a_key_into_the_runs_recon_resolves(cli, csv_dataset, tmp_path):
     document = complete(plan([BASELINE, [stage("umap", n_components=2)]]))
     document["candidates"][1]["evidence"] = ["recon.neighbourhood.n_connected_components"]
-    _, result = _registered(cli, csv_dataset, tmp_path, document, recon=True)
+    _, result = _registered(cli, csv_dataset, tmp_path, document)
     assert result.code == 0, result.payload
 
 
-def test_the_same_key_without_recon_is_refused(cli, csv_dataset, tmp_path):
+def test_a_key_the_runs_recon_does_not_hold_is_refused(cli, csv_dataset, tmp_path):
     document = complete(plan([BASELINE, [stage("umap", n_components=2)]]))
-    document["candidates"][1]["evidence"] = ["recon.neighbourhood.n_connected_components"]
+    document["candidates"][1]["evidence"] = ["recon.neighbourhood.no_such_key"]
     run, result = _registered(cli, csv_dataset, tmp_path, document)
     assert "unresolved_evidence" in codes(result.payload)
     assert not (run / "plan.registered.json").exists()
@@ -436,6 +440,7 @@ def _profiled(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     return runs / "r1"
 
 
@@ -514,6 +519,11 @@ def test_an_override_with_a_reason_is_recorded_with_it(cli, csv_dataset, tmp_pat
                           "reason": "a wider neighbourhood for the clusters"}
 
 
+def _stage_of(report, candidate, op):
+    """A candidate's recorded provenance for its first stage running `op`."""
+    return next(s for s in report["provenance"][candidate] if s["op"] == op)["params"]
+
+
 def _with_suggestion(value, *, given=None, overrides=None):
     suggestions = {"tsne": {"suggested": {"perplexity": {
         "value": value, "rationale": "", "evidence": []}}}}
@@ -531,20 +541,20 @@ def test_leaving_out_a_parameter_whose_suggestion_differs_is_an_override() -> No
     report = _with_suggestion(5.0)  # the registry default is 30
     found = [f for f in report["findings"] if f["code"] == "unexplained_override"]
     assert found and "left unset" in found[0]["message"]
-    perplexity = report["provenance"]["c1"][0]["params"]["perplexity"]
+    perplexity = _stage_of(report, "c1", "tsne")["perplexity"]
     assert perplexity == {"state": "overridden", "suggested": 5.0}
 
 
 def test_leaving_out_a_parameter_with_a_reason_is_accepted() -> None:
     report = _with_suggestion(5.0, overrides={"perplexity": {"reason": "the default suits"}})
     assert "unexplained_override" not in codes(report)
-    assert report["provenance"]["c1"][0]["params"]["perplexity"]["reason"] == "the default suits"
+    assert _stage_of(report, "c1", "tsne")["perplexity"]["reason"] == "the default suits"
 
 
 def test_leaving_out_a_parameter_whose_suggestion_is_the_default_follows_it() -> None:
     report = _with_suggestion(30.0)
     assert "unexplained_override" not in codes(report)
-    assert report["provenance"]["c1"][0]["params"]["perplexity"]["state"] == "registry_default"
+    assert _stage_of(report, "c1", "tsne")["perplexity"]["state"] == "registry_default"
 
 
 def test_a_pre_step_suggestion_is_not_held_against_the_baseline() -> None:
@@ -556,9 +566,8 @@ def test_a_pre_step_suggestion_is_not_held_against_the_baseline() -> None:
     report = validate_plan(document, profile(),
                            artifacts={"profile": profile(), "suggestions": suggestions})
     assert "unexplained_override" not in codes(report)
-    baseline, chained = report["provenance"]["c0"], report["provenance"]["c1"]
-    assert baseline[0]["params"]["n_components"]["state"] == "specified"
-    assert chained[0]["params"]["n_components"]["state"] == "suggested"
+    assert _stage_of(report, "c0", "pca")["n_components"]["state"] == "specified"
+    assert _stage_of(report, "c1", "pca")["n_components"]["state"] == "suggested"
 
 
 def test_the_pca_suggestion_says_it_is_for_a_pre_step() -> None:
@@ -572,8 +581,9 @@ def test_the_pca_suggestion_says_it_is_for_a_pre_step() -> None:
 def test_an_op_with_suggestions_never_requested_draws_a_warning(cli, csv_dataset, tmp_path):
     run = _profiled(cli, csv_dataset, tmp_path)
     result = _register(cli, run, _tsne_plan(params={"perplexity": 5}))
-    found = [f for f in result.payload["findings"] if f["code"] == "no_suggestion_requested"]
-    assert found and found[0]["severity"] == "warning" and found[0]["op"] == "tsne"
+    found = [f for f in result.payload["findings"]
+             if f["code"] == "no_suggestion_requested" and f["op"] == "tsne"]
+    assert found and found[0]["severity"] == "warning"
     assert _provenance(run)["perplexity"]["state"] == "specified"
 
 
@@ -593,13 +603,12 @@ def test_re_running_suggest_params_after_registration_does_not_relabel(
     assert tsne["param_provenance"]["perplexity"] == "suggested"
 
 
-def test_the_registration_records_whether_the_base_followed_its_suggestion(
-    cli, csv_dataset, tmp_path
-):
+def test_a_base_taken_from_suggest_base_registers_as_the_rule(cli, csv_dataset, tmp_path):
     run = _profiled(cli, csv_dataset, tmp_path)
     suggested = cli("suggest-base", "--run-dir", run).payload["stages"]
-    assert _register(cli, run, complete(plan([BASELINE], base_preprocessing=suggested))).code == 0
-    assert _records(run, "register_plan")[-1]["base_matches_suggestion"] is True
+    document = complete(plan([BASELINE], base_preprocessing=suggested), base=False)
+    assert _register(cli, run, document).code == 0
+    assert _records(run, "register_plan")[-1]["base"] == "rule"
 
 
 def test_the_report_prints_the_override_and_its_reason(cli, csv_dataset, tmp_path):

@@ -238,23 +238,86 @@ def _decision_prose(run: RunDir, stage: str) -> str:
 
 
 def _block_preprocessing(run: RunDir) -> str:
+    """The data decision, the base the rule gave or the departure from it, and what ran.
+
+    Section 3.10 has the agent tell the user twice when raw counts are transformed: at
+    planning, in the conversation, and here. The sentence is fixed and the target is
+    the one `normalise_total` recorded when the Reference was prepared, so the report
+    states what was done rather than what was meant.
+    """
     plan = _read(run, "plan.registered.json")
     if plan is None:
         return NOT_PRODUCED
+    parts: list[str] = []
+
+    decision = (_read(run, "recon.json") or {}).get("data_decision")
+    if decision:
+        line = (
+            f"Data decision: values `{decision['values']}`, features "
+            f"`{decision['features']}`, decided by {decision['decided_by']}"
+        )
+        if decision.get("evidence"):
+            line += ", citing " + ", ".join(f"`{key}`" for key in decision["evidence"])
+        parts.append(line + ".")
+
+    registration = next(
+        (r for r in reversed(run.decisions()) if r.get("stage") == "register_plan"), {}
+    )
+    if registration.get("base") == "rule":
+        parts.append("The base follows the rule for that decision.")
+    elif registration.get("base") == "departure":
+        departure = registration.get("base_departure") or {}
+        cited = ", ".join(f"`{key}`" for key in departure.get("evidence") or [])
+        parts.append(
+            f"The base departs from the rule for that decision: {departure.get('reason')}"
+            + (f" (citing {cited})" if cited else "")
+            + "."
+        )
 
     base = plan.get("base_preprocessing") or []
     if base:
-        body = "Base preprocessing, applied to every Candidate and to the reference:\n\n"
-        body += "\n".join(
-            f"{i}. `{stage['op']}`"
-            + (f" {stage['params']}" if stage.get("params") else "")
-            for i, stage in enumerate(base, start=1)
+        parts.append(
+            "Base preprocessing, applied to every Candidate and to the reference:\n\n"
+            + "\n".join(
+                f"{i}. `{stage['op']}`"
+                + (f" {stage['params']}" if stage.get("params") else "")
+                for i, stage in enumerate(base, start=1)
+            )
         )
     else:
-        body = "No base preprocessing: Candidates were scored against the cached matrix."
+        parts.append(
+            "No base preprocessing: Candidates were scored against the cached matrix."
+        )
+
+    records = (_read(run, "data", "reference.json") or {}).get("stage_records") or []
+    notes = {record["op"]: record.get("notes") or {} for record in records}
+    if "normalise_total" in notes and "log1p" in notes:
+        target = notes["normalise_total"].get("target_total")
+        parts.append(
+            "The values were judged to be raw counts, so each sample was rescaled to the "
+            f"median total ({target:,.6g}) and then transformed by log(1 + x). Data "
+            "already transformed should be declared as such when the analysis starts, "
+            "or supplied transformed."
+        )
+
+    tolerated = notes.get("drop_constant", {}).get("dropped_by_tolerance") or []
+    if tolerated:
+        names = (_read(run, "data", "meta.json") or {}).get("feature_names")
+        shown = [
+            f"`{names[index]}`" if names is not None and index < len(names) else f"column {index}"
+            for index in tolerated
+        ]
+        parts.append(
+            f"{len(tolerated)} feature(s) were dropped as constant only by the "
+            "tolerance, their range not exactly zero but within 1e-12 of their "
+            "magnitude: " + ", ".join(shown) + ". A genuine feature measured in very "
+            "small units would be dropped this way, so check they are what they seem."
+        )
 
     decisions = _decision_prose(run, "plan")
-    return body + ("\n\n" + decisions if decisions else "")
+    if decisions:
+        parts.append(decisions)
+    return "\n\n".join(parts)
 
 
 def _block_methods(run: RunDir) -> str:

@@ -14,13 +14,17 @@ not a prose copy in the planning skill that drifts from it.
 from __future__ import annotations
 
 import json
-from plans import complete
+from drtools.decision import default_decision
+from plans import complete, reconnoitre
 
 
 def _run(cli, tmp_path, data, run_id="r1"):
     runs = tmp_path / "runs"
     assert cli("profile", "--data", data, "--runs-root", runs, "--run-id", run_id).code == 0
-    assert cli("recon", "--run-dir", runs / run_id).code == 0
+    # The toolbox's own default for this profile, so the suggestion follows the data.
+    profile = json.loads((runs / run_id / "profile.json").read_text(encoding="utf-8"))
+    default = json.dumps(default_decision(profile).model_dump())
+    assert cli("recon", "--run-dir", runs / run_id, "--decision", default).code == 0
     return runs / run_id
 
 
@@ -76,20 +80,30 @@ def test_it_says_it_is_a_suggestion_not_the_probe_representation(cli, tmp_path):
     assert "suggestion" in note.lower()
 
 
-def test_counts_are_suggested_normalisation_and_log1p(cli, tmp_path):
-    run = _run(cli, tmp_path, "sparse_counts")
+def _declared(cli, tmp_path, data, **fields):
+    runs = tmp_path / "runs"
+    assert cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1").code == 0
+    reconnoitre(cli, runs / "r1", **fields)
+    return runs / "r1"
+
+
+def test_counts_of_one_type_are_suggested_normalisation_and_log1p(cli, tmp_path):
+    run = _declared(cli, tmp_path, "sparse_counts", values="raw_counts")
     result = cli("suggest-base", "--run-dir", run)
     assert [stage["op"] for stage in result.payload["stages"]] == [
+        "drop_constant",
         "normalise_total",
         "log1p",
     ]
 
 
-def test_data_already_on_a_comparable_scale_suggests_no_stages(cli, csv_dataset, tmp_path):
-    run = _run(cli, tmp_path, csv_dataset(rows=60, cols=8))
+def test_features_of_one_type_that_are_not_counts_keep_their_scale(
+    cli, csv_dataset, tmp_path
+):
+    run = _declared(cli, tmp_path, csv_dataset(rows=60, cols=8))
     result = cli("suggest-base", "--run-dir", run)
-    assert result.payload["stages"] == []
-    assert "as given" in result.payload["rationale"]
+    assert [stage["op"] for stage in result.payload["stages"]] == ["drop_constant"]
+    assert "native scale" in result.payload["rationale"]
 
 
 def test_a_suggested_plan_registers(cli, tmp_path):
@@ -113,15 +127,3 @@ def test_a_suggested_plan_registers(cli, tmp_path):
 
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("prepare-reference", "--run-dir", run).code == 0
-
-
-def test_suggest_base_needs_no_recon(cli, csv_dataset, tmp_path):
-    """The rule reads the profile. Recon applies the same rule; it does not own it."""
-    runs = tmp_path / "runs"
-    cli("profile", "--data", csv_dataset(rows=60, cols=8),
-        "--runs-root", runs, "--run-id", "r1")
-
-    result = cli("suggest-base", "--run-dir", runs / "r1")
-
-    assert result.code == 0, result.stderr
-    assert "stages" in result.payload

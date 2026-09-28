@@ -7,7 +7,7 @@ to be one of those.
 """
 
 import json
-from plans import complete
+from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -26,6 +26,7 @@ def _profiled(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     data = csv_dataset(rows=60, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     return runs / "r1", data
 
 
@@ -140,6 +141,7 @@ def test_evaluating_a_candidate_that_was_never_embedded_names_the_missing_step(
     cli("validate-plan", "--run-dir", run)
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
 
+    cli("prepare-reference", "--run-dir", run)
     result = cli("evaluate", "--run-dir", run, "--id", "b")
 
     assert result.code == 2

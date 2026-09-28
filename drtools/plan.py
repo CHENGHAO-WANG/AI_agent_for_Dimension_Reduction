@@ -23,9 +23,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from drtools.constraints import RULES
+from drtools.decision import DataDecision, base_rule, recorded_decision
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.pipeline import PipelineError, normalise_stages, validate_stages
 from drtools.metrics import METRIC_SPECS
@@ -41,6 +43,15 @@ Severity = Literal["error", "warning"]
 
 class OverrideSpec(BaseModel):
     """Why a stage sets a parameter to something other than the persisted suggestion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class DepartureSpec(BaseModel):
+    """Why the base preprocessing departs from section 3.10's rule, argued from evidence."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -101,6 +112,9 @@ class Plan(BaseModel):
     budget: Literal["fast", "standard", "thorough"] = "standard"
     max_candidates: int | None = Field(default=None, ge=1)
     base_preprocessing: list[StageSpec] = Field(default_factory=list)
+    # Required whenever the base differs from what the rule gives for the recorded data
+    # decision. drop_constant stays first whatever it says.
+    base_departure: DepartureSpec | None = None
     candidates: list[CandidateSpec]
     rejected: list[RejectionSpec] = Field(default_factory=list)
     evaluation: EvaluationSpec
@@ -126,6 +140,18 @@ class PlanState:
     is_raw_counts: bool
     normalised_per_sample: bool = False
     applied: list[str] = field(default_factory=list)
+    # For the memory estimate: bytes per stored value, and the share of entries stored
+    # while the matrix is sparse, taken from the profile.
+    itemsize: int = 8
+    density: float = 1.0
+
+    @property
+    def nbytes(self) -> float:
+        """What the matrix at this point occupies: CSR's value and index per entry."""
+        if self.is_sparse:
+            stored = self.n_samples * self.n_features * self.density
+            return stored * (self.itemsize + 4) + (self.n_samples + 1) * 4
+        return float(self.n_samples) * self.n_features * self.itemsize
 
     def advance(self, op: str, params: dict[str, Any], registry: Registry) -> None:
         spec = registry[op]
@@ -180,6 +206,7 @@ def validate_plan(
     *,
     artifacts: dict[str, Any] | None = None,
     frozen_provenance: dict[str, list[dict[str, Any]]] | None = None,
+    memory_limit_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Check a plan against what is already known about the data.
 
@@ -190,6 +217,8 @@ def validate_plan(
     root as `log-decision` resolves them; without it, the profile and reconnaissance
     passed in are what may be cited. `frozen_provenance` is what an earlier
     registration recorded for candidates it registered with the same stages.
+    `memory_limit_bytes` is the ceiling each candidate's estimated peak is held to;
+    without it, memory is not checked.
     """
     registry = registry or load_registry()
     if isinstance(plan, dict):
@@ -197,16 +226,24 @@ def validate_plan(
     if artifacts is None:
         artifacts = {"profile": profile, **({"recon": recon} if recon is not None else {})}
 
+    decision = recorded_decision(recon)
     weighting_findings, weighting = _check_weighting(plan, profile)
+    base_findings, base = _check_base(plan, decision)
     findings: list[Finding] = []
     findings += _check_structure(plan, registry)
+    findings += base_findings
     findings += weighting_findings
     findings += _check_rejections(plan)
     findings += _check_accounting(plan, registry)
     findings += _check_evidence(plan, artifacts)
+    peaks: dict[str, float] = {}
     for candidate in plan.candidates:
-        findings += _check_candidate(plan, candidate, profile, recon, registry)
-    provenance_findings, provenance, base_matches = _check_provenance(
+        findings += _check_candidate(
+            plan, candidate, profile, recon, registry, decision, memory_limit_bytes
+        )
+        findings += _check_selection(plan, candidate, profile, registry, decision)
+        peaks[candidate.id] = estimate_peak_bytes(plan.stages_for(candidate), profile, registry, decision)
+    provenance_findings, provenance = _check_provenance(
         plan, profile, recon, registry, artifacts.get("suggestions") or {},
         frozen_provenance or {},
     )
@@ -217,8 +254,12 @@ def validate_plan(
         "valid": not errors,
         "n_candidates": len(plan.candidates),
         "weighting": weighting,
+        "base": base,
+        "memory": {
+            "limit_bytes": memory_limit_bytes,
+            "peak_bytes": {cid: int(value) for cid, value in peaks.items()},
+        },
         "provenance": provenance,
-        "base_matches_suggestion": base_matches,
         "findings": [f.as_dict() for f in findings],
         "summary": _summary(errors, findings),
     }
@@ -347,6 +388,66 @@ def _check_structure(plan: Plan, registry: Registry) -> list[Finding]:
             )
         )
     return findings
+
+
+def _check_base(
+    plan: Plan, decision: DataDecision | None
+) -> tuple[list[Finding], str | None]:
+    """The base against section 3.10's rule for the recorded data decision.
+
+    Returns the findings and what the base is: `rule`, `departure`, or None when there
+    is no decision to hold it to. drop_constant first is not negotiable; any other
+    difference from the rule needs `base_departure`, a reason with evidence.
+    """
+    findings: list[Finding] = []
+    if decision is None:
+        findings.append(
+            Finding(
+                code="no_data_decision",
+                severity="error",
+                message="no data decision is recorded, so nothing says whether the values "
+                "are raw counts or whether the features are of one type -- the two facts "
+                "the preprocessing rules read. Reconnaissance records it.",
+                fix="run `drtools recon --decision ...` and re-register",
+            )
+        )
+        return findings, None
+
+    given = [stage.model_dump(exclude={"overrides"}) for stage in plan.base_preprocessing]
+    if not given or given[0]["op"] != "drop_constant":
+        findings.append(
+            Finding(
+                code="drop_constant_not_first",
+                severity="error",
+                op=given[0]["op"] if given else None,
+                message="the base preprocessing does not begin with drop_constant. A "
+                "constant feature carries nothing, and any later scaling divides by its "
+                "zero spread, so it is dropped first in every run whatever else the base "
+                "does.",
+                fix="make drop_constant the first stage of base_preprocessing",
+            )
+        )
+
+    rule = base_rule(decision)
+    if normalise_stages(given) == normalise_stages(rule):
+        return findings, "rule"
+    departure = plan.base_departure
+    if departure is not None and departure.reason.strip() and departure.evidence:
+        return findings, "departure"
+    shown = " -> ".join(stage["op"] for stage in rule)
+    findings.append(
+        Finding(
+            code="unexplained_base_departure",
+            severity="error",
+            message=f"the recorded data decision ({decision.values}, {decision.features}) "
+            f"gives the base {shown}, with every parameter at its default, and this plan's "
+            "base differs from it. A departure is allowed, argued from the data, and has "
+            "to show as one.",
+            fix=f"use the rule's base, {shown}, or give base_departure a reason and the "
+            "evidence keys it rests on",
+        )
+    )
+    return findings, "departure"
 
 
 def is_linear_baseline(candidate: CandidateSpec) -> bool:
@@ -562,6 +663,8 @@ def _check_evidence(plan: Plan, artifacts: dict[str, Any]) -> list[Finding]:
         )
     for candidate in plan.candidates:
         places.append((f"candidate {candidate.id}", candidate.id, None, candidate.evidence))
+    if plan.base_departure is not None:
+        places.append(("the base departure", None, None, plan.base_departure.evidence))
     for where, candidate_id, stages in [
         ("base preprocessing", None, plan.base_preprocessing),
         *[(f"candidate {c.id}", c.id, c.stages) for c in plan.candidates],
@@ -619,7 +722,7 @@ def _check_provenance(
     registry: Registry,
     suggestions: dict[str, Any],
     frozen: dict[str, list[dict[str, Any]]],
-) -> tuple[list[Finding], dict[str, list[dict[str, Any]]], bool | None]:
+) -> tuple[list[Finding], dict[str, list[dict[str, Any]]]]:
     """Where every parameter of every stage came from, against the persisted suggestions.
 
     Four states: `registry_default` (not given, and no different suggestion),
@@ -628,9 +731,6 @@ def _check_provenance(
     the stage's `overrides`), and `specified` (given, nothing suggested for it). `frozen` holds the provenance an earlier registration recorded for candidates
     whose stages have not changed since; those keep it, so a suggestion requested after
     registration can neither relabel them nor refuse them.
-
-    Also returns whether the base preprocessing matches the persisted base suggestion,
-    or None when none was requested.
     """
     from drtools.heuristics import suggest
 
@@ -731,13 +831,93 @@ def _check_provenance(
                 )
         records[candidate.id] = stages_out
 
-    base = suggestions.get("base")
-    base_matches = None
-    if base is not None:
-        base_matches = [
-            stage.model_dump(exclude={"overrides"}) for stage in plan.base_preprocessing
-        ] == normalise_stages(base.get("stages") or [])
-    return findings, records, base_matches
+    return findings, records
+
+
+def _initial_state(
+    profile: dict[str, Any], decision: DataDecision | None = None
+) -> PlanState:
+    shape = profile.get("shape", {})
+    values = profile.get("values", {})
+    is_sparse = shape.get("storage") == "sparse_csr"
+    raw_counts = (
+        decision.values == "raw_counts"
+        if decision is not None
+        else values.get("suspected_kind") == "counts"
+    )
+    return PlanState(
+        n_samples=int(shape.get("n_samples", 0)),
+        n_features=int(shape.get("n_features", 0)),
+        is_sparse=is_sparse,
+        is_raw_counts=raw_counts,
+        itemsize=int(np.dtype(shape.get("dtype") or "float64").itemsize),
+        density=1.0 - float(values.get("sparsity") or 0.0) if is_sparse else 1.0,
+    )
+
+
+def _stage_peaks(
+    stages: list[dict[str, Any]],
+    profile: dict[str, Any],
+    registry: Registry,
+    decision: DataDecision | None = None,
+) -> tuple[float, list[tuple[str, float]]]:
+    """The loaded data's bytes, and each stage's input, output and copy held together."""
+    state = _initial_state(profile, decision)
+    loaded = state.nbytes
+    peaks: list[tuple[str, float]] = []
+    for position, stage in enumerate(stages):
+        op = stage["op"]
+        if op not in registry:
+            continue
+        try:
+            params, _ = registry.resolve_params(op, stage.get("params", {}))
+        except Exception:
+            continue
+        before, sparse_before = state.nbytes, state.is_sparse
+        state.advance(op, params, registry)
+        after = state.nbytes
+        # PCA centres a dense input in a copy of it; the first stage's input is the
+        # loaded data, which is already counted.
+        copy = before if op == "pca" and not sparse_before else 0.0
+        peaks.append((op, (before if position else 0.0) + after + copy))
+    return loaded, peaks
+
+
+def estimate_peak_bytes(
+    stages: list[dict[str, Any]],
+    profile: dict[str, Any],
+    registry: Registry | None = None,
+    decision: DataDecision | None = None,
+) -> float:
+    """The memory a candidate's pipeline needs at its heaviest stage.
+
+    The loaded data stays in memory throughout; on top of it, each stage holds its
+    input and its output at once, and PCA on dense input a centred copy. The largest of
+    those is the peak. A method's own working memory -- an n-by-n matrix -- is not
+    counted: `scales_to` governs that.
+    """
+    loaded, peaks = _stage_peaks(stages, profile, registry or load_registry(), decision)
+    return loaded + max((peak for _, peak in peaks), default=0.0)
+
+
+def _without_subsample(stages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [stage for stage in stages if stage["op"] != "subsample"]
+
+
+def _first_method(stages: list[dict[str, Any]], registry: Registry) -> Any:
+    return next(
+        (
+            registry[s["op"]]
+            for s in stages
+            if s["op"] in registry
+            and (registry[s["op"]].is_reduction or registry[s["op"]].is_visualization)
+        ),
+        None,
+    )
+
+
+def _gb(value: float) -> str:
+    return f"{value / 1e9:.2f} GB"
 
 
 def _check_candidate(
@@ -746,17 +926,11 @@ def _check_candidate(
     profile: dict[str, Any],
     recon: dict[str, Any] | None,
     registry: Registry,
+    decision: DataDecision | None = None,
+    memory_limit: int | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    shape = profile.get("shape", {})
-    values = profile.get("values", {})
-
-    state = PlanState(
-        n_samples=int(shape.get("n_samples", 0)),
-        n_features=int(shape.get("n_features", 0)),
-        is_sparse=shape.get("storage") == "sparse_csr",
-        is_raw_counts=values.get("suspected_kind") == "counts",
-    )
+    state = _initial_state(profile, decision)
 
     stages = plan.stages_for(candidate)
     for position, stage in enumerate(stages):
@@ -774,43 +948,107 @@ def _check_candidate(
         )
         if op == "subsample":
             findings += _check_subsample_is_needed(
-                candidate.id, stages[position + 1:], state, registry
+                candidate.id, stages, position, state, registry, profile, decision,
+                memory_limit,
             )
-        findings += _check_new_rows(candidate.id, op, spec, profile)
+        findings += _check_new_rows(
+            candidate.id, op, spec, profile, stages, registry, decision, memory_limit
+        )
         state.advance(op, params, registry)
 
+    findings += _check_memory(
+        candidate, stages, profile, registry, decision, memory_limit
+    )
     return findings
+
+
+def _check_memory(
+    candidate: CandidateSpec,
+    stages: list[dict[str, Any]],
+    profile: dict[str, Any],
+    registry: Registry,
+    decision: DataDecision | None,
+    memory_limit: int | None,
+) -> list[Finding]:
+    """Refuse a candidate whose estimated peak exceeds the run's memory limit.
+
+    Memory is a reason to subsample, as `scales_to` is: a method that can place new rows
+    is fitted on a subsample and the rest projected in chunks. A method that cannot is
+    refused by `_check_new_rows` instead, whose fix is to reject it.
+    """
+    if memory_limit is None:
+        return []
+    loaded, peaks = _stage_peaks(stages, profile, registry, decision)
+    if not peaks:
+        return []
+    op, heaviest = max(peaks, key=lambda item: item[1])
+    total = loaded + heaviest
+    method = _first_method(stages, registry)
+    if total <= memory_limit or (method is not None and method.raw.get("new_rows") == "none"):
+        return []
+    if is_linear_baseline(candidate):
+        fix = (
+            "the Linear baseline cannot subsample, since it is the base followed by a "
+            "single pca, so this plan cannot register within this machine's memory: "
+            "run on a machine with more memory, or on a smaller dataset"
+        )
+    else:
+        fix = (
+            f"insert a subsample before {method.name if method else 'the first method'}"
+            ": it is fitted on the rows kept, and the rest are projected through the "
+            "fitted pipeline in chunks"
+        )
+    return [
+        Finding(
+            code="exceeds_memory_limit",
+            severity="error",
+            candidate=candidate.id,
+            op=op,
+            message=f"candidate {candidate.id} is estimated to need {_gb(total)} at its "
+            f"heaviest stage, {op}: the loaded data ({_gb(loaded)}) plus that stage's "
+            f"input, output and any copy ({_gb(heaviest)}). This run's limit is "
+            f"{_gb(memory_limit)}, half the machine's memory.",
+            fix=fix,
+        )
+    ]
 
 
 def _check_subsample_is_needed(
     candidate_id: str,
-    downstream: list[dict[str, Any]],
+    stages: list[dict[str, Any]],
+    position: int,
     state: PlanState,
     registry: Registry,
+    profile: dict[str, Any],
+    decision: DataDecision | None,
+    memory_limit: int | None,
 ) -> list[Finding]:
-    """Section 3.12: subsample only when the method would otherwise exceed its limit.
+    """Section 3.12: subsample only when the method would otherwise exceed a limit.
 
-    A subsample the method does not need makes the candidate fit fewer rows for no
-    gain, and `subsample(50) -> pca` is one route to a degenerate baseline.
+    Either limit: the method's `scales_to` on rows, or the run's memory limit on the
+    whole pipeline. A subsample neither calls for makes the candidate fit fewer rows for
+    no gain, and `subsample(50) -> pca` is one route to a degenerate baseline.
     """
-    method = next(
-        (
-            registry[s["op"]]
-            for s in downstream
-            if s["op"] in registry
-            and (registry[s["op"]].is_reduction or registry[s["op"]].is_visualization)
-        ),
-        None,
-    )
+    method = _first_method(stages[position + 1:], registry)
     if method is None:
         return []
     limit = method.scales_to
     if limit is not None and state.n_samples > limit:
         return []
+    without = stages[:position] + stages[position + 1:]
+    if memory_limit is not None and estimate_peak_bytes(
+        without, profile, registry, decision
+    ) > memory_limit:
+        return []
     within = (
         f"within {method.name}'s limit of {limit:,}"
         if limit is not None
         else f"and {method.name} declares no limit on rows"
+    )
+    memory = (
+        f", and without it the pipeline fits in this run's {_gb(memory_limit)}"
+        if memory_limit is not None
+        else ""
     )
     return [
         Finding(
@@ -819,25 +1057,44 @@ def _check_subsample_is_needed(
             candidate=candidate_id,
             op="subsample",
             message=f"this subsample feeds {method.name} with fewer rows than the "
-            f"{state.n_samples:,} it would otherwise receive, {within}. A candidate may "
-            "subsample only when its method would otherwise exceed its limit: "
-            "otherwise it fits fewer rows for no gain.",
+            f"{state.n_samples:,} it would otherwise receive, {within}{memory}. A "
+            "candidate may subsample only when its method would otherwise exceed its "
+            "row limit or the memory limit: otherwise it fits fewer rows for no gain.",
             fix=f"remove the subsample stage and let {method.name} fit every row",
         )
     ]
 
 
 def _check_new_rows(
-    candidate_id: str, op: str, spec: Any, profile: dict[str, Any]
+    candidate_id: str,
+    op: str,
+    spec: Any,
+    profile: dict[str, Any],
+    stages: list[dict[str, Any]],
+    registry: Registry,
+    decision: DataDecision | None,
+    memory_limit: int | None,
 ) -> list[Finding]:
     """Section 3.12: a method that cannot place new rows cannot be subsampled at all.
 
     A subsampled candidate is fitted on some rows and has the rest projected through
     its fitted pipeline. A method with no `transform` and no standard extension has no
-    way to project, so above its limit there is no honest version of it to run.
+    way to project, so when every row is too many -- for its `scales_to`, or for the
+    memory limit -- there is no honest version of it to run.
     """
+    if spec.raw.get("new_rows") != "none":
+        return []
     n = int(profile.get("shape", {}).get("n_samples", 0))
-    if spec.raw.get("new_rows") != "none" or spec.scales_to is None or n <= spec.scales_to:
+    if spec.scales_to is not None and n > spec.scales_to:
+        reason = f"the dataset has {n:,} samples, above {op}'s limit of {spec.scales_to:,}"
+    elif memory_limit is not None and (
+        needed := estimate_peak_bytes(_without_subsample(stages), profile, registry, decision)
+    ) > memory_limit:
+        reason = (
+            f"on every row this pipeline is estimated to need {_gb(needed)}, above this "
+            f"run's memory limit of {_gb(memory_limit)}"
+        )
+    else:
         return []
     return [
         Finding(
@@ -845,14 +1102,130 @@ def _check_new_rows(
             severity="error",
             candidate=candidate_id,
             op=op,
-            message=f"the dataset has {n:,} samples, above {op}'s limit of "
-            f"{spec.scales_to:,}, and {op} has no transform and no standard extension "
-            "to place rows it was not fitted on. A subsample would leave it describing "
-            "only the rows it kept, and every other candidate covers all of them.",
+            message=f"{reason}, and {op} has no transform and no standard extension to "
+            "place rows it was not fitted on. A subsample would leave it describing only "
+            "the rows it kept, and every other candidate covers all of them.",
             fix=f"drop this candidate and add {op} to `rejected`, citing "
             "profile.shape.n_samples",
         )
     ]
+
+
+#: Section 3.10's number, fixed so that selection cannot become a route to a
+#: degenerate candidate.
+SELECTED_FEATURES = 2000
+
+
+def _check_selection(
+    plan: Plan,
+    candidate: CandidateSpec,
+    profile: dict[str, Any],
+    registry: Registry,
+    decision: DataDecision | None,
+) -> list[Finding]:
+    """Section 3.10's candidate-specific stages, which are enforced, not advised.
+
+    `select_variable_features(n_features=2000)` then `standardise`, before the first
+    method, exactly when the features are of one type, more than 2,000 remain after the
+    constants go, the first method works through Euclidean geometry at the parameters
+    set, and the candidate is not the Linear baseline. Otherwise neither.
+    """
+    if decision is None:
+        return []
+    stages = [stage.model_dump(exclude={"overrides"}) for stage in candidate.stages]
+    first = next(
+        (
+            position
+            for position, stage in enumerate(stages)
+            if stage["op"] in registry
+            and (registry[stage["op"]].is_reduction or registry[stage["op"]].is_visualization)
+        ),
+        None,
+    )
+    if first is None:
+        return []
+    method = stages[first]
+    governed = [
+        stage for stage in stages[:first]
+        if stage["op"] in {"select_variable_features", "standardise"}
+    ]
+    try:
+        params, _ = registry.resolve_params(method["op"], method["params"])
+    except Exception:
+        return []
+
+    features = profile.get("features", {})
+    remaining = int(profile.get("shape", {}).get("n_features", 0)) - int(
+        features.get("n_constant") or 0
+    )
+    reasons = []
+    if is_linear_baseline(candidate):
+        reasons.append("it is the Linear baseline, which never selects")
+    if decision.features != "one_type":
+        reasons.append("the features are of mixed types, and z-scored in the base instead")
+    if remaining <= SELECTED_FEATURES:
+        reasons.append(f"only {remaining:,} features remain, not more than 2,000")
+    if not registry[method["op"]].holds("euclidean", params):
+        reasons.append(
+            f"{method['op']} at these parameters does not work through Euclidean "
+            "geometry, so variance does not rank features by their effect on it"
+        )
+
+    wanted = [
+        {"op": "select_variable_features", "params": {"n_features": SELECTED_FEATURES}},
+        {"op": "standardise", "params": {}},
+    ]
+    if reasons:
+        if not governed:
+            return []
+        return [
+            Finding(
+                code="selection_forbidden",
+                severity="error",
+                candidate=candidate.id,
+                op=governed[0]["op"],
+                message=f"candidate {candidate.id} carries "
+                f"{' and '.join(s['op'] for s in governed)} before {method['op']}, and "
+                "section 3.10's rule forbids it here: " + "; ".join(reasons) + ".",
+                fix="remove select_variable_features and standardise from this candidate",
+            )
+        ]
+
+    counts = [
+        int(stage["params"].get("n_features", SELECTED_FEATURES))
+        for stage in governed
+        if stage["op"] == "select_variable_features"
+    ]
+    if any(count != SELECTED_FEATURES for count in counts):
+        return [
+            Finding(
+                code="selection_count",
+                severity="error",
+                candidate=candidate.id,
+                op="select_variable_features",
+                message=f"candidate {candidate.id} selects {counts[0]:,} features. The "
+                "number is fixed at 2,000 wherever the rule selects, so that selection "
+                "cannot become a route to a degenerate candidate.",
+                fix="select exactly 2000 features",
+            )
+        ]
+    if normalise_stages(governed) != wanted:
+        return [
+            Finding(
+                code="selection_required",
+                severity="error",
+                candidate=candidate.id,
+                op=method["op"],
+                message=f"candidate {candidate.id}'s first method, {method['op']}, works "
+                f"through Euclidean geometry, the features are of one type, and "
+                f"{remaining:,} of them remain: section 3.10's rule selects the 2,000 "
+                "most variable and z-scores them before such a method, and this candidate "
+                "does not do exactly that.",
+                fix=f"put select_variable_features(n_features=2000), then standardise, "
+                f"directly before {method['op']}",
+            )
+        ]
+    return []
 
 
 def _check_stage_against_state(

@@ -20,41 +20,32 @@ from typing import Any
 import numpy as np
 
 from drtools.constraints import lle_neighbour_minimum
+from drtools.decision import base_rule, recorded_decision, rule_reason
 from drtools.registry import Registry, load_registry
 
 
 def suggest_base(
     profile: dict[str, Any], recon: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Base preprocessing the planner may adopt, from reconnaissance's own rule.
+    """The base preprocessing section 3.10's rule gives for the recorded data decision.
 
-    This is a suggestion crossing a boundary, not an identification. A Probe
-    representation exists so that measurements describe the data rather than an
-    artefact of scale; it is discarded once the measuring is done and never produces an
-    Embedding. Base preprocessing is part of the analysis, is chosen by the agent, and
-    its output survives as the Reference. Day 6 settled that these are genuinely two
-    things and that collapsing them would have been the wrong fix.
-
-    What they share is the question. Both answer "what transform makes distances on
-    this data meaningful", so the rule that settles one is the honest default for the
-    other -- and an override the report can describe needs something concrete to
-    override.
+    The Probe representation is this same rule applied, and the two remain different
+    things: the probe is fixed by the rule and discarded once the measuring is done,
+    while the base preprocessing is the agent's, may depart from the rule with a
+    reason and evidence, and survives as the Reference.
     """
-    from drtools.recon import choose_probe_representation
-
-    transform, reason = choose_probe_representation(profile)
-    evidence = ["profile.values.suspected_kind", "profile.features.std_ratio_p95_p05"]
-    if recon is not None:
-        evidence.append("recon.probe_representation.reason")
-
+    decision = recorded_decision(recon)
+    if decision is None:
+        raise ValueError("no data decision is recorded; run recon with --decision first")
     return {
-        "stages": [{"op": step, "params": {}} for step in transform],
-        "rationale": reason,
-        "evidence": evidence,
+        "stages": base_rule(decision),
+        "rationale": rule_reason(decision),
+        "evidence": ["recon.data_decision", *decision.evidence],
         "note": (
-            "A suggestion, derived from the same rule reconnaissance used to choose its "
-            "probe representation -- not that representation itself, which is discarded "
-            "once the measuring is done. Adopt it, or override it with a logged reason."
+            "A suggestion: the rule's base for the recorded data decision, not the "
+            "Probe representation itself, which is discarded once the measuring is "
+            "done. Adopt it, or depart from it with base_departure, a reason and "
+            "evidence; drop_constant stays first either way."
         ),
     }
 

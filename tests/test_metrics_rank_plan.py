@@ -15,10 +15,16 @@ import scipy.sparse as sp
 
 from drtools.loaders import load
 from drtools.metrics import METRIC_SPECS, evaluate_embedding
-from drtools.plan import Plan, validate_plan
+from drtools.plan import Plan
+from drtools.plan import validate_plan as _validate_plan
 from drtools.profile import profile_dataset
 from drtools.rank import RankingError, rank_candidates
-from plans import complete
+from plans import RECON, complete
+
+
+def validate_plan(document, profile, recon=RECON, *args, **kwargs):
+    """The validator with a recorded data decision, which registration requires."""
+    return _validate_plan(document, profile, recon, *args, **kwargs)
 
 BASE_WEIGHTS = {"trustworthiness": 0.5, "continuity": 0.3, "shepard_correlation": 0.2}
 
@@ -280,6 +286,10 @@ def test_subsampling_first_makes_the_same_method_acceptable() -> None:
                     "id": "iso",
                     "stages": [
                         {"op": "subsample", "params": {"n_samples": 3000}},
+                        # 2,352 features of one type feeding a Euclidean method:
+                        # section 3.10's rule selects 2,000 and z-scores them.
+                        {"op": "select_variable_features", "params": {"n_features": 2000}},
+                        {"op": "standardise"},
                         {"op": "isomap"},
                     ],
                 },
@@ -297,8 +307,12 @@ COUNTS_PROFILE = {
 }
 
 
+#: Raw counts are the decision's to declare, not the profile's guess.
+COUNTS_RECON = {"data_decision": {**RECON["data_decision"], "values": "raw_counts"}}
+
+
 def _raw_count_findings(candidates):
-    report = validate_plan(make_plan(candidates=candidates), COUNTS_PROFILE)
+    report = validate_plan(make_plan(candidates=candidates), COUNTS_PROFILE, COUNTS_RECON)
     return [f for f in report["findings"] if f["code"] == "raw_counts_not_normalised"]
 
 

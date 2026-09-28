@@ -17,6 +17,15 @@ from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
 from drtools.runs import MISSING, resolve_evidence
 
+
+def _decided(profile):
+    """The synthetic datasets are all features of one type; counts as the profile says."""
+    from drtools.decision import DataDecision
+
+    counts = profile["values"]["suspected_kind"] == "counts"
+    return DataDecision(values="raw_counts" if counts else "not_counts",
+                        features="one_type", decided_by="user")
+
 FIXTURES = ["swiss_roll", "s_curve", "blobs", "linear_subspace", "sparse_counts"]
 
 
@@ -91,7 +100,7 @@ def test_unlabelled_data_says_so_rather_than_inventing_labels() -> None:
 def test_two_dimensional_manifolds_are_measured_as_low_dimensional(name: str) -> None:
     X, labels, _, profile = build(name, n_samples=800)
 
-    recon = reconnaissance(X, labels, profile)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile))
 
     assert recon["intrinsic_dimension"]["twonn"] < 4.0
     assert recon["neighbourhood"]["n_connected_components"] == 1
@@ -102,7 +111,7 @@ def test_separated_clusters_fragment_the_neighbourhood_graph() -> None:
     """The condition that makes spectral methods fail, caught before they are chosen."""
     X, labels, _, profile = build("blobs", n_samples=600, n_clusters=5)
 
-    recon = reconnaissance(X, labels, profile)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile))
 
     assert recon["neighbourhood"]["n_connected_components"] == 5
     assert recon["neighbourhood"]["largest_component_fraction"] < 0.5
@@ -114,7 +123,7 @@ def test_separated_clusters_fragment_the_neighbourhood_graph() -> None:
 def test_low_rank_data_shows_its_rank_in_the_elbow() -> None:
     X, labels, _, profile = build("linear_subspace", n_samples=600, rank=5)
 
-    recon = reconnaissance(X, labels, profile)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile))
 
     assert recon["spectrum"]["probe"]["elbow"] == 5
     assert recon["spectrum"]["probe"]["n_components_for_95pct"] <= 6
@@ -123,9 +132,10 @@ def test_low_rank_data_shows_its_rank_in_the_elbow() -> None:
 def test_count_data_is_probed_after_normalisation_not_before() -> None:
     X, labels, _, profile = build("sparse_counts", n_cells=400)
 
-    recon = reconnaissance(X, labels, profile)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile))
 
-    assert recon["probe_representation"]["transform"] == ["normalise_total", "log1p"]
+    assert recon["probe_representation"]["transform"] == [
+        "drop_constant", "normalise_total", "log1p"]
     assert "raw" in recon["spectrum"], "both representations are needed to compare them"
 
 
@@ -134,7 +144,7 @@ def test_recon_observations_cite_evidence_that_resolves(name: str) -> None:
     X, labels, _, profile = (
         build(name, n_samples=400) if name != "sparse_counts" else build(name, n_cells=300)
     )
-    recon = reconnaissance(X, labels, profile)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile))
 
     resolved = resolve_evidence(
         [key for note in recon["observations"] for key in note["evidence"]],
@@ -149,7 +159,7 @@ def test_subsampling_is_stratified_and_declared() -> None:
     """Small classes must survive the probe, and the report must say it happened."""
     X, labels, _, profile = build("blobs", n_samples=2000, n_clusters=5)
 
-    recon = reconnaissance(X, labels, profile, max_samples=500)
+    recon = reconnaissance(X, labels, profile, decision=_decided(profile), max_samples=500)
 
     assert recon["subsample"]["n_used"] <= 505
     assert recon["subsample"]["stratified"] is True
@@ -159,8 +169,8 @@ def test_subsampling_is_stratified_and_declared() -> None:
 def test_recon_is_deterministic_under_a_fixed_seed() -> None:
     X, labels, _, profile = build("blobs", n_samples=400)
 
-    first = reconnaissance(X, labels, profile, seed=3)
-    second = reconnaissance(X, labels, profile, seed=3)
+    first = reconnaissance(X, labels, profile, decision=_decided(profile), seed=3)
+    second = reconnaissance(X, labels, profile, decision=_decided(profile), seed=3)
 
     assert first["intrinsic_dimension"] == second["intrinsic_dimension"]
     assert first["spectrum"]["probe"]["cumulative"] == second["spectrum"]["probe"]["cumulative"]

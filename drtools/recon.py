@@ -29,6 +29,8 @@ from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.neighbors import NearestNeighbors, kneighbors_graph
 
 from drtools.contract import Matrix
+from drtools.decision import DataDecision, base_rule, rule_reason
+from drtools.executors.preprocessing import constant_features
 
 RECON_SAMPLE = 5_000
 SPECTRUM_SAMPLE = 20_000
@@ -41,20 +43,25 @@ def reconnaissance(
     labels: np.ndarray | None,
     profile: dict[str, Any],
     *,
+    decision: DataDecision,
     seed: int = 0,
     max_samples: int = RECON_SAMPLE,
     k: int | None = None,
     thumbnail_path: Any = None,
 ) -> dict[str, Any]:
-    """Probe `X` for structural evidence. Never mutates its inputs."""
+    """Probe `X` for structural evidence. Never mutates its inputs.
+
+    The probes run on the base preprocessing section 3.10's rule gives for `decision`,
+    so the evidence describes the representation the analysis will use.
+    """
     n_samples = X.shape[0]
     index = _subsample_index(n_samples, max_samples, labels, seed)
 
-    transform, reason = choose_probe_representation(profile)
+    transform, reason = choose_probe_representation(decision)
     probe_full = _apply_transform(X, transform)
 
     spectrum = {"probe": _spectrum(probe_full, seed=seed)}
-    if transform:
+    if transform != ["drop_constant"]:  # the raw spectrum only when it could differ
         spectrum["raw"] = _spectrum(X, seed=seed)
 
     probe = probe_full[index]
@@ -73,6 +80,7 @@ def reconnaissance(
             "note": "intrinsic dimension and the neighbourhood graph are measured on "
             "this representation, not on the raw matrix",
         },
+        "data_decision": decision.model_dump(),
         "subsample": {
             "n_used": int(len(index)),
             "n_total": int(n_samples),
@@ -91,39 +99,27 @@ def reconnaissance(
 # ------------------------------------------------------------------ probe choice
 
 
-def choose_probe_representation(profile: dict[str, Any]) -> tuple[list[str], str]:
-    """Pick the representation the probes run on, by a fixed, stated rule.
+def choose_probe_representation(decision: DataDecision) -> tuple[list[str], str]:
+    """The representation the probes run on: the base rule for this decision, exactly.
 
-    Public because `heuristics.suggest_base` offers this same rule as the planner's
-    default Base preprocessing. The two remain different things -- a probe
-    representation is discarded once the measuring is done and never produces an
-    embedding -- but they answer the same question, so the rule that settles one is the
-    honest default for the other. One implementation: a second copy in skill prose
-    would drift, and an override needs something concrete to override.
+    Until day 13 reconnaissance had a rule of its own, which z-scored when feature
+    standard deviations spanned more than 100-fold. The base preprocessing keys on the
+    feature-type decision instead, and two rules would disagree -- a mixed table whose
+    scales happened to span less would be probed unscaled and analysed z-scored. One
+    rule, in `drtools.decision`, serves both.
     """
-    values, features = profile["values"], profile["features"]
-
-    if values["suspected_kind"] == "counts":
-        return (
-            ["normalise_total", "log1p"],
-            "values are non-negative integers and sample totals vary, so raw distances "
-            "would be dominated by total magnitude rather than profile shape",
-        )
-    scale_ratio = features["std_ratio_p95_p05"]
-    if scale_ratio is not None and scale_ratio > 100:
-        return (
-            ["standardise"],
-            f"feature scales span a factor of {scale_ratio:,.0f}, so a few features "
-            "would otherwise dominate every distance",
-        )
-    return [], "values are already on a comparable scale; probed as given"
+    return [stage["op"] for stage in base_rule(decision)], rule_reason(decision)
 
 
 def _apply_transform(X: Matrix, transform: list[str]) -> Matrix:
     """Apply the probe transform. Kept separate from the real preprocessing stages."""
     out = X
     for step in transform:
-        if step == "normalise_total":
+        if step == "drop_constant":
+            constant, _ = constant_features(out)
+            if not constant.all():
+                out = out[:, np.flatnonzero(~constant)]
+        elif step == "normalise_total":
             totals = np.asarray(out.sum(axis=1)).ravel()
             target = float(np.median(totals[totals > 0])) if (totals > 0).any() else 1.0
             scale = np.divide(
@@ -142,7 +138,7 @@ def _apply_transform(X: Matrix, transform: list[str]) -> Matrix:
             std = dense.std(axis=0)
             std[std == 0] = 1.0
             out = (dense - dense.mean(axis=0)) / std
-        else:  # pragma: no cover - guarded by choose_probe_representation
+        else:  # pragma: no cover - guarded by the base rule
             raise ValueError(f"unknown probe transform {step!r}")
     return out
 

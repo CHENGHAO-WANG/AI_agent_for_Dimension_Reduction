@@ -16,7 +16,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from plans import complete
+from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 SUBSAMPLED = [
@@ -42,6 +42,7 @@ def wide_csv(tmp_path):
 def run_with_two_candidates(cli, wide_csv, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", wide_csv, "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = complete({
         "dataset": "d",
         "candidates": [
@@ -65,6 +66,7 @@ def test_candidates_that_subsample_differently_cannot_be_ranked_together(
     for candidate in ("full", "small"):
         assert cli("embed", "--run-dir", run, "--id", candidate, "--in-process").code == 0
 
+    cli("prepare-reference", "--run-dir", run)
     full = cli("evaluate", "--run-dir", run, "--id", "full")
     small = cli("evaluate", "--run-dir", run, "--id", "small")
 
