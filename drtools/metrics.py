@@ -475,7 +475,7 @@ class BatteryScorer:
         self.upper = np.triu_indices(self.n, k=1)
         if self.local and self.wanted & {"trustworthiness", "continuity"}:
             self.reference_ranks = _inverted_ranks(distances)
-            self.reference_neighbours = _neighbour_indices(distances, self.k)
+            self.reference_neighbours = _neighbour_indices(reference, self.k)
         if self.local and "shepard_correlation" in self.wanted:
             ranked = rankdata(distances[self.upper])
             self.reference_order = (ranked - ranked.mean()) / np.linalg.norm(
@@ -494,7 +494,7 @@ class BatteryScorer:
             distances = pairwise_distances(embedding)
         if "trustworthiness" in self.wanted:
             values["trustworthiness"] = (
-                _trust(self.reference_ranks, _neighbour_indices(distances, self.k), self.k)
+                _trust(self.reference_ranks, _neighbour_indices(embedding, self.k), self.k)
                 if self.local
                 else None
             )
@@ -542,11 +542,15 @@ def _inverted_ranks(distances: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def _neighbour_indices(distances: np.ndarray, k: int) -> np.ndarray:
-    """Each row's k nearest other rows, as NearestNeighbors returns them."""
-    masked = distances.copy()
-    np.fill_diagonal(masked, np.inf)
-    return np.argsort(masked, axis=1, kind="stable")[:, :k]
+def _neighbour_indices(data: Matrix, k: int) -> np.ndarray:
+    """Each row's k nearest other rows, found exactly as `trustworthiness` finds them.
+
+    Through `NearestNeighbors` itself rather than a sort of the distance matrix: with
+    tied distances, as on discrete data, the two break ties differently, and the
+    tuning cells and jackknife replicates would measure a different statistic from
+    the score that is reported.
+    """
+    return NearestNeighbors(n_neighbors=k).fit(data).kneighbors(return_distance=False)
 
 
 def _trust(ranks: np.ndarray, neighbours: np.ndarray, k: int) -> float:

@@ -364,3 +364,39 @@ def test_the_tuning_block_is_frozen_at_registration(cli, run_with_isomap) -> Non
     result = cli("validate-plan", "--run-dir", run)
     assert result.code == 2
     assert "tuning block" in result.stderr
+
+
+# ------------------------------------------- found by the day 17 review of days 12-17
+
+
+def test_a_visualization_method_after_a_two_component_pca_still_draws_at_d_2() -> None:
+    """On three features PCA keeps at most two, and UMAP must not be asked for one."""
+    X = np.random.default_rng(0).normal(size=(60, 3)) * np.array([3.0, 2.0, 1.0])
+    stages, record = tune(
+        X, [{"op": "pca"}, {"op": "umap"}],
+        suggest=lambda op, n, params: {"n_neighbors": 10},
+    )
+    assert stages[-1]["params"]["n_components"] == 2
+    assert record["chosen"]["d"] == 2
+
+
+def test_a_reduction_in_a_visualization_run_keeps_d_2_on_two_features() -> None:
+    X = np.random.default_rng(1).normal(size=(60, 2))
+    _, record = tune(X, [{"op": "pca"}], settings=TuningSettings(fixed_d=2))
+    assert record["chosen"]["d"] == 2
+
+
+def test_the_alternation_moves_its_start_to_a_d_some_multiplier_can_run_at() -> None:
+    """Hessian LLE at reconnaissance's d = 8 needs 45 neighbours; 6, 12 and 24 are all short."""
+    roll, _ = make_swiss_roll(300, noise=0.05, random_state=0)
+    # Padded to ten features, so the grid reaches d = 8 below d_max = p - 1.
+    X = np.hstack([roll, np.random.default_rng(0).normal(scale=0.05, size=(300, 7))])
+    _, record = tune(
+        X, [{"op": "lle", "params": {"method": "hessian"}}],
+        suggest=lambda op, n, params: {"n_neighbors": 12},
+        settings=TuningSettings(d_grid=(2, 3, 4, 5, 6, 8), max_cycles=1),
+        intrinsic_dimension=8.0,
+    )
+    steps = record["alternating"]
+    assert steps["estimated_d"] == 8 and steps["start_d"] < 8
+    assert "start_moved" in steps

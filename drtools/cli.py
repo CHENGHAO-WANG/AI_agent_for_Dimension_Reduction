@@ -1587,10 +1587,16 @@ def _cmd_adopt(args: argparse.Namespace) -> dict[str, Any]:
     _require_visualization_run(run, "adopt")
     plan = _registered_plan(run)
     comparison = _current_comparison(run, plan)
-    if not (run.path / "recommendation.json").exists():
+    recommendation = run.path / "recommendation.json"
+    if (
+        not recommendation.exists()
+        or jsonio.read(recommendation).get("plan_digest") != comparison["plan_digest"]
+    ):
         raise ContractError(
-            "there is no recommendation yet. The user chooses having seen the pictures "
-            "and the agent's recommendation, so `drtools recommend` comes first."
+            "there is no recommendation of the current comparison yet. The user "
+            "chooses having seen the pictures and the agent's recommendation of them, "
+            "so `drtools recommend` comes first; one made before a re-plan round "
+            "describes a portfolio that has since grown."
         )
     document = _read_json_argument(args.json, flag="--json")
     if not isinstance(document, dict):
