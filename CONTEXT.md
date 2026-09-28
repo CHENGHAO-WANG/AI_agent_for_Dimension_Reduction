@@ -74,8 +74,8 @@ _Avoid_: final fit, retraining
 
 **Departure**:
 A choice that differs from the default a rule gives — a Pre-registered weighting other
-than its default, or a Base preprocessing other than the rule's — allowed when argued
-from Evidence keys.
+than its default, a Base preprocessing other than the rule's, a Tuning grid other than
+the default, or another Margin — allowed when argued from Evidence keys.
 _Avoid_: deviation, exception, override
 
 **Op**:
@@ -251,6 +251,32 @@ _Avoid_: weights, scoring config, priorities
 A change to the Pre-registered weighting made once results exist, recorded with its
 reason. The only sanctioned way for a weighting to move.
 _Avoid_: adjustment, correction
+
+**Leader**:
+The Candidate with the highest weighted score. It is the Winner only when no Candidate
+within the Margin of it has fewer dimensions.
+_Avoid_: top-ranked, best candidate
+
+**Margin**:
+The difference in weighted score the comparison between Candidates treats as
+negligible, declared in the Plan before any Embedding exists.
+_Avoid_: tolerance, noise threshold, tie threshold
+
+**Winner**:
+The Candidate with the fewest dimensions among those within the Margin of the Leader,
+the higher score breaking a tie in d. A ranking names exactly one.
+_Avoid_: best method, champion
+
+**Close competitor**:
+A Candidate other than the Winner that lies within the Margin of the Leader, and so one
+the ranking did not separate from the Winner. The Leader is one whenever it is not the
+Winner.
+_Avoid_: tie, joint winner, runner-up
+
+**Path of winners**:
+For each value one dimension might be given in weighted score, the Candidate whose
+score net of its dimensions is highest.
+_Avoid_: trade-off curve, lambda path
 
 ### The agent's boundaries
 

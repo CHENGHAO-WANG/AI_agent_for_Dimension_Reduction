@@ -710,6 +710,19 @@ can argue with directly, where a rate per dimension had an effect on the ranking
 could see in advance. It is declared in the plan, and a departure from the default cites
 evidence, as a weighting's does. It settles section 3.8's open margin.
 
+*Settled on day 16.* The margin is `evaluation.margin`, and another value needs
+`evaluation.margin_departure`, a reason with evidence keys of its own, since a reason to
+move the weights is no argument for another margin. Registration refuses a margin
+outside [0, 0.10] whatever the argument: zero ranks by score alone with d breaking exact
+ties, and above the flatness threshold the comparison between candidates would call
+negligible a larger difference than the test within one does. The bound is the fixed
+0.10, not the plan's `tuning.flatness`, so a tuning departure cannot widen it. Inside
+the close set the order is the rule that chose the winner, d and then score, so rank k
+is the candidate the rule would choose were ranks 1 to k-1 withdrawn; the leader comes
+last in the set and so stays in the comparison throughout. Membership is measured from
+the leader, and each competitor is shown with its score minus the winner's. Every
+comparison reads the scores rounded to four places, as the table prints them.
+
 *Reported: the path of winners.* For every rate lambda >= 0 at which one dimension might
 be valued, the candidate maximising `S - lambda * d` is the winner at that rate; the winner
 changes exactly at the slopes of the upper convex hull of the points (d, S), as along a
@@ -719,10 +732,38 @@ candidate B would win" -- and names the candidates that win at no rate. For two
 candidates the breakpoint is `(S_A - S_B) / (d_A - d_B)`. The report also shows each
 battery-reading candidate's curve with its chosen d marked.
 
+*Settled on day 16.* `rank` computes the path and writes its sentences, since they are
+claims about numbers and belong in audited code (section 2.3); the report prints them.
+One sentence more than the paragraph above: it says what the margin rule's choice
+amounts to. A winner on the hull is the winner over a stated range of rates, which is
+the price of a dimension the choice implies. A winner off the hull wins at no rate, and
+the sentence names the two corners either side of it, which between them beat it at
+every rate: the choice then matches no single price of a dimension and comes from the
+hard edge of the margin. That can happen -- A at d = 10 scoring 0.850, B at d = 4 scoring
+0.8305, C at d = 2 scoring 0.829: C misses the margin by 0.001, B wins, and B beats A only
+above 0.00325 and C only below 0.00075. A tie at a breakpoint goes to the fewer
+dimensions, so a candidate on the hull between two corners wins at no rate. Rates are
+printed to two significant figures, since the scores are precise to about 0.005.
+
 *The standard error is reported, not used to choose.* A grouped jackknife over the scored
 rows -- ten groups, the same groups for every candidate -- gives each score's precision:
 about 0.004 to 0.006 on 1,797 rows. It measures only which rows are scored, holding the
 fitted embeddings fixed, so it excludes seed and refit variability and is a lower bound.
+
+*Settled on day 16.* `evaluate` computes the replicates, since only it holds the
+Embedding and the Reference: the whole battery on the scored rows less one group,
+neighbourhoods recomputed on what remains, at the run's k. The groups are dealt from a
+stream derived from the run's seed and keyed `jackknife`, stratified by label, so every
+candidate gets the same ones; `rank` refuses two whose recorded groups differ. `rank`
+turns the replicates into standard errors under the weights it applies, and gives each
+candidate a second one, for its difference from the winner, from the replicate-by-
+replicate differences. The rows left out are the same on both sides, so what the two
+share cancels: this is the precision of the comparison actually made. Too few rows, or
+a metric lost with a group left out, records no standard error and the reason. The
+replicates cost about 9 s per candidate at 1,800 rows, most of it sorting distance
+matrices, and the scored rows are capped at 2,000, so the cost does not grow with n.
+Measured on the same digits data at each candidate's chosen d, the standard errors are
+0.0008 to 0.0022, smaller than the figure above, which was taken at d = 2.
 
 *Rejected: the one-standard-error rule*, proposed on day 10 by analogy with CART pruning
 and glmnet's `lambda.1se`: within a candidate the smallest d within one standard error of
@@ -844,6 +885,11 @@ supply.
 **The rule is pre-registered; the outcome varies.** Declared in the plan, frozen at
 registration, exactly as the weighting is (section 2.4). Letting the agent set the
 margin once the scores exist is worse here than it would be for the weighting, because
+the margin acts on the winner directly: widening it by a hundredth can bring a
+candidate with fewer dimensions inside it and make that candidate the winner, and with
+the scores in view the agent would know which one. *(Completed on day 16; the sentence
+had been cut off since it was written.)*
+
 **What a close competitor gets in the report, and why a mention is not enough.** Three
 tiers exist today. Every successful candidate gets rows in sections 3, 4, 6 and 7, its
 own embedding figure, a panel in the comparison figure, and a bar in the metrics figure.
@@ -895,6 +941,15 @@ growing: four or more candidates inside the noise means the ranking did not disc
 which is a finding about the portfolio or the weighting and reads better as one sentence
 than as a list of five.
 
+*Settled on day 16: the cap bounds what is shown, never what is recorded.*
+`close_competitors`, in `ranking.json` and in the decision log, lists every candidate
+within the margin in rank order, however many; the record the report is generated from
+has to be complete. Up to three, the note names each with its d and its difference from
+the winner. Above three, `discriminated` is false and the note becomes the one sentence.
+The two diagnostic figures go to the first three competitors in rank order even then --
+under the rule's order they are the candidates it would choose next, so withholding
+their figures would repeat the mistake this section exists to correct.
+
 *Open -- whether section 8 is made to address the competitors.* Section 8 is where a
 close competitor has to be dealt with in words: UMAP ranked first, Isomap is
 indistinguishable from it and preserves global distances better, which matters if the
@@ -906,7 +961,18 @@ project keeps relearning. One enforceable option exists: `report --refresh` refu
 document whose section 8 does not name each competitor id. That is a substring test on a
 literal id, not the free-prose number parser the report contract rejected when it turned
 down *write then verify*. It is gameable, since an id can be named and nothing said, but
-it turns a silent omission into a deliberate one.
+it turns a silent omission into a deliberate one. *Moved to day 19 on day 16*, with the
+rest of the report contract.
+
+**Notes carry a kind, decided on day 16.** Each ranking note is a `kind` and a `text`:
+`weights_dropped`, `failed_candidates`, `close_competitors`, `not_discriminated`,
+`standard_error_scope` and `standard_error_unavailable`. The report, not `rank`, decides
+which kinds are limitations, since where a fact sits in the document is layout; a test
+holds the report's classification to the kinds `rank` declares, so a new kind nobody
+classified fails the tests where it would once have dropped out of section 9 unseen.
+The old tie note, which compared only the top two and called 0.02 the noise of
+stochastic methods, is gone, and the close set replaces it. Rejected: `rank` tagging a
+note as a limitation, which would put a layout decision in the locked core.
 
 **Cost among close competitors.** Runtime is not in the score (section 2.4), but it may
 still decide between candidates the score cannot separate. When the user says at the
@@ -1715,7 +1781,7 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 16 | Comparing candidates: the non-inferiority margin, the smallest d winning inside it; close competitors in the data model and the decision log; the path of winners and its sentences; the jackknife standard error; ranking notes carrying a kind (3.7, 3.8; defects 6, 7, 8) |
 | 17 | Two purposes: purpose and focus at the checkpoint; plots A and B in representation runs; visualization runs at d = 2, with at most one PCA stage of picked dimension, scores for tuning only, no ranking, a second checkpoint and caveats per method; the accounting rule narrowed to the run's own class of method; the five skills updated (3.11) |
 | 18 | PHATE, PaCMAP and TriMap: capability records, executors, size-aware suggestions, installation (7) |
-| 19 | Results and report: the `results/` folder and the winner's export; report blocks for the d curves, the path of winners, standard errors, plots A and B, close competitors' diagnostics, coverage and run times; the reproducibility line in the limitations (2.2, 3.8, 5) |
+| 19 | Results and report: the `results/` folder and the winner's export; report blocks for the d curves, the path of winners, standard errors, plots A and B, close competitors' diagnostics, coverage and run times; whether section 8 must name each close competitor; the reproducibility line in the limitations (2.2, 3.8, 5) |
 | 20 | First end-to-end run on dataset 1 under the new design; fix what it breaks |
 | 21 | End-to-end on dataset 2 (large) |
 | 22 | Rules-planner hedge + ablation run |
@@ -3484,3 +3550,104 @@ first on the code about to change. No cut is planned for now; the rule above sta
   "grid search" for Tuning, which name the mechanism without the rule that reads it.
 
   696 tests, 111s.
+
+- **Day 16** — Comparing candidates: the fewest dimensions within the margin of the
+  leader win, and the ranking records who the margin could not separate.
+
+  The items sections 3.7 and 3.8 carried went in as written: the margin of 0.02 on the
+  weighted score, measured from the leader, with the smallest d winning inside it and
+  ties to the higher score; `winner` kept a single id, with `close_competitors` beside
+  it in `ranking.json` and in the decision log's `rank` entry; the path of winners over
+  the upper hull of (d, S), with its sentences; the grouped jackknife, ten groups, the
+  same for every candidate, reported and never used to choose. Defect 6 is absorbed by
+  the computed set, which walks the whole list. Defect 7 is closed by the field. Defect
+  8 is closed by notes that carry a kind. Eight items the notes named only as a
+  requirement were settled in chat, one at a time, as bounded work.
+
+  *Order inside the close set, by the rule that chose the winner.* d, then score, so
+  rank k is the candidate the rule would choose were ranks 1 to k-1 withdrawn; the rest
+  by score. Each competitor is shown with its score minus the winner's, so the leader's
+  entry is the fidelity given up for fewer dimensions. Rejected: ordering the set by
+  score, under which rank 2 would mean something different from rank 1.
+
+  *The cap bounds what is shown, not what is recorded.* Section 3.8 has it. Rejected:
+  truncating `close_competitors` at three, which would hide from the decision log a
+  candidate inside the margin.
+
+  *The margin in the plan.* `evaluation.margin` with its own `margin_departure`, refused
+  outside [0, 0.10] (`invalid_margin`) and without an argued departure
+  (`unexplained_margin_departure`); the registration record keeps the value and whether
+  it is the default. Rejected: reusing the weighting's justification and evidence, and
+  tying the bound to `tuning.flatness`.
+
+  *The standard error, kept.* Asked whether the design still had one, since the day 10
+  pass rejected the one-standard-error rule: it did, as a reported number, and it stays.
+  It gives the margin a scale a reader can check, and the report a sentence on how
+  reproducible the scores are given the Embeddings. I argued for it at the 0.004 to
+  0.006 section 3.7 quotes, which makes 0.02 about four standard errors; measured today
+  on digits it is smaller, below. Added
+  beyond section 3.7: the paired standard error of each candidate's difference from the
+  winner, which costs nothing more and is the precision of the comparison actually
+  made. Section 3.7 has where it is computed and what it costs. Rejected: dropping it as
+  a lower bound a reader could take for the whole uncertainty -- the note stating its
+  scope is emitted wherever it is.
+
+  *The path's sentences, and one more.* Section 3.7 has them. The added sentence says
+  what the margin rule's choice amounts to as a price of a dimension, or that it wins at
+  no rate. The user asked what on and off the hull meant before agreeing; the answer
+  that landed was the ruler of slope lambda lowered onto the points, which first touches
+  a corner of the roof, and the two-inequality check that B loses at every rate.
+
+  *Notes with a kind.* Section 3.8 has the kinds and who classifies them.
+
+  *How much changed outside `rank`.* The report changed only where today's work would
+  have made it wrong: the ranking table gained d and a column marking the close
+  competitors, the winner line names them, and the limitations read kinds. The skills
+  changed only where they became false: `evaluate-embeddings` on reading the ranking,
+  `write-report` on what the limitations carry, and `plan-analysis` gained the margin.
+  Left to day 19: the path and standard-error blocks, the competitors' diagnostic
+  figures, and whether section 8 is enforced. Left to day 17: the wider rewrite of the
+  five skills.
+
+  *Day 15's trade-off, considered and kept.* A candidate may give up 0.10 within its
+  curve to stay at a small d and then lose by 0.03 between candidates. Kept, because
+  the two numbers are mostly not on one scale -- flatness reads PCA's variance, Isomap's
+  residual variance, MDS's stress and Diffusion Maps' share of distance, and only the
+  battery-reading candidates' curves are on the weighted score -- because they answer
+  different questions, whether one curve has a shape and what difference between two
+  deliverables is negligible, and because day 19's curves show what a candidate gave up.
+
+  *Found on the way.*
+  - The standard errors on the digits data, 1,797 rows under the labelled default, are
+    0.0008 to 0.0022 at the chosen d -- PCA, kernel PCA and Laplacian Eigenmaps at 18,
+    Isomap at 6 -- and the paired ones 0.0007 to 0.0020. So 0.02 is ten to twenty-five
+    standard errors there, not four. Section 3.7's 0.004 to 0.006 was measured on day 10
+    on 2-D embeddings; closer to the Reference the error shrinks, as the rejection of
+    the one-standard-error rule already said. A gap inside the margin is therefore
+    usually real but small, which is what a non-inferiority margin is for.
+  - The same run: PCA led at d = 18 and won, kernel PCA was its close competitor at
+    -0.0107 with a paired SE of 0.0007, and the path said Isomap, at d = 6, wins once a
+    dimension is worth more than 0.0071. Evaluating each candidate took 11 s.
+  - The close-competitor note first said the choice "rests on dimensions" even when the
+    leader won, where PCA and kernel PCA tied on d and the score decided. It now has
+    its own wording for that case.
+  - The jackknife costs 8.6 s per candidate at 1,800 rows, not the 4 s estimated: each
+    replicate re-sorts both distance matrices. The scored rows are capped at 2,000, so
+    the cost is bounded. Not optimised; counting ranks from k-nearest neighbours rather
+    than full sorts would remove most of it, at the price of a second implementation of
+    the battery beside `BatteryScorer`.
+  - `derive_seed` moved from `tuning.py` to `metrics.py`, which `tuning.py` already
+    imports, so the jackknife stream is derived as the tuning streams are.
+  - A metrics record now carries its Embedding's d, and `rank` refuses one without it.
+  - Section 3.8's sentence on why the agent may not set the margin after the scores
+    exist had been cut off since it was written, and is completed.
+  - `CONTEXT.md`'s Departure listed only the weighting and the base, and now includes
+    the tuning grid and the margin.
+
+  *The glossary.* `CONTEXT.md` gains Leader, Margin, Winner, Close competitor and Path of
+  winners. Rejected: "tie" and "joint winner" for Close competitor, since the ranking
+  does order them, and "noise threshold" for Margin, since it is a stated tolerance and
+  not a measured noise.
+
+  727 tests, 192s. The 81 s more than day 15 is the jackknife inside every `evaluate` the
+  tests call.
