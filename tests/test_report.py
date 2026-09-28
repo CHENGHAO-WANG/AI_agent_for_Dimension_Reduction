@@ -107,7 +107,7 @@ def test_the_ranking_block_carries_the_weighting_and_every_note(finished_run):
 
     assert ranking["winner"] in body
     for note in ranking["notes"]:
-        assert note in body, "a qualification rank produced must reach the report"
+        assert note["text"] in body, "a qualification rank produced must reach the report"
 
 
 def test_the_metrics_block_prints_the_values_metrics_recorded(finished_run):

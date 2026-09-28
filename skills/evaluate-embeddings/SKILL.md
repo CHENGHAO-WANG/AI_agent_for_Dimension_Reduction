@@ -41,16 +41,36 @@ are noisy, and discarding noisy directions can recover structure the full-dimens
 space obscured. Report that as what it is. Do not divide one by the other and call the
 result a percentage retained.
 
-**Read the `notes` on the ranking.** They carry the caveats that change what the
-ranking means:
+**Read how the Winner was chosen.** Fidelity rises with d, so the highest score is not
+the answer. The Leader is the Candidate with the highest score. Every Candidate within
+the Margin of it, 0.02 unless the Plan argued otherwise, is in the running, and among
+those the fewest dimensions win. The others in that set are the Close competitors:
+`close_competitors` lists every one, with its d and its score minus the Winner's, and
+the ranking table orders them by the same rule. When there are more than three,
+`discriminated` is false and the ranking has not separated them, which is a finding in
+itself. Which Candidates are close is computed; what their closeness means is yours to
+say in the report.
 
-- A metric that could not be computed for every Candidate is dropped for all of them,
-  and the weight is redistributed. The ranking then answers a narrower question than
-  the weighting intended, and the note says how much weight moved.
-- Two Candidates separated by a hair are tied, not ranked. Stochastic methods and
-  repeated subsampling move scores by more than that margin.
-- Candidates that produced no Embedding are excluded rather than scored as zero.
-  Exclusion is a judgement on that configuration, not on the method.
+**`path_sentences` state what the choice amounts to.** For each value one dimension
+might be given, they name the Candidate that would win, and say at which values the
+Winner itself would. Quote them rather than recomputing them.
+
+**Standard errors are reported, not used.** Each score, and each Close competitor's
+difference from the Winner, carries a jackknife standard error over the scored rows.
+It holds the Embeddings fixed, so it is a lower bound on the real variability, and
+nothing in the choice reads it.
+
+**Read the `notes` on the ranking.** Each carries a `kind` and a `text`:
+
+- `weights_dropped`: a metric that could not be computed for every Candidate is
+  dropped for all of them, and the weight is redistributed. The ranking then answers
+  a narrower question than the weighting intended.
+- `close_competitors`, or `not_discriminated` above three: who the Margin could not
+  separate from the Winner.
+- `standard_error_scope` and `standard_error_unavailable`: what the standard errors
+  measure, and where there is none.
+- `failed_candidates`: Candidates that produced no Embedding are excluded rather than
+  scored as zero. Exclusion is a judgement on that configuration, not on the method.
 
 **Every weighted metric is on an absolute scale**, so a field of uniformly poor
 Embeddings does not produce a winner that looks excellent. Runtime is measured for every

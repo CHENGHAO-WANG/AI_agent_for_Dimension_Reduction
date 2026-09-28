@@ -31,7 +31,14 @@ from drtools.decision import DataDecision, base_rule, recorded_decision
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.pipeline import PipelineError, normalise_stages, validate_stages
 from drtools.metrics import METRIC_SPECS
-from drtools.rank import RankingError, _check_weights, matching_default
+from drtools.rank import (
+    DEFAULT_MARGIN,
+    MAX_MARGIN,
+    WEIGHT_TOLERANCE,
+    RankingError,
+    _check_weights,
+    matching_default,
+)
 from drtools.registry import Registry, load_registry
 from drtools.runs import MISSING, resolve_evidence, unresolved_message
 from drtools.tuning import (
@@ -109,6 +116,11 @@ class EvaluationSpec(BaseModel):
     weights: dict[str, float]
     justification: str = ""
     evidence: list[str] = Field(default_factory=list)
+    #: The non-inferiority margin on the weighted score (section 3.7). The default is
+    #: the rule; another value needs `margin_departure`, argued from evidence. Its own
+    #: field, since a reason to move the weights is no argument for another margin.
+    margin: float = DEFAULT_MARGIN
+    margin_departure: DepartureSpec | None = None
 
 
 class TuningSpec(BaseModel):
@@ -273,9 +285,11 @@ def validate_plan(
     weighting_findings, weighting = _check_weighting(plan, profile)
     base_findings, base = _check_base(plan, decision)
     tuning_findings, tuning = _check_tuning(plan, registry)
+    margin_findings, margin = _check_margin(plan)
     findings: list[Finding] = []
     findings += _check_structure(plan, registry)
     findings += tuning_findings
+    findings += margin_findings
     findings += base_findings
     findings += weighting_findings
     findings += _check_rejections(plan)
@@ -301,6 +315,7 @@ def validate_plan(
         "weighting": weighting,
         "base": base,
         "tuning": tuning,
+        "margin": margin,
         "memory": {
             "limit_bytes": memory_limit_bytes,
             "peak_bytes": {cid: int(value) for cid, value in peaks.items()},
@@ -632,6 +647,48 @@ def _check_tuning(plan: Plan, registry: Registry) -> tuple[list[Finding], str]:
     return findings, state
 
 
+def _check_margin(plan: Plan) -> tuple[list[Finding], str]:
+    """The non-inferiority margin is in range and, if not the default, argued.
+
+    Returns the findings and whether the margin is the `default` or a `departure`,
+    which the registration record keeps. The range is fixed whatever the argument:
+    zero ranks by score alone, with d breaking exact ties, and above `MAX_MARGIN` the
+    comparison between candidates would call negligible a larger difference than the
+    flatness test does within one.
+    """
+    evaluation = plan.evaluation
+    findings: list[Finding] = []
+    if not 0 <= evaluation.margin <= MAX_MARGIN:
+        findings.append(
+            Finding(
+                code="invalid_margin",
+                severity="error",
+                message=f"evaluation.margin is {evaluation.margin}, outside [0, "
+                f"{MAX_MARGIN}]. It is an absolute difference on the weighted score, "
+                f"and wider than {MAX_MARGIN} it would treat as negligible between "
+                "candidates more than the flatness test treats as negligible within one.",
+                fix=f"set margin between 0 and {MAX_MARGIN}, or leave it at the "
+                f"default {DEFAULT_MARGIN}",
+            )
+        )
+    if abs(evaluation.margin - DEFAULT_MARGIN) <= WEIGHT_TOLERANCE:
+        return findings, "default"
+    departure = evaluation.margin_departure
+    if departure is None or not departure.reason.strip() or not departure.evidence:
+        findings.append(
+            Finding(
+                code="unexplained_margin_departure",
+                severity="error",
+                message=f"evaluation.margin is {evaluation.margin}, not the default "
+                f"{DEFAULT_MARGIN}, and has no departure. A different margin is "
+                "allowed, argued from the data, and has to show as one.",
+                fix="restore the default, or give evaluation.margin_departure a reason "
+                "and the evidence keys it rests on",
+            )
+        )
+    return findings, "departure"
+
+
 def is_linear_baseline(candidate: CandidateSpec) -> bool:
     """The base preprocessing plus a single `pca`, which is the only thing the name means."""
     return len(candidate.stages) == 1 and candidate.stages[0].op == "pca"
@@ -849,6 +906,10 @@ def _check_evidence(plan: Plan, artifacts: dict[str, Any]) -> list[Finding]:
         places.append(("the base departure", None, None, plan.base_departure.evidence))
     if plan.tuning.departure is not None:
         places.append(("the tuning departure", None, None, plan.tuning.departure.evidence))
+    if plan.evaluation.margin_departure is not None:
+        places.append(
+            ("the margin departure", None, None, plan.evaluation.margin_departure.evidence)
+        )
     for where, candidate_id, stages in [
         ("base preprocessing", None, plan.base_preprocessing),
         *[(f"candidate {c.id}", c.id, c.stages) for c in plan.candidates],

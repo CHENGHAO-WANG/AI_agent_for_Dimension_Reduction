@@ -133,6 +133,12 @@ groups. Cite what settles it. Any other weighting is a departure, allowed when i
 Evidence keys argue for it. The label metrics need labels, and `runtime_s` carries no
 weight: it is reported, never scored.
 
+**The Margin.** `evaluation.margin`, 0.02 by default, is how much weighted score the
+comparison treats as negligible: among the Candidates within it of the Leader, the
+fewest dimensions win. Leave it out and the default is the rule. Another value, between
+0 and 0.10, is a Departure: `evaluation.margin_departure: {reason, evidence}`, argued
+from the data. It is frozen with the rest of the `evaluation` block.
+
 ## Register it
 
 Write `plan.json` into the Run, then:

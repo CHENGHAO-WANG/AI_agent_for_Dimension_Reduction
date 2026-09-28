@@ -31,7 +31,6 @@ method has its output dimension k chosen by PCA's own criterion, as a PCA's d is
 from __future__ import annotations
 
 import time
-import zlib
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -40,7 +39,7 @@ import numpy as np
 from drtools.constraints import RULES
 from drtools.contract import Matrix
 from drtools.executors import ExecutionError
-from drtools.metrics import BatteryScorer, _subsample_index
+from drtools.metrics import BatteryScorer, _subsample_index, derive_seed
 from drtools.pipeline import PipelineError, run_pipeline
 from drtools.rank import weighted_score
 from drtools.registry import Registry, load_registry
@@ -95,19 +94,6 @@ class TuningSettings:
             fallback_share=float(block.get("fallback_share", DEFAULT_FALLBACK_SHARE)),
             max_cycles=int(block.get("max_cycles", DEFAULT_MAX_CYCLES)),
         )
-
-
-def derive_seed(seed: int, purpose: str) -> int:
-    """A seed for one purpose, computed from the run's seed and never chosen.
-
-    Keyed on the purpose rather than the candidate, so every candidate draws the same
-    tuning rows and the same fitting stream -- common random numbers -- while the run's
-    own seed keeps its meaning for every refit and the final battery (section 3.5).
-    """
-    sequence = np.random.SeedSequence(
-        entropy=int(seed), spawn_key=(zlib.crc32(purpose.encode("utf-8")),)
-    )
-    return int(sequence.generate_state(1, dtype=np.uint32)[0])
 
 
 # ------------------------------------------------------------------- the d rules

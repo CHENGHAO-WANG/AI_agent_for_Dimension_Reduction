@@ -102,7 +102,9 @@ Three specific restraints:
 The things a reader would otherwise have to discover:
 
 - Metrics dropped from the ranking, and how much weight moved with them.
-- Candidates separated by less than the noise, reported as tied.
+- The Close competitors: the Candidates within the Margin of the Leader, which the
+  ranking did not separate from the Winner. Section 8 says what their closeness
+  means for this data; the numbers are already in section 7.
 - Any subsampling, and what the metrics therefore describe.
 - Figures where identity is carried by printed class names rather than colour, and why:
   above three classes, no categorical palette clears the separation floors for

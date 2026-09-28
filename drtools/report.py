@@ -463,6 +463,20 @@ def _block_metrics(run: RunDir) -> str:
     return body
 
 
+#: Which kinds of ranking note are limitations, and so repeat in section 9. Every kind
+#: `rank` writes is classified here, and a test holds this to `NOTE_KINDS`. The two
+#: kinds marked False are limitations too, but section 9 prints them from their own
+#: fields rather than from the note.
+LIMITATION_KINDS: dict[str, bool] = {
+    "weights_dropped": False,
+    "failed_candidates": False,
+    "close_competitors": True,
+    "not_discriminated": True,
+    "standard_error_scope": True,
+    "standard_error_unavailable": True,
+}
+
+
 def _block_ranking(run: RunDir) -> str:
     ranking = _read(run, "ranking.json")
     if ranking is None:
@@ -477,14 +491,41 @@ def _block_ranking(run: RunDir) -> str:
             else "—"
             for name in applied
         ]
+        if entry["rank"] == 1:
+            standing = "winner"
+        elif entry.get("close_competitor"):
+            standing = f"close, {entry['difference_from_winner']:+.4f}"
+        else:
+            standing = ""
         rows.append(
-            [str(entry["rank"]), entry["id"], f"{entry['score']:.4f}"] + contributions
+            [str(entry["rank"]), entry["id"], str(entry["d"]), f"{entry['score']:.4f}",
+             standing]
+            + contributions
         )
     body = _table(
-        ["Rank", "Candidate", "Score"] + [f"`{name}`" for name in applied], rows
+        ["Rank", "Candidate", "d", "Score", "Within the margin"]
+        + [f"`{name}`" for name in applied],
+        rows,
     )
 
-    lines = ["", f"Winner: **{ranking['winner']}**.", ""]
+    winner = next(entry for entry in ranking["ranking"] if entry["rank"] == 1)
+    lines = ["", f"Winner: **{ranking['winner']}** (d = {winner['d']}).", ""]
+    competitors = ranking.get("close_competitors") or []
+    if competitors and ranking.get("discriminated", True):
+        lines.append(
+            f"Close competitors, within {ranking['margin']} of the leader "
+            f"{ranking['leader']}: "
+            + "; ".join(
+                f"{c['id']} (d = {c['d']}, {c['difference_from_winner']:+.4f})"
+                for c in competitors
+            )
+            + "."
+        )
+    elif competitors:
+        lines.append(
+            f"{len(competitors) + 1} candidates lie within {ranking['margin']} of the "
+            f"leader {ranking['leader']}; the ranking did not discriminate among them."
+        )
     lines.append(
         "Weighting declared before any Embedding existed: "
         + ", ".join(
@@ -509,10 +550,10 @@ def _block_ranking(run: RunDir) -> str:
             + ", ".join(ranking["failed_candidates"])
             + "."
         )
-    # Verbatim. These are the qualifications `rank` computed -- a tie inside the noise,
-    # a runtime span that dominates the comparison -- and paraphrasing them here would
-    # be the report making a claim the toolbox did not.
-    lines += [""] + [f"- {note}" for note in ranking.get("notes") or []]
+    # Verbatim. These are the qualifications `rank` computed -- the close competitors,
+    # the scope of the standard errors -- and paraphrasing them here would be the
+    # report making a claim the toolbox did not.
+    lines += [""] + [f"- {note['text']}" for note in ranking.get("notes") or []]
     return body + "\n" + "\n".join(lines)
 
 
@@ -537,8 +578,8 @@ def _block_limitations(run: RunDir) -> str:
         lines.append(f"- `{name}` was dropped from the score: {reason}.{moved}")
 
     for note in ranking.get("notes") or []:
-        if "tied" in note or "noise" in note:
-            lines.append(f"- {note}")
+        if LIMITATION_KINDS[note["kind"]]:
+            lines.append(f"- {note['text']}")
 
     # Every candidate covers every row and is scored on the same rows (section 3.12),
     # so the scored sample is one fact about the comparison, not one per candidate.

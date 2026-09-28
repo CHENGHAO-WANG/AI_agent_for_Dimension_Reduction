@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,10 @@ MAX_K = 15
 #: weight it at face value; below n=3 the rule's own guarantee (k < n/2) also stops
 #: holding, since neighbourhood_size floors at 1.
 LOCAL_METRIC_FLOOR = 20
+
+#: The grouped jackknife's number of groups (section 3.7). Every candidate's scored
+#: rows are split into the same groups, so the replicates are paired across candidates.
+JACKKNIFE_GROUPS = 10
 
 
 def neighbourhood_size(n: int) -> int:
@@ -245,6 +250,7 @@ def evaluate_embedding(
 
     return {
         "values": values,
+        "d": int(embedding.shape[1]),
         "reference_values": reference_values,
         "n_used": int(n_used),
         "n_total": int(n_total),
@@ -253,7 +259,84 @@ def evaluate_embedding(
         "seed": seed,
         "settings": {"k": k, "max_samples": max_samples, "seed": seed},
         "notes": _notes(values, reference_values, n_used, n_total),
+        "jackknife": _jackknife(reference, embedding, labels, k=k, seed=seed),
     }
+
+
+def derive_seed(seed: int, purpose: str) -> int:
+    """A seed for one purpose, computed from the run's seed and never chosen.
+
+    Keyed on the purpose rather than the candidate, so every candidate draws the same
+    tuning rows, the same fitting stream and the same jackknife groups -- common random
+    numbers -- while the run's own seed keeps its meaning for every refit and the final
+    battery (section 3.5).
+    """
+    sequence = np.random.SeedSequence(
+        entropy=int(seed), spawn_key=(zlib.crc32(purpose.encode("utf-8")),)
+    )
+    return int(sequence.generate_state(1, dtype=np.uint32)[0])
+
+
+def jackknife_groups(
+    n: int, labels: np.ndarray | None, seed: int, n_groups: int = JACKKNIFE_GROUPS
+) -> np.ndarray:
+    """Each scored row's jackknife group, 0 to `n_groups - 1`.
+
+    Drawn from a stream derived from the run's seed, so the assignment depends only on
+    the seed, the number of scored rows and their labels, and every candidate gets the
+    same groups. With labels, each class is shuffled and dealt round the groups in
+    turn, the count carrying on from one class to the next, so every group holds each
+    class in proportion and the group sizes differ by at most one.
+    """
+    rng = np.random.default_rng(derive_seed(seed, "jackknife"))
+    if labels is None:
+        order = rng.permutation(n)
+    else:
+        labels = np.asarray(labels)
+        order = np.concatenate(
+            [rng.permutation(np.flatnonzero(labels == cls)) for cls in np.unique(labels)]
+        )
+    groups = np.empty(n, dtype=np.int64)
+    groups[order] = np.arange(n) % n_groups
+    return groups
+
+
+def _jackknife(
+    reference: Matrix,
+    embedding: np.ndarray,
+    labels: np.ndarray | None,
+    *,
+    k: int,
+    seed: int,
+) -> dict[str, Any]:
+    """The battery on the scored rows with one group left out, once per group.
+
+    Each replicate recomputes every metric on the rows that remain, neighbourhoods
+    included, at the cohort's k. The fitted Embedding is held fixed, so the replicates
+    measure only which rows were scored. `rank` turns them into standard errors under
+    the weights it applies, which is why the weighting is not needed here.
+    """
+    n = int(reference.shape[0])
+    record: dict[str, Any] = {"n_groups": JACKKNIFE_GROUPS, "groups": None,
+                              "replicates": None}
+    if n - math.ceil(n / JACKKNIFE_GROUPS) < LOCAL_METRIC_FLOOR:
+        record["unavailable"] = (
+            f"{n} scored rows leave fewer than {LOCAL_METRIC_FLOOR} once a group of "
+            f"{JACKKNIFE_GROUPS} is left out, below the battery's floor"
+        )
+        return record
+    groups = jackknife_groups(n, labels, seed)
+    wanted = {name for name, spec in METRIC_SPECS.items() if spec.weightable}
+    replicates = []
+    for group in range(JACKKNIFE_GROUPS):
+        kept = np.flatnonzero(groups != group)
+        scorer = BatteryScorer(
+            reference[kept], None if labels is None else labels[kept], k=k, wanted=wanted
+        )
+        replicates.append(scorer.score(embedding[kept]))
+    record["groups"] = scored_rows_digest(groups)
+    record["replicates"] = replicates
+    return record
 
 
 def scored_rows_digest(index: np.ndarray) -> str:
