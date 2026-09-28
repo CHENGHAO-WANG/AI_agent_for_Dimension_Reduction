@@ -31,7 +31,7 @@ from drtools.heuristics import suggest, suggest_base
 from drtools.isolation import BUDGET_MAX_CANDIDATES, budget_timeout, run_candidate
 from drtools.loaders import available, load
 from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
-from drtools.pipeline import PipelineError, run_pipeline
+from drtools.pipeline import PipelineError, run_pipeline, save_embedding
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
@@ -722,11 +722,7 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
             return outcome
 
         embeddings = run.path / "embeddings"
-        np.save(embeddings / f"{args.id}.npy", result.embedding)
-        if result.labels is not None:
-            np.save(embeddings / f"{args.id}.labels.npy", result.labels)
-        if result.context.sample_index is not None:
-            np.save(embeddings / f"{args.id}.index.npy", result.context.sample_index)
+        save_embedding(embeddings, args.id, result)
         outcome = {"id": args.id, "status": "ok", **result.as_dict()}
         jsonio.write(embeddings / f"{args.id}.json", outcome)
 
@@ -1077,8 +1073,8 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
             "this id, or evaluate a different candidate."
         )
     embedding = np.load(run.path / "embeddings" / f"{args.id}.npy")
-    reference, labels = _reference_for(run, args.id)
-    _check_rows_support_k(run, args.id, reference.shape[0], reference_rows, settings)
+    reference, labels = _reference_for(run)
+    _check_covers_every_row(args.id, int(embedding.shape[0]), reference_rows)
 
     metrics = evaluate_embedding(
         reference,
@@ -1138,45 +1134,27 @@ def _check_registration_is_recorded(run: RunDir, plan: Plan) -> None:
     )
 
 
-def _check_rows_support_k(
-    run: RunDir,
-    candidate_id: str,
-    candidate_rows: int,
-    reference_rows: int,
-    settings: dict[str, Any],
+def _check_covers_every_row(
+    candidate_id: str, embedding_rows: int, reference_rows: int
 ) -> None:
-    """Refuse a candidate whose rows cannot carry the neighbourhood the run is fixed at.
+    """Refuse an embedding that does not cover every row of the reference.
 
-    The battery's k is derived once, from the reference's row count, so that every
-    candidate's trustworthiness is a measurement of the same thing. A candidate that
-    subsampled has fewer rows than the reference, and scikit-learn needs `k < n / 2`;
-    the tempting repair is to fall back to a smaller k for that one candidate, which is
-    precisely how two candidates come to be scored at different neighbourhoods and
-    ranked together with no caveat. So this refuses instead, and names the subsample as
-    the reason rather than leaving the agent to infer it from an arithmetic error.
+    Section 3.12: a candidate that subsamples is fitted on the rows it kept and has the
+    rest projected, so every embedding has the reference's rows in the reference's
+    order. That is what makes the battery's scored rows the same rows for every
+    candidate, drawn from one row count under one seed. An embedding with fewer rows
+    was made before that held, and scoring it on its own rows would be scoring it on
+    rows no other candidate was scored on.
     """
-    k = int(settings["k"])
-    n_used = min(int(candidate_rows), int(settings["max_samples"]))
-    if k < n_used / 2:
+    if embedding_rows == reference_rows:
         return
-
-    subsampled = (run.path / "embeddings" / f"{candidate_id}.index.npy").exists()
-    kept = (
-        f"candidate {candidate_id!r} subsampled to {candidate_rows} of the "
-        f"reference's {reference_rows} rows"
-        if subsampled
-        else f"candidate {candidate_id!r} has {candidate_rows} rows against the "
-        f"reference's {reference_rows}"
-    )
     raise ContractError(
-        f"{kept}, which cannot support this run's neighbourhood of k={k}: "
-        f"scikit-learn needs k < n/2, so {n_used} rows admit at most "
-        f"k={neighbourhood_size(n_used)}. k is fixed once from the reference so that "
-        "every candidate is measured at the same neighbourhood, and scoring this one "
-        "at a smaller k would make its numbers incomparable with the rest — which is "
-        "the whole reason this refuses rather than adjusting. Drop the subsample stage "
-        "and re-register this candidate under a new id, or start a new run whose "
-        "dataset is the smaller sample so the reference is fixed to it."
+        f"candidate {candidate_id!r} has {embedding_rows} rows against the reference's "
+        f"{reference_rows}. Every candidate must cover every row, so that all of them "
+        "are scored on the same rows: one that subsamples is fitted on the rows it "
+        "kept and has the rest projected. This embedding predates that rule, or was "
+        "not produced by `embed`. Re-register the candidate under a new id and embed "
+        "it."
     )
 
 
@@ -1212,6 +1190,7 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
             metrics_by_id[candidate.id] = jsonio.read(metrics_path)
         elif record_path.exists():
             failures[candidate.id] = jsonio.read(record_path).get("failure", {})
+    _check_scored_on_the_same_rows(metrics_by_id)
 
     ranking = rank_candidates(
         metrics_by_id,
@@ -1236,6 +1215,36 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         plan_digest=ranking["plan_digest"],
     )
     return ranking
+
+
+def _check_scored_on_the_same_rows(metrics_by_id: dict[str, Any]) -> None:
+    """Refuse to rank candidates that were not scored on the same rows.
+
+    Section 3.12 makes the comparison paired: every candidate covers every row, so the
+    battery draws the same rows for each. `evaluate` guarantees it for every record it
+    writes, and this checks the records being ranked, since a metrics file from before
+    the rule, or written by hand, would otherwise rank beside the rest unnoticed.
+    """
+    digests = {
+        candidate_id: record.get("scored_rows")
+        for candidate_id, record in metrics_by_id.items()
+    }
+    if len(set(digests.values())) <= 1 and None not in digests.values():
+        return
+    groups: dict[Any, list[str]] = {}
+    for candidate_id, digest in digests.items():
+        groups.setdefault(digest, []).append(candidate_id)
+    described = "; ".join(
+        f"{', '.join(ids)} on rows {digest or 'not recorded'}"
+        for digest, ids in groups.items()
+    )
+    raise ContractError(
+        "these candidates were not all scored on the same rows, so ranking them would "
+        f"compare scores measured on different points: {described}. Every candidate "
+        "must be scored on the rows the battery draws from the full reference. Run "
+        "`drtools evaluate` again for each candidate whose rows differ or are not "
+        "recorded."
+    )
 
 
 def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
@@ -1573,7 +1582,7 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     if successful:
         drawn["comparison"] = figure_comparison(
             successful,
-            _labels_for(run, next(iter(successful)), labels),
+            labels,
             names,
             figures_dir / "comparison.png",
             theme_name=args.theme,
@@ -1581,7 +1590,7 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
         for candidate_id, embedding in successful.items():
             drawn[f"embedding_{candidate_id}"] = figure_embedding(
                 embedding,
-                _labels_for(run, candidate_id, labels),
+                labels,
                 names,
                 figures_dir / f"embedding_{candidate_id}.png",
                 title=candidate_id,
@@ -1594,7 +1603,7 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     if winner in successful and labels is not None:
         drawn["class_facet"] = figure_class_facet(
             successful[winner],
-            _labels_for(run, winner, labels),
+            labels,
             names,
             figures_dir / "class_facet.png",
             title=f"Classes in {winner}",
@@ -1638,7 +1647,7 @@ def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
     """Distances before against distances after, on the same capped subsample."""
     from sklearn.metrics import pairwise_distances
 
-    reference, _ = _reference_for(run, candidate_id)
+    reference, _ = _reference_for(run)
     n = min(reference.shape[0], 800)
     rng = np.random.default_rng(0)
     index = np.sort(rng.choice(reference.shape[0], size=n, replace=False))
@@ -1655,14 +1664,6 @@ def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
         title=f"Shepard diagram — {candidate_id}",
         theme_name=theme_name,
     )
-
-
-def _labels_for(run: RunDir, candidate_id: str, labels):
-    """Labels subset to the rows a candidate kept, so colours line up with points."""
-    if labels is None:
-        return None
-    index_path = run.path / "embeddings" / f"{candidate_id}.index.npy"
-    return labels[np.load(index_path)] if index_path.exists() else labels
 
 
 def _in_rank_order(run: RunDir, embeddings: dict[str, Any]) -> dict[str, Any]:
@@ -1703,8 +1704,11 @@ def _require_run(args: argparse.Namespace, *, create: bool = True) -> RunDir:
     return RunDir(path, create=create)
 
 
-def _reference_for(run: RunDir, candidate_id: str):
-    """The representation to measure against, subset to the rows the candidate kept."""
+def _reference_for(run: RunDir):
+    """The representation to measure against, with its labels.
+
+    The same for every candidate: each embedding covers every row, in row order.
+    """
     directory = run.path / "data"
     reference_path = directory / "reference.npy"
     if reference_path.exists():
@@ -1712,12 +1716,6 @@ def _reference_for(run: RunDir, candidate_id: str):
         _, labels, _ = read_cache(run)
     else:
         reference, labels, _ = read_cache(run)
-
-    index_path = run.path / "embeddings" / f"{candidate_id}.index.npy"
-    if index_path.exists():
-        index = np.load(index_path)
-        reference = reference[index]
-        labels = None if labels is None else labels[index]
     return reference, labels
 
 

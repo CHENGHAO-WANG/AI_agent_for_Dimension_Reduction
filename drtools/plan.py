@@ -861,9 +861,14 @@ def _stage_peaks(
     registry: Registry,
     decision: DataDecision | None = None,
 ) -> tuple[float, list[tuple[str, float]]]:
-    """The loaded data's bytes, and each stage's input, output and copy held together."""
+    """The loaded data's bytes, and each stage's input, output and copy held together.
+
+    After a subsample, the matrix that entered it is held too: the rows it did not keep
+    are projected from it once the later stages are fitted (section 3.12).
+    """
     state = _initial_state(profile, decision)
     loaded = state.nbytes
+    retained = 0.0
     peaks: list[tuple[str, float]] = []
     for position, stage in enumerate(stages):
         op = stage["op"]
@@ -879,7 +884,9 @@ def _stage_peaks(
         # PCA centres a dense input in a copy of it; the first stage's input is the
         # loaded data, which is already counted.
         copy = before if op == "pca" and not sparse_before else 0.0
-        peaks.append((op, (before if position else 0.0) + after + copy))
+        peaks.append((op, retained + (before if position else 0.0) + after + copy))
+        if op == "subsample" and position:
+            retained = before
     return loaded, peaks
 
 
@@ -892,8 +899,9 @@ def estimate_peak_bytes(
     """The memory a candidate's pipeline needs at its heaviest stage.
 
     The loaded data stays in memory throughout; on top of it, each stage holds its
-    input and its output at once, and PCA on dense input a centred copy. The largest of
-    those is the peak. A method's own working memory -- an n-by-n matrix -- is not
+    input and its output at once, PCA on dense input a centred copy, and every stage
+    after a subsample the matrix the subsample was taken from. The largest of those is
+    the peak. A method's own working memory -- an n-by-n matrix -- is not
     counted: `scales_to` governs that.
     """
     loaded, peaks = _stage_peaks(stages, profile, registry or load_registry(), decision)
@@ -1256,8 +1264,9 @@ def _check_stage_against_state(
                 op=op,
                 message=f"{op} receives {n:,} samples but is documented as practical to "
                 f"about {spec.scales_to:,} ({spec.raw.get('complexity', 'see registry')}).",
-                fix=f"insert a subsample stage before {op}, and record that the metrics "
-                "then describe the subsample; or choose a method that scales",
+                fix=f"insert a subsample stage before {op}: {op} is fitted on the rows "
+                "kept and every other row is projected through the fitted pipeline; or "
+                "choose a method that scales",
             )
         )
 

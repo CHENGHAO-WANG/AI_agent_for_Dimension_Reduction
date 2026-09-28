@@ -1,11 +1,11 @@
-"""The comparability contract: one neighbourhood per run, or no ranking.
+"""The comparability contract: one neighbourhood and one set of scored rows per run.
 
-The reproduction is two candidates that subsample differently. Before this, each was
-scored at a k derived from its own post-subsample row count — k=13 over 28 rows against
-k=15 over 400 — and `rank` put them in one table with no caveat, the subsampled one
-winning on a trustworthiness measured over a few dozen points. k is now fixed once, when
-the reference is, and a candidate whose rows cannot carry it is refused rather than
-quietly rescored at a smaller one.
+The reproduction is two candidates, one of which subsamples. Before day 7 each was
+scored at a k derived from its own post-subsample row count -- k=13 over 28 rows against
+k=15 over 400 -- and `rank` put them in one table with no caveat. k is now fixed once,
+when the reference is. Since day 14 a candidate that subsamples is fitted on the rows it
+kept and has the rest projected, so it covers every row, and the battery scores it on the
+same rows as every other candidate (section 3.12).
 
 Since day 12 a subsample registers only in front of a method whose limit the data
 exceeds, so the reproduction subsamples Isomap on a dataset above its 5,000 rows.
@@ -59,33 +59,74 @@ def run_with_two_candidates(cli, wide_csv, tmp_path):
     return runs / "r1"
 
 
-def test_candidates_that_subsample_differently_cannot_be_ranked_together(
+def test_a_subsampled_candidate_is_scored_on_the_same_rows_as_the_rest(
     cli, run_with_two_candidates
 ):
+    """Section 3.12: fitted on 30 rows, it still covers 6,000, and is paired with PCA."""
     run = run_with_two_candidates
     for candidate in ("full", "small"):
         assert cli("embed", "--run-dir", run, "--id", candidate, "--in-process").code == 0
+
+    # The record says which rows were fitted and which projected.
+    record = json.loads((run / "embeddings" / "small.json").read_text(encoding="utf-8"))
+    assert record["rows"]["n_rows"] == ROWS
+    assert record["rows"]["n_fitted"] == 30
+    assert record["rows"]["n_projected"] == ROWS - 30
+    assert np.load(run / "embeddings" / "small.fitted.npy").size == 30
+    assert np.load(run / "embeddings" / "small.npy").shape[0] == ROWS
+    assert not (run / "embeddings" / "full.fitted.npy").exists()
 
     cli("prepare-reference", "--run-dir", run)
     full = cli("evaluate", "--run-dir", run, "--id", "full")
     small = cli("evaluate", "--run-dir", run, "--id", "small")
 
-    # The one that kept every row is scored at the reference's k, and says so.
-    assert full.code == 0
+    # Both at the reference's k, on the same rows drawn from the same row count.
+    assert full.code == 0 and small.code == 0
+    assert full.payload["settings"] == small.payload["settings"]
     assert full.payload["settings"]["k"] == 15
+    assert full.payload["n_total"] == small.payload["n_total"] == ROWS
+    assert full.payload["scored_rows"] == small.payload["scored_rows"]
 
-    # The one that subsampled is refused, and the refusal names the subsample and the
-    # way out rather than leaving the agent to infer either.
-    assert small.code == 2
-    assert "subsampled to 30 of the reference's 6000 rows" in small.stderr
-    assert "k=15" in small.stderr
-    assert "new run" in small.stderr
-
-    # Nothing was written for it, so `rank` has nothing to put beside the other.
-    assert not (run / "metrics" / "small.json").exists()
     ranking = cli("rank", "--run-dir", run)
     assert ranking.code == 0
-    assert [row["id"] for row in ranking.payload["ranking"]] == ["full"]
+    assert sorted(row["id"] for row in ranking.payload["ranking"]) == ["full", "small"]
+
+
+def test_rank_refuses_candidates_scored_on_different_rows(
+    cli, run_with_two_candidates
+):
+    """A metrics record from before the rule, or edited, cannot rank beside the rest."""
+    run = run_with_two_candidates
+    for candidate in ("full", "small"):
+        cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+    cli("prepare-reference", "--run-dir", run)
+    for candidate in ("full", "small"):
+        cli("evaluate", "--run-dir", run, "--id", candidate)
+
+    path = run / "metrics" / "small.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["scored_rows"] = "0" * 16
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    ranking = cli("rank", "--run-dir", run)
+    assert ranking.code == 2
+    assert "not all scored on the same rows" in ranking.stderr
+    assert "evaluate" in ranking.stderr
+
+
+def test_an_embedding_short_of_rows_is_refused_at_evaluation(
+    cli, run_with_two_candidates
+):
+    run = run_with_two_candidates
+    cli("embed", "--run-dir", run, "--id", "small", "--in-process")
+    cli("prepare-reference", "--run-dir", run)
+    path = run / "embeddings" / "small.npy"
+    np.save(path, np.load(path)[:30])
+
+    result = cli("evaluate", "--run-dir", run, "--id", "small")
+    assert result.code == 2
+    assert "has 30 rows against the reference's 6000" in result.stderr
+    assert not (run / "metrics" / "small.json").exists()
 
 
 def test_evaluate_scores_at_the_k_prepare_reference_recorded(

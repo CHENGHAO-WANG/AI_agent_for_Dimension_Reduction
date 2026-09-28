@@ -1,5 +1,9 @@
 """Manifold reductions: MDS, Isomap, and locally linear embedding.
 
+MDS sets no projection. It has no `transform` and no standard extension, so a
+candidate cannot fit it on a subsample, and above its limit it is refused (section
+3.12).
+
 These are the methods with real preconditions, and the preconditions fail quietly.
 Isomap on a disconnected graph produces infinite geodesics that scikit-learn patches
 over, leaving an embedding that looks fine and means nothing. Modified LLE with too few
@@ -96,6 +100,9 @@ def isomap(
 
     model = Isomap(n_components=n_components, n_neighbors=n_neighbors)
     embedding = model.fit_transform(dense)
+    # A new row's geodesic distance to every fitted row runs through its nearest fitted
+    # neighbours, so each chunk costs a chunk-by-fitted-rows matrix.
+    ctx.project_with(lambda Z: model.transform(require_dense(Z, "isomap")), "transform")
 
     return embedding, {
         "n_neighbors": int(n_neighbors),
@@ -155,6 +162,9 @@ def lle(
         eigen_solver="dense" if n_samples <= 2000 else "auto",
     )
     embedding = model.fit_transform(dense)
+    # scikit-learn places a new row by its barycentric weights on its nearest fitted
+    # rows, whichever variant was fitted.
+    ctx.project_with(lambda Z: model.transform(require_dense(Z, "lle")), "transform")
 
     # LLE's characteristic failure is collapse: whole regions squashed toward a point,
     # which looks like tight clustering. Comparing the spread of the coordinates catches

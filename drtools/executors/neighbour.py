@@ -59,7 +59,14 @@ def tsne(
         random_state=ctx.seed,
         verbose=False,
     )
-    embedding = np.asarray(model.fit(dense))
+    fitted = model.fit(dense)
+    embedding = np.asarray(fitted)
+    # openTSNE optimises new points against the fixed embedding, with its own defaults
+    # for the purpose. New points do not act on one another, so chunking the new rows
+    # does not change where they land.
+    ctx.project_with(
+        lambda Z: np.asarray(fitted.transform(require_dense(Z, "tsne"))), "transform"
+    )
 
     return embedding, {
         "perplexity": float(perplexity),
@@ -117,6 +124,13 @@ def umap(
         verbose=False,
     )
     embedding = np.asarray(model.fit_transform(X))
+
+    def project(Z: Matrix) -> np.ndarray:
+        if sp.issparse(Z) and not isinstance(Z, sp.spmatrix):
+            Z = sp.csr_matrix(Z)
+        return np.asarray(model.transform(Z))
+
+    ctx.project_with(project, "transform")
 
     return embedding, {
         "n_neighbors": int(n_neighbors),

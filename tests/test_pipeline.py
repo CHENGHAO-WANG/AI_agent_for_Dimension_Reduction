@@ -90,21 +90,27 @@ def test_each_stage_records_what_it_ran_with_and_where_values_came_from() -> Non
     assert result.total_duration_s > 0
 
 
-def test_subsampling_keeps_labels_aligned_and_declares_the_caveat() -> None:
-    """A metric computed after this stage describes the subset, and must say so."""
+def test_a_subsample_is_fitted_on_and_every_row_is_still_covered() -> None:
+    """Section 3.12: the kept rows are fitted on, the rest projected, labels aligned."""
     X, labels, _ = load("blobs", n_samples=1000, n_clusters=5)
 
     result = run_pipeline(
         X, labels, [{"op": "subsample", "params": {"n_samples": 250}}, {"op": "pca"}]
     )
 
-    assert result.embedding.shape[0] == result.labels.shape[0]
-    assert result.embedding.shape[0] <= 255
-    assert set(np.unique(result.labels)) == set(range(5)), "a class was lost"
-    assert "subsample" in result.stages[0].notes["strategy"] or result.stages[0].notes[
-        "strategy"
-    ] == "stratified by label"
-    assert "describe the subsample" in result.stages[0].notes["caveat"]
+    assert result.embedding.shape[0] == result.labels.shape[0] == 1000
+    np.testing.assert_array_equal(result.labels, labels)
+    fitted = result.coverage.fitted_index
+    assert fitted.size <= 255
+    assert set(np.unique(labels[fitted])) == set(range(5)), "a class was lost"
+    assert result.stages[0].notes["strategy"] == "stratified by label"
+    assert "projected" in result.stages[0].notes["caveat"]
+
+    rows = result.as_dict()["rows"]
+    assert rows["fitted_on"] == "subsample"
+    assert rows["n_fitted"] + rows["n_projected"] == 1000
+    assert result.stages[1].projection["kind"] == "transform"
+    assert result.stages[1].projection["n_rows"] == rows["n_projected"]
 
 
 def test_constant_features_are_dropped_and_counted() -> None:

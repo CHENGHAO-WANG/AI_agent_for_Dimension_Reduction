@@ -22,6 +22,7 @@ a ceiling exists, it is computed on the reference representation and reported al
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -171,15 +172,15 @@ def evaluate_embedding(
 ) -> dict[str, Any]:
     """Score one embedding against the representation it was computed from.
 
-    `reference` must be row-aligned with `embedding`. When a candidate subsampled, the
-    caller is responsible for having subset the reference the same way — the sample
-    index is recorded by the pipeline precisely so that this alignment is possible
-    rather than assumed.
+    `reference` must be row-aligned with `embedding`. Every candidate covers every row
+    (section 3.12), so the scored rows are drawn from the same row count under the same
+    seed and labels for every candidate, and the comparison is paired. `scored_rows`
+    is a digest of the rows drawn, so that sameness can be checked rather than assumed.
 
     `k` is required and has no default. It is derived once from the reference's row
     count — by `neighbourhood_size`, at the moment the reference is fixed — and passed
     in, rather than computed here from whatever rows this particular candidate kept.
-    Deriving it per candidate is how two candidates that subsample differently end up
+    Deriving it per candidate is how two candidates with different row counts ended up
     measured at different neighbourhoods and ranked together anyway. A default would
     reopen that door for the next caller, and an optional override would leave it open
     on purpose, so there is neither: the caller must say which k this cohort is being
@@ -194,8 +195,8 @@ def evaluate_embedding(
         raise ValueError(
             f"reference has {reference.shape[0]} rows and the embedding has "
             f"{embedding.shape[0]}; they must be row-aligned for any of these metrics "
-            "to mean anything. If the candidate subsampled, subset the reference by the "
-            "recorded sample index first."
+            "to mean anything. Every candidate's embedding covers every row of the "
+            "reference, in its order."
         )
 
     n_total = reference.shape[0]
@@ -248,10 +249,16 @@ def evaluate_embedding(
         "n_used": int(n_used),
         "n_total": int(n_total),
         "subsampled": bool(n_used < n_total),
+        "scored_rows": scored_rows_digest(index),
         "seed": seed,
         "settings": {"k": k, "max_samples": max_samples, "seed": seed},
         "notes": _notes(values, reference_values, n_used, n_total),
     }
+
+
+def scored_rows_digest(index: np.ndarray) -> str:
+    """A short digest of which rows were scored, equal across a paired comparison."""
+    return hashlib.sha256(np.asarray(index, dtype=np.int64).tobytes()).hexdigest()[:16]
 
 
 def _shepard(reference: Matrix, embedding: np.ndarray) -> float:

@@ -10,22 +10,34 @@ step helped — an experiment it designs, rather than a recipe it follows.
 Every stage leaves a record: the parameters it ran with, where each value came from,
 what it did, and how long it took. The stage records are what let the report say what
 happened instead of what was planned.
+
+A candidate covers every row (section 3.12). One that subsamples is fitted on the rows
+it kept, and every other row is then passed through the stages after the subsample, in
+chunks, with the parameters the fit produced. The embedding comes back in the dataset's
+own row order, and the record says which rows were fitted and which were projected.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
 
 from drtools.contract import Matrix
-from drtools.executors import Context, ExecutionError, get_executor
+from drtools.executors import Context, ExecutionError, Projection, get_executor
 from drtools.registry import Registry, RegistryError, load_registry
 
 Stage = dict[str, Any]
+
+#: The working memory one chunk of projected rows may take, in bytes. A chunk's
+#: heaviest object is its matrix against every fitted row -- a kernel, a distance or a
+#: geodesic matrix -- so the rows per chunk are this divided by eight bytes times the
+#: larger of the fitted rows and the features entering the projection.
+PROJECTION_CHUNK_BYTES = 256 * 1024**2
 
 
 class PipelineError(ValueError):
@@ -41,9 +53,12 @@ class StageRecord:
     output_shape: tuple[int, int]
     duration_s: float
     notes: dict[str, Any] = field(default_factory=dict)
+    #: How rows this stage was not fitted on passed through it, and the time that took;
+    #: None for a stage that ran on every row.
+    projection: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        record = {
             "op": self.op,
             "params": self.params,
             "param_provenance": self.param_provenance,
@@ -51,6 +66,36 @@ class StageRecord:
             "output_shape": list(self.output_shape),
             "duration_s": round(self.duration_s, 4),
             "notes": self.notes,
+        }
+        if self.projection is not None:
+            record["projection"] = {
+                **self.projection,
+                "duration_s": round(self.projection["duration_s"], 4),
+            }
+        return record
+
+
+@dataclass
+class Coverage:
+    """Which rows a candidate was fitted on, and how the rest were placed."""
+
+    n_rows: int
+    fitted_index: np.ndarray | None = None
+    chunk_rows: int | None = None
+    n_chunks: int = 0
+
+    @property
+    def n_fitted(self) -> int:
+        return self.n_rows if self.fitted_index is None else int(self.fitted_index.size)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "n_rows": self.n_rows,
+            "n_fitted": self.n_fitted,
+            "n_projected": self.n_rows - self.n_fitted,
+            "fitted_on": "every row" if self.fitted_index is None else "subsample",
+            "chunk_rows": self.chunk_rows,
+            "n_chunks": self.n_chunks,
         }
 
 
@@ -60,22 +105,38 @@ class PipelineResult:
     labels: np.ndarray | None
     stages: list[StageRecord]
     context: Context
+    coverage: Coverage
 
     @property
     def total_duration_s(self) -> float:
-        return sum(stage.duration_s for stage in self.stages)
+        """Fitting and projecting together: what the candidate cost to deliver."""
+        return sum(
+            stage.duration_s
+            + (stage.projection["duration_s"] if stage.projection else 0.0)
+            for stage in self.stages
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "stages": [stage.as_dict() for stage in self.stages],
             "output_shape": list(self.embedding.shape),
             "total_duration_s": round(self.total_duration_s, 4),
-            "n_samples_subsampled": (
-                int(self.context.sample_index.size)
-                if self.context.sample_index is not None
-                else None
-            ),
+            "rows": self.coverage.as_dict(),
         }
+
+
+def save_embedding(directory: Path, candidate_id: str, result: PipelineResult) -> None:
+    """Write a candidate's arrays: the embedding, and the rows it was fitted on.
+
+    The fitted rows are written only when the candidate subsampled. Evaluation never
+    reads them, since every embedding covers every row; they are the record of which
+    rows the fit saw.
+    """
+    np.save(directory / f"{candidate_id}.npy", result.embedding)
+    if result.labels is not None:
+        np.save(directory / f"{candidate_id}.labels.npy", result.labels)
+    if result.coverage.fitted_index is not None:
+        np.save(directory / f"{candidate_id}.fitted.npy", result.coverage.fitted_index)
 
 
 def _tag_failure(
@@ -229,20 +290,35 @@ def run_pipeline(
         stages, registry, require_terminal_reduction=require_terminal_reduction
     )
 
+    all_labels = None if labels is None else np.asarray(labels).copy()
     context = Context(
-        labels=None if labels is None else np.asarray(labels).copy(),
+        labels=None if all_labels is None else all_labels.copy(),
         seed=seed,
         n_samples_original=int(X.shape[0]),
     )
     current: Matrix = X
     records: list[StageRecord] = []
+    # Set at the subsample: every row as it entered it, and which of them were kept.
+    # From there on each stage is fitted on the kept rows and records its projection.
+    split: tuple[Matrix, np.ndarray] | None = None
+    projections: list[Projection] = []
 
     for stage in stages:
         op = stage["op"]
         params, provenance = registry.resolve_params(op, stage["params"])
         executor = get_executor(op)
 
+        if op == "subsample" and split is not None:
+            raise PipelineError(
+                "this candidate subsamples twice. It is fitted on the rows its first "
+                "subsample kept and every other row is projected, so a second one "
+                "would leave rows that are neither fitted nor projected. Drop the "
+                "second subsample stage."
+            )
+
         input_shape = tuple(int(v) for v in current.shape)
+        entering = current
+        context.projection = None
         started = time.perf_counter()
         try:
             current, notes = executor(current, context, **params)
@@ -262,6 +338,21 @@ def run_pipeline(
             raise wrapped from error
         duration = time.perf_counter() - started
 
+        if split is not None:
+            if context.projection is None:
+                error = ExecutionError(
+                    f"{op} follows a subsample but has no way to place rows it was not "
+                    "fitted on: it has no transform and no standard extension. A "
+                    "candidate that subsamples must cover every row, so this one "
+                    f"cannot run. Drop the candidate and reject {op}, citing "
+                    "profile.shape.n_samples."
+                )
+                _tag_failure(error, op, params)
+                raise error
+            projections.append(context.projection)
+        elif op == "subsample" and context.sample_index is not None:
+            split = (entering, context.sample_index)
+
         context.history.append(op)
         records.append(
             StageRecord(
@@ -275,12 +366,82 @@ def run_pipeline(
             )
         )
 
-    embedding = np.asarray(
+    fitted = np.asarray(
         current.todense() if sp.issparse(current) else current, dtype=np.float64
+    )
+    coverage = Coverage(n_rows=int(X.shape[0]))
+    embedding = (
+        fitted
+        if split is None
+        else _project_rest(
+            fitted, split, projections, records[len(records) - len(projections):],
+            coverage,
+        )
     )
     return PipelineResult(
         embedding=embedding,
-        labels=context.labels,
+        labels=all_labels,
         stages=records,
         context=context,
+        coverage=coverage,
     )
+
+
+def _project_rest(
+    fitted: np.ndarray,
+    split: tuple[Matrix, np.ndarray],
+    projections: list[Projection],
+    records: list[StageRecord],
+    coverage: Coverage,
+) -> np.ndarray:
+    """Place every row the fit did not see, and return the embedding in row order.
+
+    Each chunk passes through every fitted stage before the next chunk starts, so no
+    stage's output is ever held for all the projected rows at once: after `standardise`
+    a chunk is dense, and all of them together would be the dense matrix the subsample
+    existed to avoid.
+    """
+    entering, kept = split
+    n_rows = int(entering.shape[0])
+    rest = np.setdiff1d(np.arange(n_rows), kept, assume_unique=True)
+    coverage.fitted_index = np.asarray(kept)
+
+    width = max(int(kept.size), int(entering.shape[1]))
+    chunk_rows = max(1, min(int(rest.size), PROJECTION_CHUNK_BYTES // (8 * width)))
+    coverage.chunk_rows = int(chunk_rows)
+
+    embedding = np.empty((n_rows, fitted.shape[1]), dtype=np.float64)
+    embedding[kept] = fitted
+    spent = [0.0] * len(projections)
+    for start in range(0, rest.size, chunk_rows):
+        rows = rest[start:start + chunk_rows]
+        chunk: Matrix = entering[rows]
+        for position, (projection, record) in enumerate(zip(projections, records)):
+            started = time.perf_counter()
+            try:
+                chunk = projection.function(chunk)
+            except ExecutionError as error:
+                _tag_failure(error, record.op, record.params)
+                raise
+            except Exception as error:
+                wrapped = ExecutionError(
+                    f"{record.op} failed placing rows it was not fitted on, with "
+                    f"{type(error).__name__}: {error}"
+                )
+                _tag_failure(
+                    wrapped, record.op, record.params, underlying=type(error).__name__
+                )
+                raise wrapped from error
+            spent[position] += time.perf_counter() - started
+        embedding[rows] = np.asarray(
+            chunk.todense() if sp.issparse(chunk) else chunk, dtype=np.float64
+        )
+        coverage.n_chunks += 1
+
+    for projection, record, seconds in zip(projections, records, spent):
+        record.projection = {
+            "kind": projection.kind,
+            "n_rows": int(rest.size),
+            "duration_s": seconds,
+        }
+    return embedding

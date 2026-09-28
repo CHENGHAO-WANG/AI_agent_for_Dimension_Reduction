@@ -18,12 +18,10 @@ import time
 import traceback
 from pathlib import Path
 
-import numpy as np
-
 from drtools import jsonio
 from drtools.cache import read_cache
 from drtools.executors import ExecutionError
-from drtools.pipeline import PipelineError, failure_record, run_pipeline
+from drtools.pipeline import PipelineError, failure_record, run_pipeline, save_embedding
 from drtools.runs import RunDir
 
 EXIT_OK = 0
@@ -81,14 +79,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_UNEXPECTED_FAILURE
 
     embeddings = run.path / "embeddings"
-    np.save(embeddings / f"{candidate_id}.npy", result.embedding)
-    if result.labels is not None:
-        np.save(embeddings / f"{candidate_id}.labels.npy", result.labels)
-    # A candidate that subsampled has fewer rows than the reference. Persisting which
-    # rows survived is what lets evaluation subset the reference identically, rather
-    # than comparing an embedding against points it never saw.
-    if result.context.sample_index is not None:
-        np.save(embeddings / f"{candidate_id}.index.npy", result.context.sample_index)
+    # The fitted objects stay in this process: a candidate that subsampled has already
+    # projected its other rows here, so nothing fitted crosses a process boundary.
+    save_embedding(embeddings, candidate_id, result)
 
     jsonio.write(
         record_path,

@@ -72,6 +72,7 @@ def drop_constant(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, 
     )
     tolerated = [int(original[i]) for i in np.flatnonzero(by_tolerance)]
     ctx.select_features(keep)
+    ctx.project_with(lambda Z: Z[:, keep], "fitted parameters")
     return X[:, keep], {
         "n_features_in": int(X.shape[1]),
         "n_features_out": int(keep.size),
@@ -90,16 +91,24 @@ def normalise_total(
         raise ExecutionError("every sample totals zero; nothing to normalise")
 
     chosen = float(target) if target is not None else float(np.median(positive))
-    scale = np.divide(
-        chosen, totals, out=np.ones_like(totals, dtype=np.float64), where=totals > 0
-    )
-    scaled = sp.diags(scale) @ X if sp.issparse(X) else np.asarray(X) * scale[:, None]
+    scaled = _scale_rows_to(X, chosen)
+    # The target is what the fit measured, so a projected row is scaled to the median
+    # total of the fitted rows rather than to one of its own chunk's.
+    ctx.project_with(lambda Z: _scale_rows_to(Z, chosen), "fitted parameters")
 
     return scaled, {
         "target_total": chosen,
         "target_source": "specified" if target is not None else "median sample total",
         "n_zero_total_samples": int((totals == 0).sum()),
     }
+
+
+def _scale_rows_to(X: Matrix, target: float) -> Matrix:
+    totals = np.asarray(X.sum(axis=1)).ravel()
+    scale = np.divide(
+        target, totals, out=np.ones_like(totals, dtype=np.float64), where=totals > 0
+    )
+    return sp.diags(scale) @ X if sp.issparse(X) else np.asarray(X) * scale[:, None]
 
 
 @executor("log1p")
@@ -110,6 +119,7 @@ def log1p(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
             "log1p requires non-negative input; this matrix contains negative values, "
             "so it has most likely already been centred or scaled"
         )
+    ctx.project_with(lambda Z: log1p(Z, Context())[0], "row-wise")
     return (X.log1p() if sp.issparse(X) else np.log1p(X)), {"base": "natural"}
 
 
@@ -130,6 +140,12 @@ def standardise(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, An
     std[std == 0] = 1.0
     out = dense - mean.astype(dtype)
     out /= std.astype(dtype)
+
+    def project(Z: Matrix) -> np.ndarray:
+        z = np.asarray(Z.todense() if sp.issparse(Z) else Z, dtype=dtype)
+        return (z - mean.astype(dtype)) / std.astype(dtype)
+
+    ctx.project_with(project, "fitted parameters")
     return out, {
         "n_constant_features_left_unscaled": n_constant,
         "densified": bool(sp.issparse(X)),
@@ -151,6 +167,7 @@ def l2_normalise(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, A
         )
     scale = 1.0 / norms
     scaled = sp.diags(scale) @ X if sp.issparse(X) else np.asarray(X) * scale[:, None]
+    ctx.project_with(lambda Z: l2_normalise(Z, Context())[0], "row-wise")
     return scaled, {"norm": "l2"}
 
 
@@ -164,6 +181,7 @@ def select_variable_features(
 ) -> tuple[Matrix, dict[str, Any]]:
     available = X.shape[1]
     if n_features >= available:
+        ctx.project_with(lambda Z: Z, "row-wise")
         return X, {
             "n_features_in": int(available),
             "n_features_out": int(available),
@@ -175,6 +193,7 @@ def select_variable_features(
     variance = _feature_variance(X)
     keep = np.sort(np.argsort(variance)[::-1][:n_features])
     ctx.select_features(keep)
+    ctx.project_with(lambda Z: Z[:, keep], "fitted parameters")
     return X[:, keep], {
         "criterion": "variance",
         "n_features_in": int(available),
@@ -185,6 +204,7 @@ def select_variable_features(
 
 @executor("densify")
 def densify(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
+    ctx.project_with(lambda Z: densify(Z, Context())[0], "row-wise")
     if not sp.issparse(X):
         return X, {"note": "input was already dense"}
     n, d = X.shape
@@ -197,7 +217,12 @@ def densify(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
 def subsample(
     X: Matrix, ctx: Context, *, n_samples: int = 5000, **_: Any
 ) -> tuple[Matrix, dict[str, Any]]:
-    """Stratified when labels are present, so small classes are not lost."""
+    """Stratified when labels are present, so small classes are not lost.
+
+    The rows kept are the ones every later stage is fitted on. The pipeline engine
+    projects the rest through the fitted stages, so the candidate's embedding still
+    covers every row (section 3.12).
+    """
     available = X.shape[0]
     if n_samples >= available:
         return X, {
@@ -231,6 +256,7 @@ def subsample(
         "n_samples_out": int(index.size),
         "strategy": strategy,
         "seed": int(ctx.seed),
-        "caveat": "metrics computed after this stage describe the subsample, not the "
-        "full dataset",
+        "caveat": "later stages are fitted on these rows only; every other row is "
+        "projected through the fitted stages, so the embedding covers the full dataset "
+        "but was learned from fewer rows",
     }
