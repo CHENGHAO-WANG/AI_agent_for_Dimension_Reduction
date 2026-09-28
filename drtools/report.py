@@ -584,8 +584,15 @@ def _block_comparison(run: RunDir) -> str:
     comparison = _read(run, "comparison.json")
     if comparison is None:
         return NOT_PRODUCED
+    # After a re-plan round the previous judgments stay on disk; each counts only for
+    # the comparison it was made of.
+    current = comparison.get("plan_digest")
     recommendation = _read(run, "recommendation.json") or {}
+    if recommendation.get("plan_digest") != current:
+        recommendation = {}
     adopted = _read(run, "adopted.json")
+    if adopted and adopted.get("plan_digest") != current:
+        adopted = None
     chosen = recommendation.get("recommended") or []
     order = [c for c in comparison["candidates"] if c in chosen] + [
         c for c in comparison["candidates"] if c not in chosen

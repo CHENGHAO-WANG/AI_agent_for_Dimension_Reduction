@@ -408,3 +408,31 @@ def test_every_method_that_can_be_a_picture_says_how_to_read_it():
     for name, spec in registry.ops.items():
         if spec.is_reduction or spec.is_visualization:
             assert all(spec.reading[field] for field in READING_FIELDS), name
+
+
+def test_a_judgment_of_an_earlier_portfolio_is_not_shown_as_current(cli, pictured):
+    """Found by review: after a re-plan round the old recommendation and adoption
+    stayed on disk and the report presented them as made of the new comparison."""
+    cli("compare", "--run-dir", pictured)
+    _recommend(cli, pictured)
+    cli("adopt", "--run-dir", pictured, "--json", json.dumps({"candidate": "isomap"}))
+
+    plan = json.loads((pictured / "plan.json").read_text(encoding="utf-8"))
+    plan["candidates"].append({"id": "umap", "stages": [{"op": "umap", "params": {}}],
+                               "evidence": ["profile.shape.n_samples"]})
+    (pictured / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
+    assert cli("validate-plan", "--run-dir", pictured).code == 0
+    cli("embed", "--run-dir", pictured, "--id", "umap", "--in-process")
+    cli("evaluate", "--run-dir", pictured, "--id", "umap")
+    cli("compare", "--run-dir", pictured)
+
+    refused = cli("adopt", "--run-dir", pictured, "--json", json.dumps({"candidate": "umap"}))
+    assert refused.code == 2 and "current comparison" in refused.stderr
+    assert cli("status", "--run-dir", pictured).payload["next"] == "evaluate"
+    assert cli("report", "--run-dir", pictured).code == 2
+
+    assert _recommend(cli, pictured, recommended=["umap"]).code == 0
+    cli("report", "--run-dir", pictured)
+    text = (pictured / "report.md").read_text(encoding="utf-8")
+    assert "**umap**" in text
+    assert "The user adopted" not in text and "The user did not choose" in text
