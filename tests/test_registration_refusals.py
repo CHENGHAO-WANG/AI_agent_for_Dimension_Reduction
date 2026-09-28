@@ -14,11 +14,12 @@ import pytest
 from drtools.pipeline import PipelineError, validate_stages
 from drtools.plan import validate_plan as _validate_plan
 from drtools.registry import load_registry
-from plans import RECON, complete, reconnoitre
+from plans import RECON, checkpoint_for, complete, reconnoitre
 
 
 def validate_plan(document, profile, recon=RECON, *args, **kwargs):
-    """The validator with a recorded data decision, which registration requires."""
+    """The validator with a recorded data decision and checkpoint, as registration requires."""
+    kwargs.setdefault("checkpoint", checkpoint_for(document))
     return _validate_plan(document, profile, recon, *args, **kwargs)
 
 
@@ -203,7 +204,8 @@ def reject(method: str, evidence=("profile.shape.n_samples",)) -> dict:
 def test_a_method_neither_nominated_nor_rejected_is_refused() -> None:
     report = validate_plan(plan([BASELINE]), profile())
     found = [f for f in report["findings"] if f["code"] == "method_unaccounted"]
-    assert found and "isomap" in found[0]["message"] and "umap" in found[0]["message"]
+    # A representation run accounts for the reductions alone (day 17).
+    assert found and "isomap" in found[0]["message"] and "umap" not in found[0]["message"]
     assert not report["valid"]
 
 
@@ -445,6 +447,15 @@ def _profiled(cli, csv_dataset, tmp_path):
 
 
 def _register(cli, run, document):
+    """Register `document`, recording first the checkpoint its methods imply.
+
+    A plan that runs t-SNE is a visualization run's since day 17. The checkpoint can
+    move only before the first registration, so a re-registration keeps the first one.
+    """
+    if not (run / "plan.registered.json").exists():
+        answered = cli("checkpoint", "--run-dir", run, "--answers",
+                       json.dumps(checkpoint_for(document)))
+        assert answered.code == 0, answered.stderr
     (run / "plan.json").write_text(json.dumps(document), encoding="utf-8")
     return cli("validate-plan", "--run-dir", run)
 

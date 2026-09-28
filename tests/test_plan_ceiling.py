@@ -17,7 +17,13 @@ from __future__ import annotations
 import pytest
 
 from drtools.isolation import BUDGET_MAX_CANDIDATES
-from drtools.plan import validate_plan
+from drtools.plan import validate_plan as _validate_plan
+from plans import checkpoint_for
+
+
+def validate_plan(document, *args, **kwargs):
+    kwargs.setdefault("checkpoint", checkpoint_for(document))
+    return _validate_plan(document, *args, **kwargs)
 
 PROFILE = {
     "shape": {"n_samples": 300, "n_features": 10, "storage": "dense"},

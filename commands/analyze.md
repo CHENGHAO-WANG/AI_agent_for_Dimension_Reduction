@@ -1,6 +1,6 @@
 ---
 description: Analyse a dataset by dimension reduction, end to end, and write up what was decided and why.
-argument-hint: <dataset spec> [--auto] [--budget fast|standard|thorough] [--values raw_counts|not_counts] [--features one_type|mixed] [--run-id <id>]
+argument-hint: <dataset spec> [--auto] [--purpose representation|visualization] [--budget fast|standard|thorough] [--values raw_counts|not_counts] [--features one_type|mixed] [--run-id <id>]
 ---
 
 Analyse `$ARGUMENTS` by dimension reduction, from profiling through to a written report.
@@ -47,8 +47,9 @@ no position to read: every other command refuses a path that does not exist.
 drtools status --run-dir runs/<id>
 ```
 
-`next` names the stage to enter: `profile`, `recon`, `plan`, `execute`, `evaluate` or
-`report`. Enter that stage's skill.
+`next` names the stage to enter: `profile`, `recon` or `checkpoint` (all
+**profile-dataset**), `plan`, `execute`, `evaluate` or `report`. Enter that stage's
+skill.
 
 From there the two are the same. Re-read `status` after each stage rather than
 assuming the next one — a Candidate that failed changes what comes next.
@@ -60,9 +61,13 @@ the position completely.
 
 - **dataset spec** — a built-in name, or a path. `drtools datasets` lists the built-in
   ones. For a format nothing recognises, write a Loader and pass `--adapter`.
-- **`--auto`** — skip the checkpoint after profiling, take the stated defaults, and
-  record them. The graded Runs use this, so the reports are produced with no
-  intervention.
+- **`--auto`** — ask nothing at either checkpoint: take the stated defaults at the one
+  after profiling and record them, and adopt no picture at the one after a
+  Visualization run's results. The graded Runs use this, so the reports are produced
+  with no intervention.
+- **`--purpose representation|visualization`** — whether the deliverable is a
+  representation for downstream analysis or a picture. Given here, it is the user's
+  answer to the checkpoint's Purpose question. Default representation.
 - **`--budget fast|standard|thorough`** — the compute this Run may spend. It caps each
   Candidate's wall-clock and how many Candidates the Run may ever register, and it is
   frozen when the Plan is registered. Default `standard`.
@@ -87,5 +92,6 @@ caught and revised is worth more in the report than one that happened to be righ
 ## Finish
 
 The Run directory is the deliverable: artefacts, figures, the Decision log, and the
-report. Tell the user where it is and what won, with the caveats the ranking's notes
-carry.
+report. Tell the user where it is and what came out: in a Representation run what won,
+with the caveats the ranking's notes carry; in a Visualization run what you recommended,
+labelled as your judgment, and what the user adopted, if anything.

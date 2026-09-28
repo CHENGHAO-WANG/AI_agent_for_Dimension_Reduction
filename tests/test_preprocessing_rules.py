@@ -242,6 +242,7 @@ def test_suggest_base_refuses_before_a_decision_exists(cli, csv_dataset, tmp_pat
 
 def test_registration_refuses_without_a_recorded_decision() -> None:
     from drtools.plan import validate_plan
+    from plans import checkpoint_for
     from plans import complete
 
     profile = {"shape": {"n_samples": 300, "n_features": 10, "storage": "dense"},
@@ -250,7 +251,8 @@ def test_registration_refuses_without_a_recorded_decision() -> None:
         {"id": "a", "stages": [{"op": "pca", "params": {}}]}],
         "evaluation": {"weights": {"trustworthiness": 0.25, "continuity": 0.25,
                                    "shepard_correlation": 0.5}}})
-    report = validate_plan(document, profile, recon=None)
+    report = validate_plan(document, profile, recon=None,
+                           checkpoint=checkpoint_for(document))
     assert "no_data_decision" in {f["code"] for f in report["findings"]}
 
 
@@ -258,6 +260,9 @@ def test_registration_refuses_without_a_recorded_decision() -> None:
 
 
 from drtools.plan import estimate_peak_bytes, validate_plan  # noqa: E402
+import json  # noqa: E402
+
+from plans import CHECKPOINT, checkpoint_for  # noqa: E402
 from plans import complete  # noqa: E402
 
 GB = 1e9
@@ -302,6 +307,7 @@ def _codes(report):
 
 
 def _validate(document, profile=None, recon=None, **kwargs):
+    kwargs.setdefault("checkpoint", checkpoint_for(document))
     return validate_plan(document, profile or _profile(), recon or _recon(), **kwargs)
 
 
@@ -528,6 +534,8 @@ def test_selection_ranks_by_variance_and_has_no_other_criterion() -> None:
 def _reconnoitred(cli, csv_dataset, tmp_path):
     run = _profiled(cli, csv_dataset, tmp_path)
     assert cli("recon", "--run-dir", run, "--decision", _decision()).code == 0
+    assert cli("checkpoint", "--run-dir", run, "--answers",
+               json.dumps(CHECKPOINT)).code == 0
     return run
 
 
@@ -601,6 +609,8 @@ def _reported_run(cli, tmp_path, data, decision_fields, base, **plan_fields):
     assert cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1").code == 0
     run = runs / "r1"
     assert cli("recon", "--run-dir", run, "--decision", decision(**decision_fields)).code == 0
+    assert cli("checkpoint", "--run-dir", run, "--answers",
+               json.dumps(CHECKPOINT)).code == 0
     document = complete({
         "dataset": "d", "base_preprocessing": base,
         "candidates": [{"id": "pca2", "stages": [_stage("pca")]}],

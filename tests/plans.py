@@ -31,9 +31,28 @@ DECISION = {
 RULE_BASE = [{"op": "drop_constant", "params": {}}]
 
 
-def complete(document: dict[str, Any], *, base: bool = True) -> dict[str, Any]:
+def purpose_of(document: dict[str, Any]) -> str:
+    """The purpose a test's plan implies: visualization if it runs a visualization method.
+
+    Since day 17 a representation run may not run one, so a test that nominates t-SNE
+    or UMAP to exercise some other rule is a visualization run's plan.
+    """
+    registry = load_registry()
+    visual = registry.visualization_methods()
+    runs_one = any(
+        stage["op"] in visual
+        for candidate in document.get("candidates", [])
+        for stage in candidate.get("stages", [])
+    )
+    return "visualization" if runs_one else "representation"
+
+
+def complete(
+    document: dict[str, Any], *, base: bool = True, purpose: str | None = None
+) -> dict[str, Any]:
     plan = copy.deepcopy(document)
     registry = load_registry()
+    purpose = purpose or purpose_of(plan)
 
     for candidate in plan.get("candidates", []):
         candidate.setdefault("evidence", list(CITED))
@@ -64,7 +83,15 @@ def complete(document: dict[str, Any], *, base: bool = True) -> dict[str, Any]:
         if not (rejection.get("reason") == FILLER and rejection["method"] in nominated)
     ]
     named = nominated | {rejection["method"] for rejection in plan["rejected"]}
-    methods = {**registry.reductions(), **registry.visualization_methods()}
+    # Since day 17 a representation run accounts for the reductions alone.
+    methods = dict(registry.reductions())
+    if purpose == "visualization":
+        methods.update(registry.visualization_methods())
+    plan["rejected"] = [
+        rejection
+        for rejection in plan["rejected"]
+        if not (rejection.get("reason") == FILLER and rejection["method"] not in methods)
+    ]
     for method in sorted(set(methods) - named):
         plan["rejected"].append(
             {"method": method, "reason": FILLER, "evidence": list(CITED)}
@@ -77,12 +104,40 @@ def decision(**fields: Any) -> str:
     return json.dumps({**DECISION, **fields})
 
 
-def reconnoitre(cli: Any, run: Any, **fields: Any) -> Any:
-    """Run reconnaissance under a declared decision, as registration now requires."""
+def checkpoint(**fields: Any) -> dict[str, Any]:
+    """A checkpoint with the defaults, `fields` changed."""
+    return {**CHECKPOINT, **fields}
+
+
+def reconnoitre(
+    cli: Any, run: Any, *, purpose: str = "representation", focus: str = "balanced",
+    **fields: Any,
+) -> Any:
+    """Run reconnaissance under a declared decision, then record the checkpoint.
+
+    Registration requires both since day 17. The checkpoint defaults to a
+    representation run with a balanced focus; a test about a visualization run says so.
+    """
     result = cli("recon", "--run-dir", run, "--decision", decision(**fields))
     assert result.code == 0, result.stderr
+    answered = cli("checkpoint", "--run-dir", run, "--answers",
+                   json.dumps(checkpoint(purpose=purpose, focus=focus)))
+    assert answered.code == 0, answered.stderr
     return result
 
 
 #: What a test calling `validate_plan` directly passes as reconnaissance.
 RECON = {"data_decision": {**DECISION, "evidence": []}}
+
+#: The checkpoint's defaults: a representation run with a balanced focus.
+CHECKPOINT = {
+    "purpose": "representation",
+    "purpose_decided_by": "default",
+    "focus": "balanced",
+    "focus_decided_by": "default",
+}
+
+
+def checkpoint_for(document: dict[str, Any]) -> dict[str, Any]:
+    """The checkpoint a directly validated test plan is registered under."""
+    return checkpoint(purpose=purpose_of(document))

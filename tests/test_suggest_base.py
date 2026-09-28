@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from drtools.decision import default_decision
-from plans import complete, reconnoitre
+from plans import CHECKPOINT, complete, reconnoitre
 
 
 def _run(cli, tmp_path, data, run_id="r1"):
@@ -25,6 +25,8 @@ def _run(cli, tmp_path, data, run_id="r1"):
     profile = json.loads((runs / run_id / "profile.json").read_text(encoding="utf-8"))
     default = json.dumps(default_decision(profile).model_dump())
     assert cli("recon", "--run-dir", runs / run_id, "--decision", default).code == 0
+    assert cli("checkpoint", "--run-dir", runs / run_id, "--answers",
+               json.dumps(CHECKPOINT)).code == 0
     return runs / run_id
 
 

@@ -193,6 +193,21 @@ class RunDir:
     def decisions(self) -> list[dict[str, Any]]:
         return jsonio.read_lines(self.decisions_path)
 
+    def purpose(self) -> str:
+        """Representation or visualization: as registered, else as the checkpoint says.
+
+        Once a plan is registered the log is the authority, not `checkpoint.json`, so a
+        file rewritten afterwards cannot turn a ranked run into an unranked one. Before
+        any checkpoint, representation, the default.
+        """
+        for record in self.decisions():
+            if record.get("stage") == "register_plan" and record.get("purpose"):
+                return str(record["purpose"])
+        path = self.path / "checkpoint.json"
+        if path.exists():
+            return str(jsonio.read(path).get("purpose", "representation"))
+        return "representation"
+
 
 class _Missing:
     """Sentinel for an evidence key that does not exist in the artefacts."""

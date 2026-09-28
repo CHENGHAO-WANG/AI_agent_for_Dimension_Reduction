@@ -1,6 +1,6 @@
 ---
 name: write-report
-description: Use when a dr-agent Run has been ranked and `drtools status` reports `report` as the next stage, including a Run where every Candidate failed and the outcome still has to be written up.
+description: Use when a dr-agent Run has been ranked, or compared and recommended, and `drtools status` reports `report` as the next stage, including a Run where every Candidate failed and the outcome still has to be written up.
 ---
 
 # Write the report
@@ -13,7 +13,9 @@ actually holds it.
 
 ```
 runs/<id>/decisions.jsonl   every choice, its reasoning, its Evidence keys
-runs/<id>/ranking.json      scores, weights applied, and the notes that qualify them
+runs/<id>/ranking.json      a Representation run: scores, weights, the qualifying notes
+runs/<id>/comparison.json   a Visualization run: each metric on its own
+runs/<id>/recommendation.json  a Visualization run: your recommendation, and adopted.json the user's pick
 runs/<id>/profile.json      what the data is
 runs/<id>/recon.json        what its structure looked like before planning
 runs/<id>/metrics/          per-Candidate scores
@@ -34,7 +36,8 @@ Both generated reports use the same skeleton so they can be compared:
 4. Hyperparameter choices, and why
 5. Figures
 6. Quantitative comparison
-7. Ranking, with the weighting justification
+7. Ranking, with the weighting justification — in a Visualization run, Comparison and
+   recommendation
 8. Interpretation
 9. Limitations
 
@@ -77,7 +80,9 @@ made from a document that still agrees with the analysis. Refresh, then render.
 Markdown in the Run directory is the source of truth; the PDF is a rendering of it.
 
 **Section 8, Interpretation, has no block.** Nothing in the Run grounds an
-interpretation — it is yours alone, and it is the section the report exists for.
+interpretation — it is yours alone, and it is the section the report exists for. In a
+Visualization run it is where the recommendation is argued: what each recommended
+picture shows that the others do not, read metric by metric against the focus.
 
 ## What you may claim
 
@@ -89,8 +94,9 @@ thereby supported. Claim the narrower thing.
 
 Three specific restraints:
 
-- **t-SNE and UMAP** cluster sizes, and the distances between clusters, are not
-  meaningful. Say so where such a figure appears.
+- **A picture means what its method's `reading` says.** Section 5 prints each method's
+  reading beside its picture; claim no more about distances, gaps or group sizes than
+  it allows.
 - **A Reference value is a baseline, not a ceiling.** An Embedding that exceeds it has
   not retained more than 100% of anything.
 - **A failed Candidate** says this configuration did not work. It does not say the
@@ -110,6 +116,8 @@ The things a reader would otherwise have to discover:
   above three classes, no categorical palette clears the separation floors for
   scatter-like forms under simulated colour-vision deficiency.
 - A weighting you would now choose differently, if the results suggested one.
+- In a Visualization run, that the recommendation is a judgment made after the results,
+  not a measured ranking.
 
 ## A Run where everything failed
 

@@ -1,6 +1,6 @@
 ---
 name: plan-analysis
-description: Use when a dr-agent Run has been profiled and reconnoitred and `drtools status` reports `plan` as the next stage, including when an earlier plan was refused and needs revising.
+description: Use when a dr-agent Run has been profiled, reconnoitred and checkpointed and `drtools status` reports `plan` as the next stage, including when an earlier plan was refused and needs revising.
 ---
 
 # Plan the analysis
@@ -8,6 +8,22 @@ description: Use when a dr-agent Run has been profiled and reconnoitred and `drt
 Declare what will be compared, what will not be run and why, and how the results will
 be judged — all before any Embedding exists. Registration freezes the weighting, so
 everything here is a commitment made in advance.
+
+## Read the Purpose first
+
+`checkpoint.json` in the Run holds the Purpose and the focus the checkpoint recorded,
+and registration reads them from there, so the Plan never restates them. The Purpose
+decides the rest of this stage:
+
+| | Representation | Visualization |
+|---|---|---|
+| Eligible methods | Reductions only | Reductions and Visualization methods |
+| d | chosen by Tuning, per Candidate | 2 for every Candidate; only the multiplier is tuned |
+| Chains | `pca`, then a different Reduction | as for Representation, or at most one `pca` before a Visualization method |
+| After the results | `rank` names a Winner | `compare`, then your recommendation; nothing is ranked |
+
+In a Representation run a Visualization method is excluded by rule: it appears in no
+Candidate and in no Rejection, and registration refuses either.
 
 ## Argue from the evidence, not from the dataset's name
 
@@ -40,8 +56,8 @@ total, then log(1 + x). Add that data already transformed should be declared as 
 or supplied transformed. Under `--auto`, put the same statement in the Decision log.
 Report section 2 repeats it from the Run.
 
-**Candidates.** Three to five, each a Stage list ending in a Reduction or a
-Visualization method, deliberately spanning families: one Linear baseline, one
+**Candidates.** Three to five, each a Stage list ending in a method the Purpose admits,
+deliberately spanning families: one Linear baseline, one
 local-structure, one global-structure. The Linear baseline is required, and it is a
 Candidate whose Stages are exactly one `pca` — without it there is nothing to measure
 the nonlinear methods against. Every other Candidate cites the Evidence keys that make it
@@ -73,9 +89,9 @@ Read `drtools methods` for what each Op preserves, assumes, destroys, and where 
 stops scaling. You cannot introspect the library; the Capability records are what you
 reason over.
 
-The best experiment available here is entering both `umap` on the Reference and
-`pca -> umap` as separate Candidates, and letting the Battery settle whether the
-pre-step helped.
+In a Visualization run, the best experiment available is entering both `umap` on the
+Reference and `pca -> umap` as separate Candidates, and letting the Battery settle
+whether the pre-step helped.
 
 **Tuning chooses d.** Every Candidate is tuned inside its `embed` Attempt: each method
 has one fidelity parameter scaled by a grid of multipliers, and its d is chosen by the
@@ -85,7 +101,7 @@ Reduction's Stage, and a pre-step `pca`, with `n_components` left out; tuning al
 `width_multiplier` and Diffusion Maps' `t`. The grids and thresholds live in the Plan's
 `tuning` block, and its defaults are the rule. A different grid is a Departure:
 `tuning.departure: {reason, evidence}`, argued from the data, frozen at registration
-like the weighting.
+like the weighting. In a Visualization run d is 2 by rule and the grid of d goes unread.
 
 **Hyperparameters.** `drtools suggest-params --op <op> --run-dir runs/<id>` gives
 profile-derived starting values with the reasoning behind them, and persists them in the
@@ -106,8 +122,8 @@ reason:
  "overrides": {"perplexity": {"reason": "...", "evidence": ["recon.neighbourhood.k"]}}}
 ```
 
-**Rejections.** Every Reduction and Visualization method in `drtools methods` appears in
-a Candidate, in `rejected`, or both; one that appears in neither is refused. Each
+**Rejections.** Every method the Purpose makes eligible appears in a Candidate, in
+`rejected`, or both; one that appears in neither is refused. Each
 Rejection carries a reason and the Evidence keys behind it, and an uncited one is
 refused. `"MDS rejected — O(n^2) at n=107,000; PCA already captures the global variance
 structure it would recover"` is evidence of judgement. A method may be both rejected and
@@ -119,17 +135,24 @@ is never rejected, since the Linear baseline runs it alone.
 justification tied to what the user asked for and what the Profile says. You are
 choosing emphasis before you can see who wins — that is the point, and after
 registration the whole `evaluation` block is frozen: weights, justification and
-evidence.
+evidence. In a Visualization run the weighting only scores each Candidate's Tuning
+cells; nothing sums it across Candidates.
 
-| Data | Default | Needs `evaluation.evidence` |
-|---|---|---|
-| No labels | trustworthiness 0.25, continuity 0.25, shepard_correlation 0.5 | only for a departure |
-| Labels | the unlabelled default, or 0.175, 0.175, 0.35, knn_label_preservation 0.20, silhouette 0.10 | always |
+The default follows the recorded focus:
 
-With labels, choosing a default decides whether the labels are trusted: the labelled
-default says they were supplied with the data and not derived from it, the unlabelled
-one that they carry no weight — derived labels, or an analysis meant to find new
-groups. Cite what settles it. Any other weighting is a departure, allowed when its
+| Focus | trustworthiness | continuity | shepard_correlation |
+|---|---|---|---|
+| `local` | 0.35 | 0.35 | 0.30 |
+| `balanced` | 0.25 | 0.25 | 0.50 |
+| `global` | 0.15 | 0.15 | 0.70 |
+
+With trusted labels, 70% of each row stays on those three metrics and
+knn_label_preservation takes 0.20 and silhouette 0.10 — for a `balanced` focus 0.175,
+0.175, 0.35, 0.20, 0.10. Without labels the default needs no `evaluation.evidence`; with
+labels it always does, because choosing a default decides whether the labels are
+trusted: the labelled default says they were supplied with the data and not derived
+from it, the unlabelled one that they carry no weight — derived labels, or an analysis
+meant to find new groups. Another focus's default is a Departure under this one. Cite what settles it. Any other weighting is a departure, allowed when its
 Evidence keys argue for it. The label metrics need labels, and `runtime_s` carries no
 weight: it is reported, never scored.
 
@@ -147,8 +170,8 @@ Write `plan.json` into the Run, then:
 drtools validate-plan --run-dir runs/<id>
 ```
 
-This is the registration event. It needs the data decision `recon` recorded, and
-simulates the Plan against the Profile — tracking sample count, feature count, sparsity,
+This is the registration event. It needs the data decision `recon` recorded and the
+checkpoint `drtools checkpoint` recorded, and simulates the Plan against the Profile — tracking sample count, feature count, sparsity,
 memory, and whether values are still raw counts — so it knows what each method will
 actually receive. `"Isomap on 107,000 points"` is refused
 where `"subsample to 3,000, then Isomap"` is not.
@@ -167,8 +190,8 @@ Then hand off to **execute-plan**.
 
 ## What does not reduce to a table
 
-- t-SNE and UMAP cluster sizes, and the distances between clusters, are not meaningful.
-  Do not interpret them, and say so in the report.
+- What distances, gaps and group sizes on a method's picture mean is its `reading` in
+  `drtools methods`. Read a picture by its method's `reading`, and say so in the report.
 - A method failing is information about this configuration, not about the method.
 - Spanning families is what makes disagreement informative: when UMAP and PCA disagree,
   that disagreement is itself a finding about the data's nonlinearity.

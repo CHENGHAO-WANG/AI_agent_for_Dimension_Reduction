@@ -43,36 +43,55 @@ COMPETITOR_CAP = 3
 #: Scores are compared as rounded to four places; differences below this are equal.
 _EQUAL = 1e-9
 
-#: Section 2.4's two defaults. A plan whose weights match one needs no evidence for the
-#: emphasis, unless the data has labels: then which default applies says whether the
-#: labels are trusted, and that is a decision. Anything else is a departure and must
-#: cite evidence. The focus weightings join on day 17, with the question that sets them.
-DEFAULT_WEIGHTINGS: dict[str, dict[str, float]] = {
-    "default": {
-        "trustworthiness": 0.25,
-        "continuity": 0.25,
-        "shepard_correlation": 0.5,
-    },
-    # Seventy per cent stays on unsupervised fidelity in its own 1 : 1 : 2 proportions;
-    # the labels are an outside check on the representation, not its goal.
-    "default_trusted_labels": {
-        "trustworthiness": 0.175,
-        "continuity": 0.175,
-        "shepard_correlation": 0.35,
-        "knn_label_preservation": 0.20,
-        "silhouette": 0.10,
-    },
+#: Section 2.4's defaults, one pair per focus (settled on day 17). Trustworthiness and
+#: continuity carry the local share equally, the Shepard correlation the global one;
+#: each focus moves 0.2 from one to the other. A plan whose weights match its recorded
+#: focus's default needs no evidence for the emphasis, unless the data has labels: then
+#: which default applies says whether the labels are trusted, and that is a decision.
+#: Anything else is a departure and must cite evidence.
+FOCUS_SHARES: dict[str, tuple[float, float, float]] = {
+    "local": (0.35, 0.35, 0.30),
+    "balanced": (0.25, 0.25, 0.50),
+    "global": (0.15, 0.15, 0.70),
 }
+#: With trusted labels seventy per cent stays on unsupervised fidelity, in the focus's
+#: own proportions; the labels are an outside check on the representation, not its goal.
+UNSUPERVISED_SHARE_WITH_LABELS = 0.70
+LABEL_WEIGHTS = {"knn_label_preservation": 0.20, "silhouette": 0.10}
 
 
-def matching_default(weights: dict[str, float]) -> str | None:
-    """The default these weights are, to within rounding, or None for a departure.
+def default_weightings(focus: str = "balanced") -> dict[str, dict[str, float]]:
+    """The two defaults for a focus: without trusted labels, and with them."""
+    trust, cont, shepard = FOCUS_SHARES[focus]
+    share = UNSUPERVISED_SHARE_WITH_LABELS
+    return {
+        "default": {
+            "trustworthiness": trust,
+            "continuity": cont,
+            "shepard_correlation": shepard,
+        },
+        "default_trusted_labels": {
+            "trustworthiness": round(share * trust, 6),
+            "continuity": round(share * cont, 6),
+            "shepard_correlation": round(share * shepard, 6),
+            **LABEL_WEIGHTS,
+        },
+    }
+
+
+#: The balanced defaults, the weighting a run with no stated focus is held to.
+DEFAULT_WEIGHTINGS = default_weightings("balanced")
+
+
+def matching_default(weights: dict[str, float], focus: str = "balanced") -> str | None:
+    """The default for `focus` these weights are, to within rounding, or None.
 
     Matched rather than declared: a field naming the default would restate the weights
-    and could disagree with them. A zero weight is the same as an absent one.
+    and could disagree with them. A zero weight is the same as an absent one. Another
+    focus's default does not match: the focus answer would otherwise move nothing.
     """
     given = {name: value for name, value in weights.items() if value != 0}
-    for name, default in DEFAULT_WEIGHTINGS.items():
+    for name, default in default_weightings(focus).items():
         if set(given) == set(default) and all(
             abs(given[metric] - value) <= WEIGHT_TOLERANCE
             for metric, value in default.items()

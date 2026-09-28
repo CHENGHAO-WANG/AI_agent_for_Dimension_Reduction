@@ -13,6 +13,7 @@ should tell it what to fix.
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -32,7 +33,7 @@ from drtools.isolation import BUDGET_MAX_CANDIDATES, budget_timeout, run_candida
 from drtools.loaders import available, load
 from drtools.metrics import METRIC_SAMPLE_CAP, evaluate_embedding, neighbourhood_size
 from drtools.pipeline import PipelineError, run_pipeline, save_embedding
-from drtools.plan import Plan, validate_plan
+from drtools.plan import Plan, is_linear_baseline, validate_plan
 from drtools.profile import profile_dataset
 from drtools.recon import reconnaissance
 from drtools.render import render_pdf
@@ -45,10 +46,12 @@ from drtools.report import (
     replace_block,
     stale_blocks,
 )
+from drtools.compare import compare_candidates
+from drtools.plots import PLOT_B_METHOD, draw_plots
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
 from drtools import memory as memory_module
-from drtools.decision import DataDecision, default_decision, recorded_decision
+from drtools.decision import Checkpoint, DataDecision, default_decision, recorded_decision
 from drtools.runs import MISSING, RunDir, resolve_evidence, unresolved_message
 from drtools.status import (
     MAX_ATTEMPTS,
@@ -235,6 +238,51 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_run_arguments(rank)
     rank.set_defaults(handler=_cmd_rank)
 
+    checkpoint = subparsers.add_parser(
+        "checkpoint",
+        help="record the run's purpose and focus, before a plan is registered",
+    )
+    _add_run_arguments(checkpoint)
+    checkpoint.add_argument(
+        "--answers",
+        required=True,
+        help="JSON object, or @file: purpose (representation | visualization), focus "
+        "(local | global | balanced), who decided each (purpose_decided_by, "
+        "focus_decided_by: user | agent | default), a rationale, and evidence",
+    )
+    checkpoint.set_defaults(handler=_cmd_checkpoint)
+
+    compare = subparsers.add_parser(
+        "compare",
+        help="a visualization run's comparison: each metric on its own, never summed",
+    )
+    _add_run_arguments(compare)
+    compare.set_defaults(handler=_cmd_compare)
+
+    recommend = subparsers.add_parser(
+        "recommend",
+        help="record which candidates suit the focus, a judgment citing the comparison",
+    )
+    _add_run_arguments(recommend)
+    recommend.add_argument(
+        "--json",
+        required=True,
+        help="JSON object, or @file: recommended (candidate ids), rationale, evidence",
+    )
+    recommend.set_defaults(handler=_cmd_recommend)
+
+    adopt = subparsers.add_parser(
+        "adopt",
+        help="record the picture the user chose, after seeing the results",
+    )
+    _add_run_arguments(adopt)
+    adopt.add_argument(
+        "--json",
+        required=True,
+        help="JSON object, or @file: candidate, rationale, and evidence if any",
+    )
+    adopt.set_defaults(handler=_cmd_adopt)
+
     validate = subparsers.add_parser(
         "validate-plan",
         help="check a plan against the profile and recon before anything is computed",
@@ -368,7 +416,8 @@ RESERVED_DECISION_FIELDS = frozenset(
 )
 
 LIFECYCLE_STAGES = frozenset(
-    {"recon", "embed", "rank", "validate_plan", "register_plan"}
+    {"recon", "embed", "rank", "validate_plan", "register_plan", "checkpoint", "compare",
+     "recommend", "adopt"}
 )
 """Stages only the toolbox may write.
 
@@ -478,6 +527,8 @@ def _artifacts_for_evidence(run: RunDir) -> dict[str, Any]:
         ("recon", run.recon_path),
         ("plan", run.plan_path),
         ("ranking", run.path / "ranking.json"),
+        ("checkpoint", run.path / "checkpoint.json"),
+        ("comparison", run.path / "comparison.json"),
     ):
         if path.exists():
             artifacts[name] = jsonio.read(path)
@@ -697,7 +748,11 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     tuning = {
         "n_base": len(plan.base_preprocessing),
         "weights": dict(plan.evaluation.weights),
-        "settings": plan.tuning.model_dump(exclude={"departure"}),
+        "settings": {
+            **plan.tuning.model_dump(exclude={"departure"}),
+            # Section 3.11: a visualization run works at d = 2 throughout.
+            "fixed_d": 2 if _purpose(run) == "visualization" else None,
+        },
     }
 
     _invalidate_candidate(run, args.id)
@@ -803,6 +858,8 @@ def _invalidate_candidate(run: RunDir, candidate_id: str) -> None:
         path.unlink()
     metrics = run.path / "metrics" / f"{candidate_id}.json"
     metrics.unlink(missing_ok=True)
+    for path in (run.path / "plots").glob(f"{candidate_id}_*.npy"):
+        path.unlink()
 
 
 def _plan_digest(plan: dict[str, Any]) -> str:
@@ -1025,6 +1082,11 @@ def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
             X, labels, stages, seed=seed, require_terminal_reduction=False
         )
         reference = result.embedding
+        # A Reference mapped by an earlier command in this process, and still held in
+        # an uncollected reference cycle, keeps the file open, and Windows refuses to
+        # overwrite a mapped file. One process per command never meets this; a caller
+        # running commands in one process -- the tests -- does, intermittently.
+        gc.collect()
         np.save(directory / "reference.npy", np.asarray(reference))
         stage_records = result.as_dict()["stages"]
     else:
@@ -1111,6 +1173,8 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
         runtime_s=candidate.get("total_duration_s"),
     )
     metrics["id"] = args.id
+    if _purpose(run) == "representation":
+        metrics["plots"] = _draw_plots(run, args.id, embedding, settings["seed"])
     metrics["reference"] = (
         "base preprocessing output"
         if (run.path / "data" / "reference.npy").exists()
@@ -1118,6 +1182,27 @@ def _cmd_evaluate(args: argparse.Namespace) -> dict[str, Any]:
     )
     jsonio.write(run.path / "metrics" / f"{args.id}.json", metrics)
     return metrics
+
+
+def _draw_plots(
+    run: RunDir, candidate_id: str, embedding: np.ndarray, seed: int
+) -> dict[str, Any]:
+    """Plots A and B of a representation run's candidate (section 3.11).
+
+    Computed here rather than in `figures` because they are numbers, and every number
+    the report carries comes from a command that records it. `figures` only draws.
+    Plot B's `n_neighbors` is UMAP's size-aware suggestion for this run's data, which
+    is the same for every candidate.
+    """
+    profile = run.read_artifact("profile.json")
+    recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
+    n_neighbors = int(suggest(PLOT_B_METHOD, profile, recon)["n_neighbors"]["value"])
+    coordinates, record = draw_plots(embedding, n_neighbors=n_neighbors, seed=seed)
+    plots = run.path / "plots"
+    plots.mkdir(exist_ok=True)
+    for name, xy in coordinates.items():
+        np.save(plots / f"{candidate_id}_{name}.npy", xy)
+    return record
 
 
 def _check_registration_is_recorded(run: RunDir, plan: Plan) -> None:
@@ -1185,6 +1270,13 @@ def _check_covers_every_row(
 
 def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
+    if _purpose(run) == "visualization":
+        raise ContractError(
+            "a visualization run ranks nothing: a weighted total would choose the "
+            "method by itself, since a local weighting favours t-SNE and UMAP and a "
+            "global one PCA and MDS. Run `drtools compare`, which sets each metric "
+            "beside the others without summing them, then `drtools recommend`."
+        )
     plan = _registered_plan(run)
     _check_registration_is_recorded(run, plan)
 
@@ -1248,6 +1340,292 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         plan_digest=ranking["plan_digest"],
     )
     return ranking
+
+
+# ------------------------------------------------------------- the checkpoint
+
+
+def _checkpoint(run: RunDir) -> dict[str, Any] | None:
+    path = run.path / "checkpoint.json"
+    return jsonio.read(path) if path.exists() else None
+
+
+def _registered_answers(run: RunDir) -> dict[str, Any] | None:
+    """The purpose and focus the first registration recorded, or None before one.
+
+    Once a plan is registered the log is the authority, not `checkpoint.json`: a file
+    rewritten after registration must not turn a ranked run into an unranked one.
+    """
+    for record in run.decisions():
+        if record.get("stage") == "register_plan" and record.get("purpose"):
+            return {"purpose": record["purpose"], "focus": record.get("focus")}
+    return None
+
+
+def _purpose(run: RunDir) -> str:
+    return run.purpose()
+
+
+def _cmd_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
+    """Record the purpose and the focus (section 3.11), which registration reads.
+
+    Taken after reconnaissance and before a plan is registered, and frozen by the
+    registration: the purpose decides which methods are eligible and whether
+    candidates are ranked, the focus which default weighting applies, and moving
+    either once a plan is registered would change how results already planned for are
+    judged. An answer the agent gave cites evidence that resolves, as a data decision
+    does; a user's answer needs none.
+    """
+    run = _require_run(args)
+    if any(record.get("stage") == "register_plan" for record in run.decisions()):
+        raise ContractError(
+            "a plan is already registered, and it was registered under this run's "
+            "purpose and focus. Moving either now would change the eligible methods or "
+            "the weighting of a plan already frozen. Start a new run for a different "
+            "purpose or focus."
+        )
+    document = _read_json_argument(args.answers, flag="--answers")
+    try:
+        answers = Checkpoint.model_validate(document)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc']) or 'answers'}: {item['msg']}"
+            for item in error.errors()
+        )
+        raise ContractError(f"--answers is not a valid checkpoint -- {problems}.") from error
+    agents = [
+        question
+        for question in ("purpose", "focus")
+        if getattr(answers, f"{question}_decided_by") == "agent"
+    ]
+    if agents and not answers.evidence:
+        raise ContractError(
+            f"the {' and '.join(agents)} {'is' if len(agents) == 1 else 'are'} the "
+            "agent's call, and the checkpoint cites no evidence. Cite the profile or "
+            "recon keys the call rests on, or, with no answer and the evidence "
+            "favouring neither, take the default -- representation, balanced -- as "
+            "decided_by: default."
+        )
+    artifacts = _artifacts_for_evidence(run)
+    resolved = resolve_evidence(answers.evidence, artifacts)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(unresolved_message(unresolved, artifacts))
+
+    record = answers.model_dump()
+    run.write_artifact("checkpoint.json", record)
+    run.log_decision(
+        stage="checkpoint",
+        question="What is this analysis for, and which structure matters most?",
+        chosen=f"{answers.purpose}, {answers.focus} focus",
+        rationale=answers.rationale or "the defaults, with nothing answered",
+        evidence=answers.evidence,
+        evidence_resolved=jsonio.jsonable(resolved),
+        actor=f"purpose: {answers.purpose_decided_by}; focus: {answers.focus_decided_by}",
+        checkpoint=record,
+    )
+    return record
+
+
+# --------------------------------------------- a visualization run's comparison
+
+
+def _require_visualization_run(run: RunDir, command: str) -> None:
+    if _purpose(run) != "visualization":
+        raise ContractError(
+            f"`{command}` belongs to a visualization run, and this run's purpose is "
+            "representation, whose candidates are ranked. Run `drtools rank`."
+        )
+
+
+def _evaluated(run: RunDir, plan: Plan) -> dict[str, Any]:
+    """Every successful candidate's metrics, refusing while any is still unscored."""
+    metrics_by_id: dict[str, Any] = {}
+    unscored = []
+    for candidate in plan.candidates:
+        record_path = run.path / "embeddings" / f"{candidate.id}.json"
+        metrics_path = run.path / "metrics" / f"{candidate.id}.json"
+        if not record_path.exists() or jsonio.read(record_path).get("status") != "ok":
+            continue
+        if metrics_path.exists():
+            metrics_by_id[candidate.id] = jsonio.read(metrics_path)
+        else:
+            unscored.append(candidate.id)
+    if unscored:
+        raise ContractError(
+            f"{unscored} produced embeddings that are not yet scored. The comparison "
+            "is among every candidate that ran; run `drtools evaluate` for each first."
+        )
+    if not metrics_by_id:
+        raise ContractError(
+            "no candidate produced an embedding to compare; every one failed or timed out"
+        )
+    _check_scored_on_the_same_rows(metrics_by_id)
+    return metrics_by_id
+
+
+def _cmd_compare(args: argparse.Namespace) -> dict[str, Any]:
+    """Each metric on its own, candidate by candidate: the facts a recommendation cites."""
+    run = _require_run(args)
+    _require_visualization_run(run, "compare")
+    plan = _registered_plan(run)
+    _check_registration_is_recorded(run, plan)
+    metrics_by_id = _evaluated(run, plan)
+    baseline = [c.id for c in plan.candidates if is_linear_baseline(c)]
+    order = baseline + [c.id for c in plan.candidates if c.id not in baseline]
+    comparison = compare_candidates(
+        metrics_by_id, margin=plan.evaluation.margin, order=order
+    )
+    comparison["plan_digest"] = _plan_digest(plan.model_dump(mode="json"))
+    run.write_artifact("comparison.json", comparison)
+    run.log_decision(
+        stage="compare",
+        question="How does each candidate's picture score, metric by metric?",
+        chosen=f"compared {len(comparison['candidates'])} candidates",
+        rationale="each metric compared on its own; a visualization run sums none",
+        evidence=[f"metrics.{candidate}" for candidate in comparison["candidates"]],
+        plan_digest=comparison["plan_digest"],
+    )
+    return comparison
+
+
+def _current_comparison(run: RunDir, plan: Plan) -> dict[str, Any]:
+    path = run.path / "comparison.json"
+    digest = _plan_digest(plan.model_dump(mode="json"))
+    if not path.exists() or jsonio.read(path).get("plan_digest") != digest:
+        raise ContractError(
+            "there is no comparison of the plan registered now: `drtools compare` has "
+            "not run since the portfolio was last registered. Run it first, so the "
+            "judgment cites the candidates that actually ran."
+        )
+    return jsonio.read(path)
+
+
+def _cmd_recommend(args: argparse.Namespace) -> dict[str, Any]:
+    """The agent's judgment of which candidates suit the focus, made after the results.
+
+    Not a ranking: no order among the recommended and no winner. It is recorded as a
+    judgment, citing the comparison or the metrics, and made once per comparison, so
+    it cannot be revised toward whichever picture looks best on a second look. A new
+    comparison, after a re-plan round, asks for a new one.
+    """
+    run = _require_run(args)
+    _require_visualization_run(run, "recommend")
+    plan = _registered_plan(run)
+    comparison = _current_comparison(run, plan)
+    document = _read_json_argument(args.json, flag="--json")
+    if not isinstance(document, dict):
+        raise ContractError("--json must be an object: recommended, rationale, evidence.")
+    recommended = list(document.get("recommended") or [])
+    rationale = str(document.get("rationale") or "").strip()
+    evidence = list(document.get("evidence") or [])
+    unknown = sorted(set(recommended) - set(comparison["candidates"]))
+    if not recommended or unknown:
+        raise ContractError(
+            "recommended must name one or more of the compared candidates, "
+            f"{comparison['candidates']}" + (f"; {unknown} are not among them" if unknown else "")
+        )
+    if not rationale:
+        raise ContractError(
+            "a recommendation says why: how these candidates serve the run's focus, "
+            "read metric by metric"
+        )
+    if not any(key.partition(".")[0] in ("comparison", "metrics") for key in evidence):
+        raise ContractError(
+            "a recommendation cites the numbers it rests on: at least one key into "
+            "`comparison` or `metrics`, such as comparison.metrics.trustworthiness."
+            "within_margin. A judgment about pictures that cites no measurement cannot "
+            "be told from a preference."
+        )
+    artifacts = _artifacts_for_evidence(run)
+    resolved = resolve_evidence(evidence, artifacts)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(unresolved_message(unresolved, artifacts))
+    if any(
+        record.get("stage") == "recommend"
+        and record.get("plan_digest") == comparison["plan_digest"]
+        for record in run.decisions()
+    ):
+        raise ContractError(
+            "this comparison already has a recommendation, and it is made once: "
+            "revising it after another look at the pictures is the post-hoc choice the "
+            "record exists to show. The user may still adopt any candidate with "
+            "`drtools adopt`."
+        )
+    focus = (_checkpoint(run) or {}).get("focus", "balanced")
+    record = {
+        "recommended": recommended,
+        "rationale": rationale,
+        "evidence": evidence,
+        "focus": focus,
+        "decided_by": "agent",
+        "plan_digest": comparison["plan_digest"],
+    }
+    run.write_artifact("recommendation.json", record)
+    run.log_decision(
+        stage="recommend",
+        question=f"Which candidates best serve a {focus} focus?",
+        chosen=", ".join(recommended),
+        rationale=rationale,
+        evidence=evidence,
+        evidence_resolved=jsonio.jsonable(resolved),
+        actor="agent",
+        judgment="made after seeing the results; not a measured ranking",
+        plan_digest=comparison["plan_digest"],
+    )
+    return record
+
+
+def _cmd_adopt(args: argparse.Namespace) -> dict[str, Any]:
+    """The picture the user chose at the second checkpoint. Only the user adopts.
+
+    With no reply, or under --auto, nothing is adopted and the report leads with the
+    recommendation. The user may change their mind; each adoption is logged.
+    """
+    run = _require_run(args)
+    _require_visualization_run(run, "adopt")
+    plan = _registered_plan(run)
+    comparison = _current_comparison(run, plan)
+    if not (run.path / "recommendation.json").exists():
+        raise ContractError(
+            "there is no recommendation yet. The user chooses having seen the pictures "
+            "and the agent's recommendation, so `drtools recommend` comes first."
+        )
+    document = _read_json_argument(args.json, flag="--json")
+    if not isinstance(document, dict):
+        raise ContractError("--json must be an object: candidate, rationale, evidence.")
+    candidate = document.get("candidate")
+    if candidate not in comparison["candidates"]:
+        raise ContractError(
+            f"candidate must be one of the compared candidates, {comparison['candidates']}"
+        )
+    evidence = list(document.get("evidence") or [])
+    artifacts = _artifacts_for_evidence(run)
+    resolved = resolve_evidence(evidence, artifacts)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(unresolved_message(unresolved, artifacts))
+    record = {
+        "candidate": candidate,
+        "rationale": str(document.get("rationale") or ""),
+        "evidence": evidence,
+        "decided_by": "user",
+        "plan_digest": comparison["plan_digest"],
+    }
+    run.write_artifact("adopted.json", record)
+    run.log_decision(
+        stage="adopt",
+        question="Which picture does the user adopt?",
+        chosen=candidate,
+        rationale=record["rationale"] or "the user's choice, with no reason given",
+        evidence=evidence,
+        evidence_resolved=jsonio.jsonable(resolved),
+        actor="user",
+        judgment="made after seeing the results; not a measured ranking",
+        plan_digest=comparison["plan_digest"],
+    )
+    return record
 
 
 def _check_same_jackknife_groups(metrics_by_id: dict[str, Any]) -> None:
@@ -1331,6 +1709,18 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     recon = (
         run.read_artifact("recon.json") if run.recon_path.exists() else None
     )
+    answers = _registered_answers(run)
+    current = _checkpoint(run) or {}
+    if answers and (answers["purpose"], answers["focus"]) != (
+        current.get("purpose"), current.get("focus")
+    ):
+        raise ContractError(
+            f"this run was registered as {answers['purpose']} with a {answers['focus']} "
+            f"focus, and checkpoint.json now says {current.get('purpose')} with "
+            f"{current.get('focus')}. The checkpoint is frozen by the first "
+            "registration and `drtools checkpoint` refuses to move it, so the file was "
+            "changed by hand. Restore it, or start a new run for the new purpose."
+        )
 
     memory = _run_memory_limit(run)
     report = validate_plan(
@@ -1338,6 +1728,7 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         artifacts=_artifacts_for_evidence(run),
         frozen_provenance=frozen,
         memory_limit_bytes=memory["limit_bytes"],
+        checkpoint=_checkpoint(run),
     )
     jsonio.write(run.path / "plan_validation.json", report)
 
@@ -1377,6 +1768,8 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         plan_digest=digest,
         weights=dict(registered.evaluation.weights),
         weighting=report["weighting"],
+        purpose=report["purpose"],
+        focus=report["focus"],
         provenance=report["provenance"],
         base=report["base"],
         base_departure=(
@@ -1636,41 +2029,83 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     # Panels read left to right, so the best candidate belongs first. Sorting by name
     # would put the winner wherever its id happened to fall in the alphabet.
     successful = _in_rank_order(run, successful)
+    metrics_by_id = {
+        path.stem: jsonio.read(path) for path in sorted((run.path / "metrics").glob("*.json"))
+    }
+    visualization = _purpose(run) == "visualization"
 
-    if successful:
+    # What each candidate is drawn as. A visualization run's embedding is already its
+    # picture. A representation run draws plot A, the embedding on its principal axes,
+    # never its first two columns (section 3.11); before `evaluate` has made plot A
+    # there is nothing honest to draw at d > 2.
+    views: dict[str, np.ndarray] = {}
+    for candidate_id, embedding in successful.items():
+        plot_a = run.path / "plots" / f"{candidate_id}_A.npy"
+        if visualization or embedding.shape[1] <= 2:
+            views[candidate_id] = embedding
+        elif plot_a.exists():
+            views[candidate_id] = np.load(plot_a)
+
+    if views:
         drawn["comparison"] = figure_comparison(
-            successful,
+            views,
             labels,
             names,
             figures_dir / "comparison.png",
             theme_name=args.theme,
         )
-        for candidate_id, embedding in successful.items():
+        for candidate_id, view in views.items():
+            plots = (metrics_by_id.get(candidate_id) or {}).get("plots") or {}
+            subtitle = (
+                ""
+                if visualization or not plots
+                else f"principal axes of the d = {plots['d']} representation, carrying "
+                f"{plots['A']['variance_share']:.0%} of its variance"
+            )
             drawn[f"embedding_{candidate_id}"] = figure_embedding(
-                embedding,
+                view,
                 labels,
                 names,
                 figures_dir / f"embedding_{candidate_id}.png",
                 title=candidate_id,
+                subtitle=subtitle,
                 theme_name=args.theme,
             )
+            plot_b = run.path / "plots" / f"{candidate_id}_B.npy"
+            if not visualization and plots.get("B") and plot_b.exists():
+                drawn[f"plot_b_{candidate_id}"] = figure_embedding(
+                    np.load(plot_b),
+                    labels,
+                    names,
+                    figures_dir / f"plot_b_{candidate_id}.png",
+                    title=f"{candidate_id}: UMAP of its representation",
+                    subtitle=f"fixed settings: n_neighbors = {plots['B']['n_neighbors']}, "
+                    "the run's seed",
+                    theme_name=args.theme,
+                )
 
-    winner = args.facet_candidate or _winner(run) or (
-        next(iter(successful)) if successful else None
-    )
-    if winner in successful and labels is not None:
-        drawn["class_facet"] = figure_class_facet(
-            successful[winner],
-            labels,
-            names,
-            figures_dir / "class_facet.png",
-            title=f"Classes in {winner}",
-            theme_name=args.theme,
+    # The class facet and the Shepard diagram: the winner's in a representation run,
+    # every candidate's in a visualization run, which has no winner to reserve them for.
+    if visualization:
+        diagnosed = list(views)
+    else:
+        winner = args.facet_candidate or _winner(run) or (next(iter(views)) if views else None)
+        diagnosed = [winner] if winner in views else []
+    for candidate_id in diagnosed:
+        suffix = f"_{candidate_id}" if visualization else ""
+        if labels is not None:
+            drawn[f"class_facet{suffix}"] = figure_class_facet(
+                views[candidate_id],
+                labels,
+                names,
+                figures_dir / f"class_facet{suffix}.png",
+                title=f"Classes in {candidate_id}",
+                theme_name=args.theme,
+            )
+        drawn[f"shepard{suffix}"] = _draw_shepard(
+            run, candidate_id, successful[candidate_id], metrics_by_id.get(candidate_id),
+            args.theme, figures_dir / f"shepard{suffix}.png",
         )
-
-    metrics_by_id = {
-        path.stem: jsonio.read(path) for path in sorted((run.path / "metrics").glob("*.json"))
-    }
     if metrics_by_id:
         first = next(iter(metrics_by_id.values()))
         drawn["metrics"] = figure_metrics(
@@ -1692,16 +2127,11 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
         if recon.get("thumbnail", {}).get("drawn"):
             drawn["recon_thumbnail"] = recon["thumbnail"]
 
-    if winner in successful:
-        drawn["shepard"] = _draw_shepard(
-            run, winner, successful[winner], metrics_by_id.get(winner), args.theme
-        )
-
     jsonio.write(figures_dir / "figures.json", drawn)
     return drawn
 
 
-def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
+def _draw_shepard(run, candidate_id, embedding, metrics, theme_name, path):
     """Distances before against distances after, on the same capped subsample."""
     from sklearn.metrics import pairwise_distances
 
@@ -1717,7 +2147,7 @@ def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
     return figure_shepard(
         before[upper],
         after[upper],
-        run.path / "figures" / "shepard.png",
+        path,
         correlation=(metrics or {}).get("values", {}).get("shepard_correlation"),
         title=f"Shepard diagram — {candidate_id}",
         theme_name=theme_name,
@@ -1725,11 +2155,24 @@ def _draw_shepard(run, candidate_id, embedding, metrics, theme_name):
 
 
 def _in_rank_order(run: RunDir, embeddings: dict[str, Any]) -> dict[str, Any]:
-    """Order candidates by the ranking when one exists, keeping any extras at the end."""
+    """Order candidates by the ranking, or in a visualization run by the comparison.
+
+    A visualization run has no ranking: its fixed order is the linear baseline first,
+    then the plan's, with the recommended candidates brought to the front once the
+    recommendation exists. Candidates in neither keep their place at the end.
+    """
     path = run.path / "ranking.json"
-    if not path.exists():
+    comparison = run.path / "comparison.json"
+    if _purpose(run) == "visualization" and comparison.exists():
+        order = list(jsonio.read(comparison).get("candidates", []))
+        recommendation = run.path / "recommendation.json"
+        if recommendation.exists():
+            chosen = jsonio.read(recommendation).get("recommended", [])
+            order = [c for c in order if c in chosen] + [c for c in order if c not in chosen]
+    elif path.exists():
+        order = [row["id"] for row in jsonio.read(path).get("ranking", [])]
+    else:
         return embeddings
-    order = [row["id"] for row in jsonio.read(path).get("ranking", [])]
     ranked = {name: embeddings[name] for name in order if name in embeddings}
     ranked.update({name: xy for name, xy in embeddings.items() if name not in ranked})
     return ranked
