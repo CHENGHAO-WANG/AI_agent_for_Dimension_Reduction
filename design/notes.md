@@ -3775,5 +3775,34 @@ first on the code about to change. No cut is planned for now; the rule above sta
   Rejected: "emphasis" for Focus, since emphasis is already a method's property, and
   "winner" or "pick" for Adoption and Recommendation, which would read as a ranking.
 
-  761 tests, 280s. The 88 s over day 16 is plot B's UMAP inside every representation-run
-  `evaluate` the tests call, and the new tests.
+  *An external review of days 12 to 17, and the four defects it found.* A Codex review
+  over `2e0d148...HEAD` -- 63 files, some 10,200 inserted lines, the first since day 11.
+  Four findings, all four reproduced before anything was changed, two from today and
+  two from day 15. No false positives, as on days 9 and 11.
+  - *A PCA pre-step keeping two components left UMAP asked for d = 1* -- today's. The
+    d = 2 of a picture was taken as the smaller of 2 and the representation cap
+    min(100, p - 1, n - 1), which on two entering features is 1; validation then refused
+    every cell. Before today the code set 2 outright, and today's generalisation to
+    reductions in a visualization run lost that. Now a fixed d is the d, whatever the
+    input's width, since the cap bounds a d tuning chooses and here none is chosen.
+  - *The alternation refused a candidate whose starting d no multiplier could run at* --
+    day 15's. Hessian LLE at reconnaissance's d = 8 needs 45 neighbours, and 6, 12 and
+    24 were all short, though the same candidate runs at d = 2. The start now moves to
+    the nearest grid point where some multiplier runs, the smaller d on a tie, and the
+    record keeps the estimate and why it moved. Rejected: starting at the smallest d
+    always, which discards the estimate section 3.5 starts from.
+  - *The tuning scorer broke distance ties differently from the battery* -- day 15's.
+    `BatteryScorer` took neighbours from a stable sort of the distance matrix, and
+    scikit-learn's `trustworthiness` from `NearestNeighbors`. On continuous data the two
+    agree, which is why the test holding them together passed; on a binary 40-by-4
+    matrix continuity came out 0.8577 against the battery's 0.8709. Tuning cells and,
+    since day 16, the jackknife replicates were measuring a slightly different
+    statistic from the reported score. The scorer now calls `NearestNeighbors` exactly
+    as `trustworthiness` does, and the test runs on tied data.
+  - *A stale recommendation and adoption were shown as current* -- today's. After a
+    re-plan round both stayed on disk, and the report printed the old adoption as made
+    after the new recommendation. Each now counts only for the comparison whose digest
+    it carries, and `adopt` requires a recommendation of the current comparison.
+    `status` already read the digest, so the run correctly returned to `evaluate`.
+
+  766 tests, 261s.
