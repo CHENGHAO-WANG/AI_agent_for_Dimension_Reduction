@@ -135,13 +135,17 @@ ops:
 
   subsample:
     kind: preprocessing
-    summary: Draw a stratified subsample of the samples.
+    summary: Draw a stratified subsample of the rows the later stages are fitted on.
     rationale: >
-      The honest way to run a quadratic method on data too large for it. Recorded as a
-      decision so that any metric computed afterwards is known to describe the subset.
+      The honest way to run a quadratic method on data too large for it. The stages
+      after it are fitted on the rows kept, and every other row is projected through
+      the fitted stages, so the candidate's embedding still covers every row and is
+      scored on the same rows as every other candidate.
     caution: >
-      Thins neighbourhoods, so local-density conclusions do not transfer back to the
-      full data even though global ones largely do.
+      Thins neighbourhoods, so the fit learns local structure from fewer rows than the
+      data holds, and a poor projection of the other rows costs the candidate in the
+      ranking. Allowed only where the method would otherwise exceed its scales_to or
+      the run's memory limit.
     handles_sparse: true
     preserves_sparsity: true
     deterministic: true

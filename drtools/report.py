@@ -540,13 +540,18 @@ def _block_limitations(run: RunDir) -> str:
         if "tied" in note or "noise" in note:
             lines.append(f"- {note}")
 
-    for candidate_id in _candidate_ids(run):
-        record = _read(run, "metrics", f"{candidate_id}.json")
-        if record and record.get("subsampled"):
-            lines.append(
-                f"- {candidate_id} was scored on {record['n_used']} of "
-                f"{record['n_total']} rows, so its metrics describe that subsample."
-            )
+    # Every candidate covers every row and is scored on the same rows (section 3.12),
+    # so the scored sample is one fact about the comparison, not one per candidate.
+    scored = [
+        record
+        for candidate_id in _candidate_ids(run)
+        if (record := _read(run, "metrics", f"{candidate_id}.json"))
+    ]
+    if scored and scored[0].get("subsampled"):
+        lines.append(
+            f"- Every candidate was scored on the same {scored[0]['n_used']} of "
+            f"{scored[0]['n_total']} rows, drawn once under the run's seed."
+        )
 
     if ranking.get("failed_candidates"):
         lines.append(

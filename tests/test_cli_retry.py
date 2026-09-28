@@ -152,7 +152,7 @@ def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_pat
                     [{"id": "base", "stages": PCA}, {"id": "a", "stages": subsampled}],
                     rows=6000)
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
-    assert (run / "embeddings" / "a.index.npy").exists()
+    assert (run / "embeddings" / "a.fitted.npy").exists()
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"][1]["stages"] = PCA
@@ -169,9 +169,9 @@ def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_pat
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("embed", "--run-dir", run, "--id", "a", "--in-process").code == 0
 
-    # The subsample index from the first attempt must not survive to subset a reference
-    # the second attempt never subsampled.
-    assert not (run / "embeddings" / "a.index.npy").exists()
+    # The first attempt's record of the rows it was fitted on must not survive to
+    # describe a second attempt that fitted every row.
+    assert not (run / "embeddings" / "a.fitted.npy").exists()
 
 
 @pytest.mark.parametrize("outcome", ["failed", "timeout", "crashed"])

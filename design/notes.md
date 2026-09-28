@@ -1413,7 +1413,19 @@ refused above its limit.**
 - *Laplacian Eigenmaps and Diffusion Maps* get the Nyström extension, the standard way to
   place new points in a spectral embedding: a new row's coordinates are computed from its
   kernel similarities to the fitted rows and the fitted eigenvectors. Written in the
-  toolbox, since neither implementation ships one.
+  toolbox, since neither implementation ships one. *Settled on day 14:* the kernel is
+  the fit's own, evaluated at the new row. For Diffusion Maps that is the Gaussian
+  kernel, normalised by the fitted rows' densities; applied to a fitted row, the
+  extension returns that row's coordinate. For Laplacian Eigenmaps it is
+  scikit-learn's symmetrised 0/1 neighbour graph: a half for each fitted row among the
+  new row's nearest, and a half more where the new row falls inside a fitted row's own
+  neighbourhood, divided through by each coordinate's eigenvalue. With a 0/1 kernel
+  and eigenvalues near 1 this lands close to the mean of the row's neighbours, which is
+  what the rejected fallback below does. The difference is that it is the eigenvector
+  equation's own value at that row, not a stand-in. Measured on a Swiss roll fitted on
+  500 of 1,500 rows, the projected rows recover position along the roll as well as the
+  fitted rows do: 0.93 against 0.92 for Laplacian Eigenmaps, and 0.99 against 0.99 for
+  Diffusion Maps.
 - *A method with no transform and no standard extension* -- MDS, in the registry as it
   stands -- is refused when n exceeds its `scales_to`, and the refusal is recorded as a
   rejection citing `profile.shape.n_samples`. Placing new points one at a time against a
@@ -1446,7 +1458,23 @@ which is what first showed the problem.
 **Cost.** Projection runs in chunks. Projecting 97,000 rows through a kernel PCA fitted on
 10,000 needs a 97,000-by-10,000 kernel, about 7.8 GB built whole; Isomap's `transform`
 needs the same shape of distance matrix. The fitted objects stay in the worker process
-that fitted them, so nothing is pickled across a process boundary.
+that fitted them, so nothing is pickled across a process boundary. *Settled on day 14:*
+a chunk may take 256 MiB, so its rows are that divided by eight bytes times the larger of
+the Fitted rows and the features entering the projection -- 3,355 rows against 10,000
+Fitted rows. Each chunk passes through every fitted Stage before the next starts, so no
+Stage's output is held for all the Projected rows at once. The memory estimate counts the
+matrix that entered the subsample for every Stage after it, since the Projected rows are
+taken from it once the fit is done.
+
+**The record.** *Settled on day 14.* The embedding record carries a `rows` block: the row
+count, how many rows were fitted and projected, and the chunking. Each Stage after the
+subsample records how it placed new rows (`row-wise`, `fitted parameters`, `transform` or
+`nystrom`) and the time that took, and the candidate's runtime includes it. The Fitted
+rows are saved beside the embedding. The metrics record a digest of the rows the Battery
+scored, `rank` refuses candidates whose digests differ, and `evaluate` refuses an
+embedding short of the Reference's rows. That last refusal replaces day 7's, which
+refused a subsampled candidate whose rows could not carry the run's k: no candidate now
+has fewer rows than the Reference.
 
 ---
 
@@ -3205,3 +3233,85 @@ first on the code about to change. No cut is planned for now; the rule above sta
   agent, and the Reference is always its output, since no plan now lacks one.
 
   622 tests, 74s.
+
+- **Day 14** — Every row covered: a candidate that subsamples is fitted on the rows it
+  kept, and every other row is projected through its fitted Stages, so every Embedding
+  has the Reference's rows and every candidate is scored on the same ones.
+
+  The items section 3.12 carried went in as written. Every Stage after a subsample is
+  fitted on the Fitted rows and records how Projected rows pass through it: the features
+  kept, the z-score means and standard deviations, the median total, the fitted model's
+  `transform` for PCA, sparse PCA, kernel PCA, Isomap, LLE, t-SNE and UMAP, and the
+  Nyström extension for Laplacian Eigenmaps and Diffusion Maps. Projection runs in
+  chunks inside the worker that fitted, and the embedding comes back in the dataset's
+  row order. MDS sets no projection. Registration already refused it above its limit,
+  and the engine now refuses it too, naming the rejection as the fix. The notes named the
+  mechanism, so the day was bounded. The details they left open were settled in
+  implementation and are open to review: the chunk size, the Laplacian kernel, the
+  record, and the check that scored rows match.
+
+  *The Laplacian Eigenmaps extension, and its resemblance to what was rejected.*
+  scikit-learn exposes neither the eigenvalues nor the operator, so the extension is
+  rebuilt from the fitted affinity. Its graph Laplacian ignores the self-loops the
+  affinity carries: with them removed, the fitted coordinates satisfy
+  mu y = D^-1 W y to 1e-15, and each coordinate's eigenvalue mu comes back as a Rayleigh
+  quotient. Because the kernel is a 0/1 neighbour graph and mu is 0.99 or more for the
+  leading coordinates, the extension lands close to the mean of a new row's neighbours.
+  Section 3.12 rejected that mean as a generic fallback. The extension stays because it
+  is the eigenvector equation's own value at the new row, for the kernel the fit used.
+  It is not an average chosen for convenience, and on the Swiss roll its Projected rows
+  are placed as well as its Fitted rows. Rejected: reimplementing Laplacian Eigenmaps to
+  own its operator, which trades a tested library fit for code of our own to get
+  numbers we can already recover.
+
+  *Chunks sized by what a chunk builds against.* A chunk's largest object is its matrix
+  against every Fitted row, so the rows per chunk are 256 MiB over eight bytes times the
+  larger of the Fitted rows and the features entering the projection. Each chunk goes
+  through every Stage before the next one starts, because the Projected rows after
+  `standardise` are dense, and all of them at once would be the matrix the subsample
+  existed to avoid. The projections that are deterministic give the same result chunked
+  or whole, to 1e-8, which is tested. openTSNE and UMAP place new points against a
+  fixed embedding without the new points acting on one another. UMAP's result still
+  depends on the chunk size through its random stream, but that size is fixed by the
+  plan, so a run reproduces. The memory estimate now counts the matrix that entered the
+  subsample for every Stage after it.
+
+  *What is recorded, and what refuses.* The embedding record gains `rows`, replacing
+  `n_samples_subsampled`. Each projecting Stage records its kind, its row count and its
+  time, and the candidate's runtime includes the projection, since that is what it cost
+  to deliver. `<id>.fitted.npy` replaces `<id>.index.npy` and is written only for a
+  subsampled candidate. Nothing reads it back: it is the record of which rows the fit
+  saw. Evaluation no longer subsets the Reference for a candidate, and day 7's refusal
+  of a candidate whose rows could not carry the run's k is replaced by one that refuses
+  an embedding short of the Reference's rows. The metrics carry a 16-character digest
+  of the rows the Battery scored, and `rank` refuses a cohort whose digests differ. So
+  the paired comparison section 3.12 claims can be checked, not merely assumed. The
+  engine refuses a second subsample, which would leave rows neither fitted nor
+  projected. Rejected: skipping the digest because `evaluate` already guarantees
+  matching rows. `evaluate` only covers records it writes, and a metrics file from
+  before the rule, or edited by hand, would otherwise rank beside the rest.
+
+  *Found on the way.* The first Laplacian kernel test missed 164 of 160,000 affinity
+  entries, every one on the boundary where a fitted row is exactly another's last
+  neighbour. The two distances agree in exact arithmetic but not when one comes from the
+  tree search and the other from `pairwise_distances`. The radius is widened by a
+  relative 1e-9. For genuinely new rows an exact tie has probability zero, so only the
+  identity case was affected. The Diffusion Maps extension first divided by the new
+  row's kernel sum, which underflows to zero for a row far from every fitted row. The
+  new row's density cancels when its Markov row is normalised, so the row is computed as
+  a softmax in log space. The report's limitations block printed "was scored on 2,000 of N rows, so its
+  metrics describe that subsample" once per candidate. That is now one sentence for the
+  cohort, since the rows are the same for all of them. Three tests encoded the old
+  behaviour by design (the day-7 refusal, the subsample index, a subsampled candidate's
+  row count) and were rewritten to state the new one. A 20,000-row Swiss roll run end to
+  end through the isolated worker: Isomap and Diffusion Maps were fitted on 4,000 rows
+  and projected 16,000 in two chunks, all four candidates were scored under one digest,
+  and the run took 29 s.
+
+  *The glossary.* `CONTEXT.md` gains Fitted row and Projected row, and an Embedding now
+  has coordinates for every row of the dataset. "Projection" stays on Embedding's list
+  of words to avoid: projected is said of rows, and the coordinates are still the
+  Embedding. Rejected: "out-of-sample", the statistical term, which in this project
+  would suggest held-out validation, which this is not.
+
+  655 tests, 84s.

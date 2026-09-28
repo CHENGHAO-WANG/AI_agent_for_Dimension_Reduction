@@ -63,8 +63,11 @@ belongs in `rejected`. The finding names the Stage.
 
 A Candidate holds at most two methods: one `pca` pre-step, then a different method. A
 `subsample` is allowed only in front of a method that would otherwise receive more rows
-than its `scales_to`; a method whose `new_rows` is `none` cannot be subsampled at all, so
-above its limit it is a Rejection citing `profile.shape.n_samples`.
+than its `scales_to`. The Stages after it are fitted on the rows kept, and every other
+row is projected through them, so the Candidate's Embedding still covers every row and
+is scored on the same rows as the rest. A method whose `new_rows` is `none` cannot place
+rows it was not fitted on, so it cannot be subsampled at all: above its limit it is a
+Rejection citing `profile.shape.n_samples`.
 
 Read `drtools methods` for what each Op preserves, assumes, destroys, and where it
 stops scaling. You cannot introspect the library; the Capability records are what you

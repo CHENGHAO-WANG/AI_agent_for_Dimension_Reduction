@@ -7,6 +7,11 @@ dots and look like a wonderful clustering. That failure mode is the reason the r
 pass measures connectivity before the planner ever selects them, and the reason these
 executors check it again and say so rather than returning something plausible.
 
+Neither method ships a way to place rows it was not fitted on, so both get the Nyström
+extension here (section 3.12): an eigenvector satisfies mu * psi = P psi for the
+random-walk operator P, and the same equation, with P's row for a new point computed
+from its similarities to the fitted rows, defines psi at that point.
+
 Diffusion Maps is implemented here rather than taken from a library. `datafold`, the
 obvious dependency, imports a scikit-learn private symbol that no longer exists, and
 pinning scikit-learn backwards to suit it would cascade through umap-learn and scanpy.
@@ -17,10 +22,11 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
 from sklearn.manifold import SpectralEmbedding
 from sklearn.metrics import pairwise_distances
-from sklearn.neighbors import kneighbors_graph
+from sklearn.neighbors import NearestNeighbors, kneighbors_graph
 
 from drtools.contract import Matrix
 from drtools.executors import (
@@ -67,9 +73,12 @@ def laplacian_eigenmaps(
         random_state=ctx.seed,
     )
     embedding = model.fit_transform(X)
+    extension = LaplacianNystrom(X, embedding, model.affinity_matrix_, n_neighbors)
+    ctx.project_with(extension, "nystrom")
     return embedding, {
         "n_neighbors": int(n_neighbors),
         "graph_connected": True,
+        "eigenvalues": [float(v) for v in extension.eigenvalues],
         "caveat": "the embedding's scale is arbitrary and inter-cluster distances are "
         "not meaningful; only local neighbourhood structure is represented",
     }
@@ -148,6 +157,12 @@ def diffusion_maps(
     psi = eigenvectors * inverse_sqrt_degree[:, None]
     kept = slice(1, n_components + 1)
     embedding = psi[:, kept] * np.power(eigenvalues[kept], t)
+    ctx.project_with(
+        DiffusionNystrom(
+            dense, psi[:, kept], eigenvalues[kept], density, epsilon, alpha, t
+        ),
+        "nystrom",
+    )
 
     spectral_gap = (
         float(eigenvalues[1] - eigenvalues[2]) if eigenvalues.size > 2 else None
@@ -164,6 +179,113 @@ def diffusion_maps(
         "different and equally valid embedding, so t belongs in any description of "
         "this result",
     }
+
+
+class LaplacianNystrom:
+    """Place new rows in a fitted Laplacian Eigenmaps embedding.
+
+    scikit-learn's coordinates y satisfy mu * y_i = sum_j W_ij y_j / d_i, where W is its
+    symmetrised k-nearest-neighbour affinity with the self-loops removed -- the graph
+    Laplacian ignores the diagonal -- and d_i is W's row sum. mu is recovered from each
+    coordinate as a Rayleigh quotient. A new row x gets the same equation's value,
+    mu * y(x) = sum_j w(x, j) y_j / sum_j w(x, j), with w the fitted affinity evaluated
+    at x: 1/2 for each fitted row among x's k - 1 nearest (k counts the point itself, as
+    in the fit), and 1/2 more where x falls inside that fitted row's own neighbourhood,
+    the distance to its k - 1-th nearest other row.
+
+    Because the affinity is a 0/1 graph and mu is close to 1 for the leading
+    coordinates, this lands close to the mean of the new row's neighbours. That is what
+    the standard extension is for this kernel, rather than a stand-in for one.
+    """
+
+    def __init__(
+        self,
+        X_fit: Matrix,
+        embedding: np.ndarray,
+        affinity: Any,
+        n_neighbors: int,
+    ) -> None:
+        weights = sp.csr_matrix(affinity, dtype=np.float64).tolil()
+        weights.setdiag(0.0)
+        weights = weights.tocsr()
+        degree = np.asarray(weights.sum(axis=1)).ravel()
+        self.embedding = np.asarray(embedding, dtype=np.float64)
+        self.eigenvalues = np.array(
+            [
+                float(y @ (weights @ y)) / float(y @ (degree * y))
+                for y in self.embedding.T
+            ]
+        )
+        self.X_fit = X_fit
+        self.n_others = n_neighbors - 1
+        self.index = NearestNeighbors(n_neighbors=n_neighbors).fit(X_fit)
+        # Each fitted row's own neighbourhood radius: the distance to its k - 1-th
+        # nearest other row. The tree search and `pairwise_distances` round differently,
+        # and a fitted row that is exactly another's last neighbour sits on the radius,
+        # so the radius is widened by a relative 1e-9 to count it on both sides.
+        distances, _ = self.index.kneighbors(X_fit)
+        self.radius = distances[:, -1] * (1.0 + 1e-9)
+
+    def kernel(self, distances: np.ndarray) -> np.ndarray:
+        """w(x, j) for each row of `distances`, a chunk against every fitted row."""
+        nearest = np.argpartition(distances, self.n_others - 1, axis=1)[
+            :, : self.n_others
+        ]
+        forward = np.zeros_like(distances)
+        np.put_along_axis(forward, nearest, 1.0, axis=1)
+        backward = (distances <= self.radius[None, :]).astype(np.float64)
+        return 0.5 * (forward + backward)
+
+    def __call__(self, Z: Matrix) -> np.ndarray:
+        distances = pairwise_distances(Z, self.X_fit)
+        weights = self.kernel(distances)
+        mean = weights @ self.embedding / weights.sum(axis=1, keepdims=True)
+        return mean / self.eigenvalues[None, :]
+
+
+class DiffusionNystrom:
+    """Place new rows in a fitted diffusion map.
+
+    The fitted coordinates are psi * lambda**t, where psi are right eigenvectors of the
+    Markov operator P built from the density-normalised kernel. For a new row x, P's
+    row is the fitted kernel against every fitted row, normalised as in the fit with
+    the fitted rows' densities held fixed. Then psi(x) = sum_j P(x, j) psi_j / lambda,
+    and the coordinate is psi(x) * lambda**t. Applied to a fitted row, this returns
+    that row's coordinate, which is the test.
+
+    The density at x divides every entry of its row alike and cancels when the row is
+    normalised, so P(x, .) is a softmax of -d^2 / epsilon - alpha * log q_j. Computed
+    that way, a row far from every fitted row still gets a row that sums to one rather
+    than a kernel that underflowed to zero.
+    """
+
+    def __init__(
+        self,
+        X_fit: np.ndarray,
+        psi: np.ndarray,
+        eigenvalues: np.ndarray,
+        density: np.ndarray,
+        epsilon: float,
+        alpha: float,
+        t: int,
+    ) -> None:
+        self.X_fit = X_fit
+        self.psi = np.asarray(psi, dtype=np.float64)
+        self.eigenvalues = np.asarray(eigenvalues, dtype=np.float64)
+        self.density = density
+        self.epsilon = float(epsilon)
+        self.alpha = float(alpha)
+        self.t = int(t)
+
+    def __call__(self, Z: Matrix) -> np.ndarray:
+        dense = require_dense(Z, "diffusion_maps")
+        log_kernel = -pairwise_distances(dense, self.X_fit, squared=True) / self.epsilon
+        log_kernel -= self.alpha * np.log(self.density)[None, :]
+        log_kernel -= log_kernel.max(axis=1, keepdims=True)
+        markov = np.exp(log_kernel)
+        markov /= markov.sum(axis=1, keepdims=True)
+        psi = markov @ self.psi / self.eigenvalues[None, :]
+        return psi * np.power(self.eigenvalues, self.t)[None, :]
 
 
 def _bandwidth_by_kernel_scaling(

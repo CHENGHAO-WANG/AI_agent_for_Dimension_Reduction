@@ -55,6 +55,7 @@ def pca(
             n_components=n_components, random_state=ctx.seed, algorithm="randomized"
         )
         embedding = model.fit_transform(X)
+        ctx.project_with(model.transform, "transform")
         notes = {
             "solver": "TruncatedSVD",
             "centred": False,
@@ -65,6 +66,7 @@ def pca(
     else:
         model = PCA(n_components=n_components, whiten=whiten, random_state=ctx.seed)
         embedding = model.fit_transform(np.asarray(X, dtype=np.float64))
+        ctx.project_with(lambda Z: model.transform(_dense_float(Z)), "transform")
         notes = {"solver": "PCA", "centred": True, "whitened": bool(whiten)}
 
     ratios = np.asarray(model.explained_variance_ratio_)
@@ -115,6 +117,9 @@ def kernel_pca(
         eigen_solver="auto",
     )
     embedding = model.fit_transform(dense)
+    # The kernel between a chunk of new rows and every fitted row is built whole, which
+    # is why the engine sizes its chunks by the number of fitted rows.
+    ctx.project_with(lambda Z: model.transform(_dense_float(Z)), "transform")
     if embedding.shape[1] < n_components:
         raise ExecutionError(
             f"kernel_pca returned {embedding.shape[1]} of {n_components} requested "
@@ -143,6 +148,7 @@ def sparse_pca(
         n_components=n_components, alpha=alpha, random_state=ctx.seed
     )
     embedding = model.fit_transform(dense)
+    ctx.project_with(lambda Z: model.transform(_dense_float(Z)), "transform")
 
     loadings = np.asarray(model.components_)
     nonzero = int(np.count_nonzero(loadings))
@@ -153,6 +159,11 @@ def sparse_pca(
         "caveat": "components are neither orthogonal nor ordered by explained variance, "
         "so they cannot be interpreted the way PCA's components are",
     }
+
+
+def _dense_float(Z: Matrix) -> np.ndarray:
+    """A chunk of new rows in the dense float64 form these methods were fitted on."""
+    return np.asarray(Z.todense() if sp.issparse(Z) else Z, dtype=np.float64)
 
 
 def _median_heuristic_gamma(X: np.ndarray, seed: int, cap: int = 1000) -> float:

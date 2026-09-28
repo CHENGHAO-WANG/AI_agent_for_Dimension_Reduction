@@ -86,8 +86,18 @@ what its output may be used for.
 _Avoid_: final method, leaf, sink
 
 **Embedding**:
-The low-dimensional coordinates a Candidate produces.
+The low-dimensional coordinates a Candidate produces, one for every row of the dataset,
+whether that row was a Fitted row or a Projected row.
 _Avoid_: projection, layout, representation
+
+**Fitted row**:
+A row a Candidate's Stages were fitted on: every row, or the rows its subsample kept.
+_Avoid_: training row, sampled row, kept row
+
+**Projected row**:
+A row a Candidate was not fitted on, placed in its Embedding by passing it through the
+fitted Stages. Projected is said of rows; the coordinates themselves are the Embedding.
+_Avoid_: held-out row, new point, out-of-sample row, extended row
 
 **Rejection**:
 A method, or one configuration of a method, that the Plan deliberately does not run,
