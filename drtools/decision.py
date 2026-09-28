@@ -1,4 +1,5 @@
-"""The two facts preprocessing rules take as input, and the base those rules give.
+"""The two facts preprocessing rules take as input, the base those rules give, and the
+checkpoint's purpose and focus.
 
 Section 3.10 fixes both layers of preprocessing by rule, and the rule reads two facts
 the matrix cannot settle alone: whether the values are raw counts, and whether the
@@ -84,3 +85,30 @@ def recorded_decision(recon: dict[str, Any] | None) -> DataDecision | None:
     if not recon or "data_decision" not in recon:
         return None
     return DataDecision.model_validate(recon["data_decision"])
+
+
+class Checkpoint(BaseModel):
+    """The purpose and the focus, answered at the checkpoint (section 3.11, day 17).
+
+    Recorded once by `drtools checkpoint`, after reconnaissance, and read by
+    registration, so the plan never restates them. The purpose decides which methods are
+    eligible and whether candidates are ranked; the focus decides which default
+    weighting the plan is held to. Each answer says who gave it, since the user may
+    answer one question and leave the other to the agent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Literal["representation", "visualization"] = "representation"
+    purpose_decided_by: Literal["user", "agent", "default"] = "default"
+    # `local`: neighbourhoods -- clustering downstream, or a picture of clusters.
+    # `global`: distances -- regression or a map downstream, or the overall layout.
+    focus: Literal["local", "global", "balanced"] = "balanced"
+    focus_decided_by: Literal["user", "agent", "default"] = "default"
+    rationale: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+def recorded_checkpoint(checkpoint: dict[str, Any] | None) -> Checkpoint | None:
+    """The checkpoint a run recorded, or None when it recorded none."""
+    return None if checkpoint is None else Checkpoint.model_validate(checkpoint)

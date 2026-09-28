@@ -19,11 +19,12 @@ from drtools.plan import Plan
 from drtools.plan import validate_plan as _validate_plan
 from drtools.profile import profile_dataset
 from drtools.rank import RankingError, rank_candidates
-from plans import RECON, complete
+from plans import RECON, checkpoint_for, complete
 
 
 def validate_plan(document, profile, recon=RECON, *args, **kwargs):
-    """The validator with a recorded data decision, which registration requires."""
+    """The validator with a recorded data decision and checkpoint, as registration requires."""
+    kwargs.setdefault("checkpoint", checkpoint_for(document))
     return _validate_plan(document, profile, recon, *args, **kwargs)
 
 BASE_WEIGHTS = {"trustworthiness": 0.5, "continuity": 0.3, "shepard_correlation": 0.2}

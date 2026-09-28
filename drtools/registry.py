@@ -40,6 +40,8 @@ PYTHON_TYPES: dict[str, type] = {
 }
 
 KINDS = ("preprocessing", "reduction", "visualization")
+#: The three questions every method's `reading` answers about a picture it draws.
+READING_FIELDS = ("distances", "gaps", "sizes")
 CONDITIONAL_PROPERTIES = ("euclidean", "nested_in_d", "requires_connected_graph")
 EMPHASES = ("local", "global", "balanced")
 NEW_ROWS = ("transform", "nystrom", "none")
@@ -137,6 +139,12 @@ class OpSpec:
     @property
     def is_visualization(self) -> bool:
         return self.kind == "visualization"
+
+    @property
+    def reading(self) -> dict[str, str]:
+        """What distances, gaps and group sizes on this method's picture mean."""
+        reading = self.raw.get("reading") or {}
+        return {field: str(reading.get(field, "")).strip() for field in READING_FIELDS}
 
     @property
     def roles(self) -> tuple[str, ...]:
@@ -437,6 +445,22 @@ def _parse_op(name: str, raw: Any) -> OpSpec:
             f"{name}: new_rows must be one of {', '.join(NEW_ROWS)}, "
             f"got {raw['new_rows']!r}"
         )
+
+    # Section 3.11: what a picture drawn by this method does and does not mean, so the
+    # report takes its caveats from the method rather than one sentence for all.
+    if kind in ("reduction", "visualization"):
+        reading = raw.get("reading")
+        missing = [
+            field
+            for field in READING_FIELDS
+            if not isinstance(reading, dict) or not str(reading.get(field) or "").strip()
+        ]
+        if missing:
+            raise RegistryError(
+                f"{name}: a {kind} can be drawn as a picture, so it must declare "
+                f"`reading` -- what distances, gaps and group sizes on it mean; missing "
+                f"{missing}"
+            )
 
     d_limits = tuple(raw.get("d_limits") or ())
     unknown_rules = [rule for rule in d_limits if rule not in RULES]

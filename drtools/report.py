@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from drtools import jsonio
+from drtools.plots import PLOT_B_METHOD
+from drtools.registry import load_registry
 from drtools.runs import RunDir
 
 BLOCK_IDS = (
@@ -406,6 +408,8 @@ def _block_figures(run: RunDir) -> str:
     if not drawn:
         return NOT_PRODUCED
 
+    visualization = run.purpose() == "visualization"
+    terminal = _terminal_ops(run)
     parts: list[str] = []
     for name, record in drawn.items():
         if not isinstance(record, dict) or "path" not in record:
@@ -420,6 +424,15 @@ def _block_figures(run: RunDir) -> str:
         parts.append(f"**{name}**\n\n![{name}]({relative})")
         if record.get("caveat"):
             parts.append(f"_{record['caveat']}_")
+        # Section 3.11: what the picture's distances, gaps and sizes mean comes from
+        # the method that drew it -- the candidate's own in a visualization run, UMAP
+        # under every plot B.
+        if name.startswith("plot_b_"):
+            parts.append(_reading_line(PLOT_B_METHOD))
+        elif visualization and name.startswith("embedding_"):
+            op = terminal.get(name.removeprefix("embedding_"))
+            if op:
+                parts.append(_reading_line(op))
         channel = record.get("identity_channel")
         if channel and channel != "labels":
             parts.append(f"_Identity is carried by {channel} in this figure._")
@@ -441,7 +454,10 @@ def _block_metrics(run: RunDir) -> str:
         [
             [candidate_id]
             + [
-                f"{record['values'][name]:.4f}" if name in record["values"] else "—"
+                # A metric recorded as None -- silhouette without labels -- is a dash.
+                f"{record['values'][name]:.4f}"
+                if record["values"].get(name) is not None
+                else "—"
                 for name in names
             ]
             for candidate_id, record in scored.items()
@@ -478,6 +494,8 @@ LIMITATION_KINDS: dict[str, bool] = {
 
 
 def _block_ranking(run: RunDir) -> str:
+    if run.purpose() == "visualization":
+        return _block_comparison(run)
     ranking = _read(run, "ranking.json")
     if ranking is None:
         return NOT_PRODUCED
@@ -557,12 +575,77 @@ def _block_ranking(run: RunDir) -> str:
     return body + "\n" + "\n".join(lines)
 
 
+def _block_comparison(run: RunDir) -> str:
+    """A visualization run's section 7: each metric on its own, and the judgment made.
+
+    No weighted total and no winner (section 3.11). The recommendation and any adoption
+    are printed as recorded, labelled as what they are: choices made after the results.
+    """
+    comparison = _read(run, "comparison.json")
+    if comparison is None:
+        return NOT_PRODUCED
+    recommendation = _read(run, "recommendation.json") or {}
+    adopted = _read(run, "adopted.json")
+    chosen = recommendation.get("recommended") or []
+    order = [c for c in comparison["candidates"] if c in chosen] + [
+        c for c in comparison["candidates"] if c not in chosen
+    ]
+    names = list(comparison["metrics"])
+    rows = []
+    for candidate in order:
+        cells = []
+        for name in names:
+            metric = comparison["metrics"][name]
+            value = metric["values"].get(candidate)
+            if value is None:
+                cells.append("—")
+                continue
+            mark = (
+                " (best)"
+                if metric["best"] == candidate
+                else " (within margin)"
+                if candidate in metric["within_margin"]
+                else ""
+            )
+            cells.append(f"{value:.4f}{mark}")
+        rows.append([candidate, "yes" if candidate in chosen else ""] + cells)
+    body = _table(["Candidate", "Recommended"] + [f"`{name}`" for name in names], rows)
+
+    lines = [
+        "",
+        f"Each metric is compared on its own, and none is summed with another: a "
+        f"weighted total would choose the method by itself. \"Within margin\" is within "
+        f"{comparison['margin']} of that metric's best.",
+        "",
+    ]
+    if chosen:
+        lines.append(
+            f"Recommended for a {recommendation.get('focus', 'balanced')} focus: "
+            f"**{', '.join(chosen)}**. Recommended by the agent after seeing the results; "
+            "this is a judgment, not a measured ranking."
+        )
+        lines.append(f"The agent's reasons, as recorded: {recommendation.get('rationale', '')}")
+    else:
+        lines.append("_No recommendation has been recorded._")
+    if adopted:
+        reason = adopted.get("rationale") or "no reason was given"
+        lines.append(
+            f"The user adopted **{adopted['candidate']}** after seeing the pictures and "
+            f"the recommendation: {reason}"
+        )
+    elif chosen:
+        lines.append("The user did not choose a picture.")
+    return body + "\n" + "\n".join(lines)
+
+
 def _block_limitations(run: RunDir) -> str:
     """The mechanical limitations only.
 
     A weighting the agent would now choose differently, and what the failures say about
     the data, are judgments and stay prose.
     """
+    if run.purpose() == "visualization":
+        return _visualization_limitations(run)
     ranking = _read(run, "ranking.json")
     if ranking is None:
         return NOT_PRODUCED
@@ -581,18 +664,7 @@ def _block_limitations(run: RunDir) -> str:
         if LIMITATION_KINDS[note["kind"]]:
             lines.append(f"- {note['text']}")
 
-    # Every candidate covers every row and is scored on the same rows (section 3.12),
-    # so the scored sample is one fact about the comparison, not one per candidate.
-    scored = [
-        record
-        for candidate_id in _candidate_ids(run)
-        if (record := _read(run, "metrics", f"{candidate_id}.json"))
-    ]
-    if scored and scored[0].get("subsampled"):
-        lines.append(
-            f"- Every candidate was scored on the same {scored[0]['n_used']} of "
-            f"{scored[0]['n_total']} rows, drawn once under the run's seed."
-        )
+    lines += _scored_rows_line(run)
 
     if ranking.get("failed_candidates"):
         lines.append(
@@ -601,6 +673,63 @@ def _block_limitations(run: RunDir) -> str:
             + ", so they carry no scores here."
         )
     return "\n".join(lines) if lines else "_Nothing mechanical to qualify._"
+
+
+def _scored_rows_line(run: RunDir) -> list[str]:
+    # Every candidate covers every row and is scored on the same rows (section 3.12),
+    # so the scored sample is one fact about the comparison, not one per candidate.
+    scored = [
+        record
+        for candidate_id in _candidate_ids(run)
+        if (record := _read(run, "metrics", f"{candidate_id}.json"))
+    ]
+    if scored and scored[0].get("subsampled"):
+        return [
+            f"- Every candidate was scored on the same {scored[0]['n_used']} of "
+            f"{scored[0]['n_total']} rows, drawn once under the run's seed."
+        ]
+    return []
+
+
+def _visualization_limitations(run: RunDir) -> str:
+    comparison = _read(run, "comparison.json")
+    if comparison is None:
+        return NOT_PRODUCED
+    lines = [
+        "- No candidate was ranked. Which pictures are recommended is the agent's "
+        "judgment, made after seeing the results and citing the metrics one at a time; "
+        "it is not a measured ranking, and pre-registration does not protect it."
+    ]
+    lines += _scored_rows_line(run)
+    failed = [
+        candidate_id
+        for candidate_id in _candidate_ids(run)
+        if candidate_id not in comparison["candidates"]
+    ]
+    if failed:
+        lines.append(
+            "- No Embedding was produced for " + ", ".join(failed)
+            + ", so they carry no scores here."
+        )
+    return "\n".join(lines)
+
+
+def _terminal_ops(run: RunDir) -> dict[str, str]:
+    """Each registered candidate's last op: the method whose picture it is."""
+    plan = _read(run, "plan.registered.json") or {}
+    return {
+        candidate["id"]: candidate["stages"][-1]["op"]
+        for candidate in plan.get("candidates", [])
+        if candidate.get("stages")
+    }
+
+
+def _reading_line(op: str) -> str:
+    reading = load_registry()[op].reading
+    return (
+        f"_How to read a {op} picture. Distances: {reading['distances']} Gaps: "
+        f"{reading['gaps']} Sizes: {reading['sizes']}_"
+    )
 
 
 _BUILDERS = {
@@ -645,6 +774,9 @@ Fixed so that the two generated reports can be read side by side. Section 8 carr
 block id, which is the whole shape of the split.
 """
 
+#: Section 7's heading in a visualization run, which ranks nothing (section 3.11).
+VISUALIZATION_SECTION_7 = "7. Comparison and recommendation"
+
 _PROMPT = "_Yours to write. Delete this line._"
 
 
@@ -653,6 +785,8 @@ def assemble(run: RunDir) -> str:
     bodies = build_blocks(run)
     parts = [f"# Dimension reduction report — {run.id}", ""]
     for heading, block_id in SECTIONS:
+        if block_id == "ranking" and run.purpose() == "visualization":
+            heading = VISUALIZATION_SECTION_7
         parts += [f"## {heading}", ""]
         if block_id is not None:
             parts += [fence(block_id, bodies[block_id]), ""]

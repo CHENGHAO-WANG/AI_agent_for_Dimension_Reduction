@@ -171,7 +171,13 @@ Now:
   which kind of picture is wanted. Unanswered, the agent sets the focus from the evidence
   or keeps the default when the evidence favours neither, and logs which. *Open:* the
   weights each answer maps to. Proposed: 0.35, 0.35 and 0.3 for a local focus, and 0.15,
-  0.15 and 0.7 for a global one.
+  0.15 and 0.7 for a global one. *Settled on day 17, as proposed*, with the balanced
+  default between them: each focus moves 0.2 of the weight between the local share and
+  the global one. With trusted labels 70% stays on the three in the focus's proportions,
+  so a local focus gives 0.245, 0.245, 0.21, 0.20, 0.10 and a global one 0.105, 0.105,
+  0.49, 0.20, 0.10. A plan is held to its recorded focus's default: another focus's
+  default is a departure needing evidence, or the answer would move nothing. One table
+  serves both purposes.
 - *Label metrics only with labels.* kNN label preservation and silhouette need labels.
   Without labels neither may carry weight, and `validate-plan` refuses a weighting that
   names them; until day 12 it accepted one and the weight was redistributed silently at
@@ -1356,10 +1362,23 @@ Each unanswered question takes its default, which the agent chooses from the evi
 records with its evidence keys; under `--auto` every default is taken. The purpose may
 also be given as an argument to `/analyze`.
 
+*Settled on day 17.* The answers are recorded by `drtools checkpoint` after
+reconnaissance -- purpose, focus (`local`, `global` or `balanced`), who decided each, and
+evidence that resolves for any the agent decided -- and registration reads them from the
+run, so the plan never restates them, as it never restates the data decision.
+Registration refuses a plan with no checkpoint, and the first registration freezes it:
+`checkpoint` refuses once a plan is registered, and a `checkpoint.json` edited by hand
+afterwards is refused at re-registration. From then on the purpose is read from the
+registration record, not the file. Rejected: `purpose` and `focus` as plan fields, which
+restate an answer and can disagree with it.
+
 **A representation run.**
 - *Portfolio.* Reductions only. Visualization methods are excluded by rule rather than
   rejected by judgment, so the requirement that every eligible method be nominated or
-  rejected (defect 17 in the day 10 log) covers the reductions.
+  rejected (defect 17 in the day 10 log) covers the reductions. *Enforced on day 17:* a
+  candidate running a visualization method is refused
+  (`visualization_method_in_representation_run`), and so is a rejection naming one
+  (`excluded_by_purpose`), which would record a judgment where the rule has decided.
 - *Ranking.* As sections 3.7 and 3.8 describe: d is priced, and the report names one
   winner and its close competitors.
 - *Chains.* At most two reductions, the first PCA (section 3.9).
@@ -1398,7 +1417,14 @@ also be given as an argument to `/analyze`.
     second layout only adds distortion.
   - Both plots are scored against the representation they draw, by trustworthiness and
     continuity. The battery already scores the representation against the Reference, so
-    the report carries the whole chain: data, representation, picture.
+    the report carries the whole chain: data, representation, picture. *Withdrawn on day
+    17, at the user's call:* the battery scores the deliverable, and a score for a
+    picture of it is a number no decision reads. Plot A keeps its variance share, which
+    states what the view shows; plot B's caption names its fixed settings and carries
+    UMAP's reading.
+  - *Built on day 17.* `evaluate` makes both, since they are numbers and every number
+    comes from a command that records it, and `figures` only draws them. Plot B is
+    fitted on every row, in the same process, spending no Attempt.
   - Plot B stands outside section 3.9's chain rules. Those rules exist because a first
     stage adds its cost to a candidate and hides its variance in what is scored. Here the
     representation is computed anyway and plot B is not ranked, so neither applies.
@@ -1439,6 +1465,17 @@ also be given as an argument to `/analyze`.
   baseline first.
 - *One plot per candidate*, its own 2D embedding. The class facet and the Shepard diagram
   go to every candidate, since there is no winner to reserve them for.
+- *Revised on day 17: a comparison, a recommendation, and the user's adoption.* The user
+  first asked for a ranking here, then set it aside: no weighted total, each metric read
+  on its own because different metrics favour different methods, and a judgment from
+  the agent of which candidates suit the focus, "not very strict, kind of subjective".
+  So `rank` refuses a visualization run; `compare` writes, metric by metric, each
+  candidate's value, the best, and those within the margin of the best, and sums
+  nothing; `recommend` records the agent's recommended set, with no order and no winner,
+  citing `comparison` or `metrics` keys, once per comparison; `adopt` records the
+  picture the user chooses, and only the user adopts. With no reply, or under `--auto`,
+  nothing is adopted and the report leads with the recommendation. The paragraphs below
+  describe the agent choosing one picture, which this replaces.
 - *A second checkpoint, after the results.* The user is shown the pictures and chooses
   the one to adopt. With no reply, or under `--auto`, the agent chooses. A choice made
   after the results is not what pre-registration protects, and it is acceptable only
@@ -1454,6 +1491,10 @@ also be given as an argument to `/analyze`.
 - *Caveats per method.* What a picture's gaps and cluster sizes do and do not mean comes
   from each method's capability record, not from one fixed sentence about t-SNE and UMAP.
   The five claim different things, and none of them makes cluster sizes meaningful.
+  *Built on day 17* as `reading`, three statements -- `distances`, `gaps`, `sizes` -- that
+  every reduction and visualization method must declare, since a reduction at d = 2 is a
+  picture too. The report prints the candidate's own beside each picture in a
+  visualization run, and UMAP's under every plot B.
 
 **Consequences elsewhere.**
 - `tsne_exact` (section 3.7) is withdrawn. Its only use was t-SNE as a representation above
@@ -3651,3 +3692,88 @@ first on the code about to change. No cut is planned for now; the rule above sta
 
   727 tests, 192s. The 81 s more than day 15 is the jackknife inside every `evaluate` the
   tests call.
+
+- **Day 17** — Two purposes: the checkpoint records what the run is for, registration
+  admits the methods that purpose allows, and a visualization run ends in a
+  recommendation rather than a ranking.
+
+  Section 3.11's mechanisms went in as written: purpose and focus at the checkpoint,
+  whose limit rises to three questions; reductions only in a representation run, both
+  classes in a visualization run; d = 2 throughout a visualization run, its reductions
+  tuned on the multiplier alone and PCA's k in a chain still picked by its criterion;
+  plots A and B of every representation-run candidate; the class facet and Shepard
+  diagram for every visualization-run candidate; caveats per method from the capability
+  records; the accounting rule narrowed to the run's own class of method; the five
+  skills and `/analyze` updated. Seven items the notes named only as a requirement were
+  settled in chat, one at a time, as bounded work. One reopened a recorded decision.
+
+  *Where the answers live.* `drtools checkpoint` records the purpose, the focus and who
+  decided each, and registration reads the record, as it reads the data decision.
+  Section 3.11 has the rest. Rejected: plan fields, which restate an answer and can
+  disagree with it.
+
+  *The focus weightings, as section 2.4 proposed.* Section 2.4 has the numbers and the
+  rule that another focus's default is a departure.
+
+  *A visualization run is compared, not ranked -- reopened and settled.* I proposed that
+  `rank` refuse and the agent adopt a picture when the user did not. The user asked for
+  a ranking instead, "not in a way as strict as a DR run". Asked what that meant, they
+  set the weighted total aside and asked for each metric read on its own, since
+  different metrics favour different methods, and for the agent to say which candidates
+  are "more recommended", "kind of subjective". I had argued that the day 10 objection --
+  the weighting picks the method -- had weakened once the focus sets the weighting by
+  rule; that argument was not needed, because what was settled sums nothing. Section
+  3.11 has the three commands. The user kept the adoption. Rejected: Pareto tiers, which
+  put nearly every candidate in the first tier; a weighted ranking with a top tier; and
+  the agent adopting one picture. Recorded against section 3.11's second checkpoint,
+  which said the agent chooses: it no longer does.
+
+  *Plots A and B, and no score for either.* Section 3.11 has why the scores went.
+
+  *What each picture means.* `reading`, in section 3.11.
+
+  *How much of the report moved today.* Only what a visualization run needs to be
+  correct: section 7 becomes the comparison and the recommendation, headed "Comparison
+  and recommendation"; section 9 says the recommendation is a judgment made after the
+  results; each picture carries its method's reading. The representation-run blocks for
+  plots A and B stay on day 19, though the figures exist from today.
+
+  *Registration by purpose.* In a visualization run `tuning.d_grid` goes unread, but a
+  block changing only it is still a departure: one rule for the block is simpler than
+  one per purpose. The margin keeps its field and is read there by `compare` alone.
+
+  *Found on the way.*
+  - On digits, 1,797 rows under the labelled local default, the visualization run tuned
+    PCA, Isomap, t-SNE, UMAP and PCA -> UMAP at d = 2. `compare` put t-SNE best on
+    trustworthiness, 0.990, with UMAP and PCA -> UMAP within the margin, and PCA best on
+    the Shepard correlation, 0.582, alone: the pattern section 3.11 predicted, and the
+    reason a weighted total would have chosen the method by itself.
+  - Plot B costs about 20 s per candidate inside `evaluate` at 1,797 rows, most of it
+    UMAP's compilation in a fresh process: evaluating PCA took 31 s against 12 s in a
+    visualization run.
+  - A latent bug: the metrics block formatted a value recorded as `None` -- silhouette
+    without labels -- and raised. No earlier report test used unlabelled data.
+  - `test_rank_stamps_the_digest_it_ranked_under` failed two runs in ten. `prepare-
+    reference` overwrites `reference.npy`, and in a process that had already mapped it
+    for an evaluation, Windows refused. A map held in an uncollected reference cycle
+    keeps the file open; one process per command never meets this, the tests do.
+    `prepare-reference` now collects garbage before it writes; ten in ten passed after.
+    Rejected: loading small References without a map, which would change what the
+    tests exercise to hide a harness artefact.
+  - Plot B's method is one constant, `PLOT_B_METHOD`, since the extension-point test
+    refuses a method named outside the executors.
+  - The purpose is read in one place, `RunDir.purpose()`, by `status`, the commands and
+    the report.
+  - 36 tests failed once registration needed a checkpoint and a representation run
+    refused t-SNE; 15 more once every method needed a `reading`, and one when plot B
+    named UMAP outside the executors. The helpers now
+    infer the purpose from the plan, `reconnoitre` records a checkpoint, the toy
+    registries carry a reading, and two files whose t-SNE was only a second distinct
+    candidate use a whitened PCA.
+
+  *The glossary.* `CONTEXT.md` gains Focus, Checkpoint, Recommendation and Adoption.
+  Rejected: "emphasis" for Focus, since emphasis is already a method's property, and
+  "winner" or "pick" for Adoption and Recommendation, which would read as a ranking.
+
+  761 tests, 280s. The 88 s over day 16 is plot B's UMAP inside every representation-run
+  `evaluate` the tests call, and the new tests.

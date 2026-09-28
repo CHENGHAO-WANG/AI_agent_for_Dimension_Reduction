@@ -19,6 +19,7 @@ def test_any_op_with_n_neighbors_gets_the_neighbour_suggestion(tmp_path) -> None
           toy_graph:
             kind: visualization
             summary: a toy neighbour-graph method
+            reading: {distances: toy, gaps: toy, sizes: toy}
             tuning: {param: n_neighbors, base: suggestion, criterion: fixed}
             params:
               n_components: {type: int, default: 2, min: 1}

@@ -2,16 +2,15 @@ import json
 from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {}}]
-# perplexity is kept well below n/3 = 20 for the 60-row dataset these tests profile;
-# the default of 30 trips validate-plan's perplexity_too_large check and the plan
-# would never reach registration, which is incidental to what this file tests.
-TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
+# A second candidate that differs from the first only by whitening. Since day 17 a
+# representation run may not nominate a visualization method such as t-SNE.
+WHITENED = [{"op": "pca", "params": {"whiten": True}}]
 
 
 def _plan(weights):
     return {
         "dataset": "d",
-        "candidates": [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}],
+        "candidates": [{"id": "a", "stages": PCA}, {"id": "b", "stages": WHITENED}],
         "evaluation": {"weights": weights, "justification": "declared up front"},
     }
 

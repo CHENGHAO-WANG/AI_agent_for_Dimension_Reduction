@@ -27,7 +27,12 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from drtools.constraints import RULES
-from drtools.decision import DataDecision, base_rule, recorded_decision
+from drtools.decision import (
+    DataDecision,
+    base_rule,
+    recorded_checkpoint,
+    recorded_decision,
+)
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.pipeline import PipelineError, normalise_stages, validate_stages
 from drtools.metrics import METRIC_SPECS
@@ -262,6 +267,7 @@ def validate_plan(
     artifacts: dict[str, Any] | None = None,
     frozen_provenance: dict[str, list[dict[str, Any]]] | None = None,
     memory_limit_bytes: int | None = None,
+    checkpoint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check a plan against what is already known about the data.
 
@@ -282,18 +288,35 @@ def validate_plan(
         artifacts = {"profile": profile, **({"recon": recon} if recon is not None else {})}
 
     decision = recorded_decision(recon)
-    weighting_findings, weighting = _check_weighting(plan, profile)
+    answers = recorded_checkpoint(checkpoint)
+    purpose = answers.purpose if answers else "representation"
+    focus = answers.focus if answers else "balanced"
+    weighting_findings, weighting = _check_weighting(plan, profile, focus)
     base_findings, base = _check_base(plan, decision)
     tuning_findings, tuning = _check_tuning(plan, registry)
     margin_findings, margin = _check_margin(plan)
     findings: list[Finding] = []
+    if answers is None:
+        findings.append(
+            Finding(
+                code="no_checkpoint",
+                severity="error",
+                message="no checkpoint is recorded for this run, so its purpose and "
+                "focus are unknown. The purpose decides which methods are eligible and "
+                "whether candidates are ranked, and the focus which default weighting "
+                "applies; registering without them would judge the plan by rules "
+                "nobody chose.",
+                fix="run `drtools checkpoint` with the purpose and the focus, or their "
+                "defaults -- representation and balanced -- when nothing was answered",
+            )
+        )
     findings += _check_structure(plan, registry)
     findings += tuning_findings
     findings += margin_findings
     findings += base_findings
     findings += weighting_findings
     findings += _check_rejections(plan)
-    findings += _check_accounting(plan, registry)
+    findings += _check_accounting(plan, registry, purpose)
     findings += _check_evidence(plan, artifacts)
     peaks: dict[str, float] = {}
     for candidate in plan.candidates:
@@ -312,6 +335,8 @@ def validate_plan(
     return {
         "valid": not errors,
         "n_candidates": len(plan.candidates),
+        "purpose": purpose,
+        "focus": focus,
         "weighting": weighting,
         "base": base,
         "tuning": tuning,
@@ -694,7 +719,9 @@ def is_linear_baseline(candidate: CandidateSpec) -> bool:
     return len(candidate.stages) == 1 and candidate.stages[0].op == "pca"
 
 
-def _check_weighting(plan: Plan, profile: dict[str, Any]) -> tuple[list[Finding], str]:
+def _check_weighting(
+    plan: Plan, profile: dict[str, Any], focus: str = "balanced"
+) -> tuple[list[Finding], str]:
     """Whether the weighting is usable, which default it is, and whether it is argued.
 
     Returns the findings and what the weighting is: `default`,
@@ -734,7 +761,7 @@ def _check_weighting(plan: Plan, profile: dict[str, Any]) -> tuple[list[Finding]
             )
         )
 
-    weighting = matching_default(evaluation.weights) or "departure"
+    weighting = matching_default(evaluation.weights, focus) or "departure"
     if not evaluation.evidence:
         if labelled:
             findings.append(
@@ -813,23 +840,67 @@ def _check_rejections(plan: Plan) -> list[Finding]:
     return findings
 
 
-def _methods(registry: Registry) -> dict[str, Any]:
+def _methods(registry: Registry, purpose: str = "visualization") -> dict[str, Any]:
+    """The methods a run of this purpose may run, and so must account for.
+
+    A representation run's deliverable is a representation, so only reductions are
+    eligible; a visualization run's is a picture, which either class can draw.
+    """
+    if purpose == "representation":
+        return dict(registry.reductions())
     return {**registry.reductions(), **registry.visualization_methods()}
 
 
-def _check_accounting(plan: Plan, registry: Registry) -> list[Finding]:
+def _check_accounting(
+    plan: Plan, registry: Registry, purpose: str = "representation"
+) -> list[Finding]:
     """Every method is nominated, rejected, or both; a rejection names a method.
 
     Both is allowed: a rejection's reason can rule out one configuration while a
     candidate runs another. What cannot stand is rejecting a method and running it
     alone, since nothing then separates the configuration ruled out from the one run.
-    Until day 17 every method of both classes is eligible in every run.
+    Since day 17 the methods are those the run's purpose makes eligible: a
+    visualization method in a representation run is excluded by rule, so it is neither
+    run nor rejected.
     """
-    methods = _methods(registry)
+    methods = _methods(registry, purpose)
     findings: list[Finding] = []
+    visual = registry.visualization_methods() if purpose == "representation" else {}
+
+    for candidate in plan.candidates:
+        for stage in candidate.stages:
+            if stage.op in visual:
+                findings.append(
+                    Finding(
+                        code="visualization_method_in_representation_run",
+                        severity="error",
+                        candidate=candidate.id,
+                        op=stage.op,
+                        message=f"{stage.op} is a visualization method, and this run's "
+                        "purpose is representation. A visualization method's output is "
+                        "a picture, never a representation that downstream analysis "
+                        "can use.",
+                        fix=f"drop candidate {candidate.id}; if the deliverable is a "
+                        "picture, record the purpose as visualization at the "
+                        "checkpoint of a new run",
+                    )
+                )
 
     for rejection in plan.rejected:
-        if rejection.method not in methods:
+        if rejection.method in visual:
+            findings.append(
+                Finding(
+                    code="excluded_by_purpose",
+                    severity="error",
+                    op=rejection.method,
+                    message=f"{rejection.method} is rejected, but in a representation "
+                    "run a visualization method is excluded by rule. A rejection "
+                    "records a judgment about the data where the rule has already "
+                    "decided.",
+                    fix=f"remove the rejection of {rejection.method}",
+                )
+            )
+        elif rejection.method not in methods:
             findings.append(
                 Finding(
                     code="unknown_rejected_method",

@@ -28,7 +28,7 @@ from drtools.tuning import (
     derive_seed,
     diffusion_curve,
 )
-from plans import RECON, complete, reconnoitre
+from plans import RECON, checkpoint_for, complete, reconnoitre
 
 WEIGHTS = {"trustworthiness": 0.25, "continuity": 0.25, "shepard_correlation": 0.5}
 RULE = {"flatness": 0.10, "fallback_share": 0.90}
@@ -264,7 +264,7 @@ def _validate(candidates, **plan_fields) -> dict:
         "evaluation": {"weights": WEIGHTS, "justification": "declared up front"},
         **plan_fields,
     })
-    return _validate_plan(document, _profile(), RECON)
+    return _validate_plan(document, _profile(), RECON, checkpoint=checkpoint_for(document))
 
 
 def _codes(report) -> set[str]:

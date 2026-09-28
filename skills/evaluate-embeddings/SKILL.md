@@ -1,13 +1,14 @@
 ---
 name: evaluate-embeddings
-description: Use when a dr-agent Run has Candidates that produced Embeddings and `drtools status` reports `evaluate` as the next stage, or when a ranking needs recomputing after the portfolio grew.
+description: Use when a dr-agent Run has Candidates that produced Embeddings and `drtools status` reports `evaluate` as the next stage, or when a ranking or a comparison needs recomputing after the portfolio grew.
 ---
 
 # Evaluate the embeddings
 
-Score every Candidate on the same Battery, rank them under the weighting that was
-registered before any of this existed, and draw the figures. The scoring is
-deterministic; your work is reading what comes back.
+Score every Candidate on the same Battery, then judge them as the Run's Purpose says: a
+Representation run ranks them under the weighting registered before any of this
+existed; a Visualization run compares them metric by metric and records your
+recommendation. The scoring is deterministic; your work is reading what comes back.
 
 ## Read your position from the Run
 
@@ -15,15 +16,18 @@ deterministic; your work is reading what comes back.
 drtools status --run-dir runs/<id>
 ```
 
-Evaluate every Candidate whose `outcome` is `ok` and whose `metrics` is false. `ranked`
-is false whenever the existing ranking does not belong to the currently registered
-Plan — a grown portfolio invalidates the previous ranking, and this is how you know.
+Evaluate every Candidate whose `outcome` is `ok` and whose `metrics` is false. `purpose`
+says which branch below is yours. `ranked`, or in a Visualization run `recommended`, is
+false whenever the existing judgment does not belong to the currently registered Plan —
+a grown portfolio invalidates it, and this is how you know.
 
-## Steps
+## Steps, in a Representation run
 
 1. **`drtools evaluate --run-dir runs/<id> --id <candidate>`** for each successful
    Candidate. The neighbourhood size, the sample cap and the seed all come from the
-   Run; there is nothing to choose, which is what makes the Candidates comparable.
+   Run; there is nothing to choose, which is what makes the Candidates comparable. It
+   also makes plot A, the Embedding on its own principal axes, and plot B, UMAP of the
+   representation at fixed settings, wherever d > 2.
 
 2. **`drtools rank --run-dir runs/<id>`** — combines the Battery under the registered
    weighting.
@@ -31,6 +35,45 @@ Plan — a grown portfolio invalidates the previous ranking, and this is how you
 3. **`drtools figures --run-dir runs/<id>`** — draws the standard set. Open them and
    look. A collapsed Embedding, a mislabelled panel or an empty view is visible in the
    image and invisible in the numbers.
+
+## Steps, in a Visualization run
+
+Nothing is ranked: a weighted total would choose the method by itself. Each metric is
+read on its own instead, and which Candidates suit the focus is your judgment, recorded
+as one.
+
+1. **`drtools evaluate`** for each successful Candidate, as above. Every Candidate is a
+   picture at d = 2, so there are no plots A and B.
+
+2. **`drtools compare --run-dir runs/<id>`** — sets each metric beside the others and
+   sums none: for every metric, each Candidate's value, the best, and those within the
+   Margin of the best. `rank` refuses this Run.
+
+3. **`drtools figures --run-dir runs/<id>`** — every Candidate's picture, and its class
+   facet and Shepard diagram. Open them and look.
+
+4. **Recommend.** Read the metrics one at a time against the recorded focus: a `local`
+   focus asks which pictures keep neighbourhoods — trustworthiness, continuity — and a
+   `global` one which keep distances — the Shepard correlation. Recommend the Candidates
+   that serve it, as a set with no order, and say why, citing `comparison` keys:
+   ```
+   drtools recommend --run-dir runs/<id> --json @recommendation.json
+   ```
+   ```json
+   {"recommended": ["umap", "tsne"],
+    "rationale": "both keep neighbourhoods within the margin of the best, and umap keeps global distances far better",
+    "evidence": ["comparison.metrics.trustworthiness.within_margin",
+                 "comparison.metrics.shepard_correlation.values"]}
+   ```
+   It is made once per comparison, so make it after the figures, not before.
+
+5. **The second checkpoint.** Show the user the pictures and the recommendation, and ask
+   which picture they adopt. If they choose one:
+   ```
+   drtools adopt --run-dir runs/<id> --json '{"candidate": "umap", "rationale": "their words"}'
+   ```
+   With no reply, or under `--auto`, adopt nothing: the report then leads with the
+   recommendation, and says the user did not choose.
 
 ## Reading what comes back
 
@@ -75,6 +118,8 @@ nothing in the choice reads it.
 **Every weighted metric is on an absolute scale**, so a field of uniformly poor
 Embeddings does not produce a winner that looks excellent. Runtime is measured for every
 Candidate and reported, never weighted: by the time `rank` runs, the cost is paid.
+
+The rest of this section reads a Representation run's ranking.
 
 ## The weighting does not move
 

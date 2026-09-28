@@ -79,9 +79,12 @@ def run_status(run: RunDir) -> dict[str, Any]:
         "budget": (plan or {}).get("budget"),
         "profiled": run.profile_path.exists(),
         "reconnoitred": run.recon_path.exists(),
+        "checkpointed": (run.path / "checkpoint.json").exists(),
+        "purpose": run.purpose(),
         "registered": registered,
         "reference_prepared": (run.path / "data" / "reference.json").exists(),
         "ranked": _ranked(run, decisions),
+        "recommended": _recommended(run, decisions),
         "replan_round_spent": replan_round_spent(decisions),
         "candidates": candidates,
     }
@@ -155,6 +158,19 @@ def _ranked(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
         # finished — the one claim `status` must never make on a file's say-so.
         return False
     return jsonio.read(ranking_path).get("plan_digest") == registered[-1]
+
+
+def _recommended(run: RunDir, decisions: list[dict[str, Any]]) -> bool:
+    """Whether a visualization run's recommendation belongs to the plan registered now.
+
+    The same test as `_ranked`: a re-plan round leaves the old recommendation on disk,
+    and it describes a comparison of a portfolio that has since grown.
+    """
+    path = run.path / "recommendation.json"
+    registered = _registered_digests(decisions)
+    if not path.exists() or not registered:
+        return False
+    return jsonio.read(path).get("plan_digest") == registered[-1]
 
 
 def _registered_digests(decisions: list[dict[str, Any]]) -> list[str | None]:
@@ -259,7 +275,11 @@ def _next_stage(state: dict[str, Any]) -> str:
         # without it. So it is only outstanding while a plan is still to be written:
         # naming it as the next stage of a run that is already executing would send
         # the agent back to re-probe evidence its registered plan was argued from.
-        return "recon" if not state["reconnoitred"] else "plan"
+        if not state["reconnoitred"]:
+            return "recon"
+        # Registration refuses a plan without the purpose and focus, so the
+        # checkpoint comes before the plan is written.
+        return "checkpoint" if not state["checkpointed"] else "plan"
 
     outstanding = [
         candidate_id
@@ -292,6 +312,9 @@ def _next_stage(state: dict[str, Any]) -> str:
         for candidate_id in succeeded
         if not state["candidates"][candidate_id]["metrics"]
     ]
-    if scorable or not state["ranked"]:
+    # A visualization run is finished evaluating once the comparison has a
+    # recommendation; a representation run once it is ranked.
+    judged = state["recommended"] if state["purpose"] == "visualization" else state["ranked"]
+    if scorable or not judged:
         return "evaluate"
     return "report"

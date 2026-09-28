@@ -1,6 +1,6 @@
 ---
 name: profile-dataset
-description: Use when beginning a dr-agent analysis of a dataset, or when `drtools status` reports `profile` or `recon` as the next stage of a Run.
+description: Use when beginning a dr-agent analysis of a dataset, or when `drtools status` reports `profile`, `recon` or `checkpoint` as the next stage of a Run.
 ---
 
 # Profile the dataset
@@ -48,7 +48,7 @@ remember doing — the Run is the only state, and a resumed session remembers no
    - The evidence settles it: your call, `decided_by: agent`, citing the keys.
    - The evidence is unclear and nothing was declared: ask the user now, before
      reconnaissance, since the probes depend on the answer. The question counts
-     toward the checkpoint's two. Under `--auto`, take the default the refusal below
+     toward the checkpoint's three. Under `--auto`, take the default the refusal below
      states — raw counts when the profile suspects them, features mixed — as
      `decided_by: default`.
 
@@ -83,15 +83,43 @@ not defects:
 
 ## The checkpoint
 
-Once profiling and reconnaissance are done, ask the user at most two multiple-choice
-questions — what the analysis is for, and anything the profile leaves genuinely
-ambiguous. State a default for each and proceed on it if there is no answer. Under
-`--auto`, skip this entirely and record the defaults you took.
+Once profiling and reconnaissance are done, ask the user at most three multiple-choice
+questions in all, the feature-type question of step 3 included. State a default for each
+and proceed on it if there is no answer.
+
+- **The Purpose.** Is the deliverable a representation downstream analysis will use —
+  clustering, regression, testing — or a picture? Representation is the default. An
+  `/analyze --purpose` argument is the user's answer already given.
+- **The focus**, asked in the Purpose's terms:
+
+  | Focus | Representation: used downstream for | Visualization: the picture should show |
+  |---|---|---|
+  | `local` | clustering, other neighbourhood-based analysis | clusters and neighbourhoods |
+  | `global` | distances, regression, a map of the whole | the overall layout |
+  | `balanced` | neither favoured | neither favoured |
+
+  Unanswered, set it from the evidence and cite the keys, or take `balanced` when the
+  evidence favours neither.
+
+Record the answers, whoever gave them:
+
+```
+drtools checkpoint --run-dir runs/<id> --answers @checkpoint.json
+```
+```json
+{"purpose": "representation", "purpose_decided_by": "user",
+ "focus": "local", "focus_decided_by": "agent",
+ "rationale": "...", "evidence": ["recon.neighbourhood.n_connected_components"]}
+```
+
+An answer that is yours, `decided_by: agent`, cites the evidence it rests on. Under
+`--auto`, ask nothing and record the defaults as `decided_by: default`. Registration
+refuses a Plan until the checkpoint is recorded, and freezes it once registered.
 
 ## Log what you decided
 
-Anything you chose rather than read — the dataset spec, an adapter, a label column,
-a checkpoint default — goes in the Decision log:
+Anything else you chose rather than read — the dataset spec, an adapter, a label
+column — goes in the Decision log:
 
 ```
 drtools log-decision --run-dir runs/<id> --json @decision.json

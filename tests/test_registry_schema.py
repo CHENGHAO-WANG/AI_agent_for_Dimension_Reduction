@@ -35,10 +35,18 @@ TOY_TUNING = {
 }
 
 
+#: What a method's picture means, which every reduction and visualization method declares
+#: since day 17. Irrelevant to these tests, so every toy carries the same one.
+TOY_READING = (
+    "  reading: {distances: toy distances, gaps: toy gaps, sizes: toy sizes}\n"
+)
+
+
 def _toy(extra: str = "", kind: str = "reduction", tuning: str | None = None) -> str:
     tuning = TOY_TUNING.get(kind, "") if tuning is None else tuning
     return (
         f"toy:\n  kind: {kind}\n  summary: a toy method\n"
+        + (TOY_READING if kind != "preprocessing" else "")
         + textwrap.indent(textwrap.dedent(extra), "  ")
         + textwrap.indent(tuning, "  ")
         + textwrap.indent(textwrap.dedent(TOY_PARAMS), "  ")
@@ -124,7 +132,7 @@ def test_an_unknown_limit_on_d_is_refused_and_a_known_one_is_described(tmp_path)
 
 def _toy_with_gamma(rule: str) -> str:
     return (
-        "toy:\n  kind: reduction\n  summary: a toy method\n"
+        "toy:\n  kind: reduction\n  summary: a toy method\n" + TOY_READING +
         "  tuning: {param: null, criterion: battery}\n  params:\n"
         "    n_components: {type: int, default: 2, min: 1}\n"
         "    kernel: {type: str, default: rbf, choices: [rbf, poly, cosine]}\n"

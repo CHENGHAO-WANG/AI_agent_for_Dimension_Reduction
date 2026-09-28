@@ -9,7 +9,9 @@ from drtools.status import MAX_ATTEMPTS
 PCA = [{"op": "pca", "params": {}}]
 # perplexity must stay well below n/3 for the 60-row fixture dataset, or validate-plan
 # refuses the candidate outright (see validate_plan's perplexity_too_large finding).
-TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
+# A second, distinct candidate. Since day 17 a representation run may not
+# nominate a visualization method such as t-SNE.
+WHITENED = [{"op": "pca", "params": {"whiten": True}}]
 
 
 def _plan(candidates, weights={"trustworthiness": 1.0}):
@@ -125,7 +127,7 @@ def test_rank_ignores_metrics_for_a_candidate_that_did_not_succeed(
     ranked. That is what stopped `rank` reporting a timed-out candidate as a winner.
     """
     run = _prepared(cli, csv_dataset, tmp_path,
-                    [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}])
+                    [{"id": "a", "stages": PCA}, {"id": "b", "stages": WHITENED}])
     for candidate in ("a", "b"):
         cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
         cli("prepare-reference", "--run-dir", run)
@@ -234,7 +236,7 @@ def test_adding_a_candidate_is_allowed_after_embedding(cli, csv_dataset, tmp_pat
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["candidates"].append({"id": "b", "stages": TSNE})
+    plan["candidates"].append({"id": "b", "stages": WHITENED})
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
@@ -334,7 +336,7 @@ def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
     run proceeds to scoring what it has.
     """
     run = _prepared(
-        cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}]
+        cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}, {"id": "b", "stages": WHITENED}]
     )
     cli("prepare-reference", "--run-dir", run)
     cli("embed", "--run-dir", run, "--id", "b", "--in-process")

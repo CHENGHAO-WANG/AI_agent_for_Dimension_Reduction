@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 
 from drtools.cli import main
-from plans import complete, decision
+from plans import CHECKPOINT, complete, decision
 
 
 @dataclass(frozen=True)
@@ -117,6 +117,8 @@ def finished_run(tmp_path_factory):
         assert main(["profile", "--data", "blobs", "--runs-root", str(root),
                      "--run-id", "r1"]) == 0
         assert main(["recon", "--run-dir", str(run_dir), "--decision", decision()]) == 0
+        assert main(["checkpoint", "--run-dir", str(run_dir), "--answers",
+                     json.dumps(CHECKPOINT)]) == 0
         (run_dir / "plan.json").write_text(json.dumps(plan_document()), encoding="utf-8")
         assert main(["validate-plan", "--run-dir", str(run_dir)]) == 0
         assert main(["prepare-reference", "--run-dir", str(run_dir)]) == 0

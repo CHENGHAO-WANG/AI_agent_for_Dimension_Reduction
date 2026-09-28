@@ -82,6 +82,9 @@ class TuningSettings:
     flatness: float = DEFAULT_FLATNESS
     fallback_share: float = DEFAULT_FALLBACK_SHARE
     max_cycles: int = DEFAULT_MAX_CYCLES
+    #: Set by the run's purpose, not by the plan: 2 in a visualization run, where every
+    #: candidate is a picture and only its multiplier is tuned (section 3.11).
+    fixed_d: int | None = None
 
     @classmethod
     def from_plan(cls, block: dict[str, Any] | None) -> "TuningSettings":
@@ -93,6 +96,7 @@ class TuningSettings:
             flatness=float(block.get("flatness", DEFAULT_FLATNESS)),
             fallback_share=float(block.get("fallback_share", DEFAULT_FALLBACK_SHARE)),
             max_cycles=int(block.get("max_cycles", DEFAULT_MAX_CYCLES)),
+            fixed_d=None if block.get("fixed_d") is None else int(block["fixed_d"]),
         )
 
 
@@ -392,8 +396,9 @@ class Tuner:
         p_in = int(entering.shape[1])
         n_fit, n_fit_refit = self._fit_rows(int(self.X.shape[0])), self._fit_rows(self.n_rows)
         d_max = min(D_CAP, p_in - 1, n_fit - 1, n_fit_refit - 1)
-        if spec.is_visualization:
-            d_max = 2
+        fixed = 2 if spec.is_visualization else self.settings.fixed_d
+        if fixed is not None:
+            d_max = min(d_max, fixed)
         if d_max < 1:
             raise TuningError(f"{op} receives {p_in} feature(s): nothing to reduce")
 
@@ -417,8 +422,8 @@ class Tuner:
             "n_fit_refit": n_fit_refit,
         }
 
-        if spec.is_visualization:
-            best = self._search_fixed(values)
+        if fixed is not None:
+            best = self._search_fixed(values, d_max)
         elif nested and criterion in (*CURVE_CRITERIA, "eigengap"):
             best = self._search_own_criterion(values)
         elif nested:
@@ -556,18 +561,22 @@ class Tuner:
 
     # ------------------------------------------------------------ the shapes
 
-    def _search_fixed(self, values: dict[str, Any]) -> Cell:
-        """A visualization method: d = 2, and only its multiplier is tuned."""
+    def _search_fixed(self, values: dict[str, Any], d: int = 2) -> Cell:
+        """d fixed -- a visualization method, or any method in a visualization run.
+
+        Only the multiplier is tuned. Diffusion Maps keeps the t it was resolved with:
+        the sweep over t belongs to choosing d, and here d is not chosen.
+        """
         cells = []
         for multiplier, value, merged in values["cells"]:
-            result, problem, seconds = self._fit(value, 2, multiplier)
-            cell = Cell(multiplier, value, 2, runtime_s=seconds, merged=merged)
+            result, problem, seconds = self._fit(value, d, multiplier)
+            cell = Cell(multiplier, value, d, runtime_s=seconds, merged=merged)
             if result is None:
                 cell.feasible, cell.reason = False, problem
             else:
                 cell.score, cell.values = self._score(result.embedding)
             cells.append(cell)
-        return self._finish(cells, "fixed at d = 2")
+        return self._finish(cells, f"fixed at d = {d}")
 
     def _search_own_criterion(self, values: dict[str, Any]) -> Cell:
         """Nested in d: one fit per multiplier at the largest d, the criterion picks d."""

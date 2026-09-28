@@ -175,6 +175,17 @@ ops:
     distorts: >
       Nonlinear structure. A curved manifold projects to a smear, and a spiral or roll
       is flattened onto itself rather than unrolled.
+    reading:
+      distances: >
+        Straight-line distances on the plot are the data's distances projected onto the
+        two directions of greatest variance. Projection only shrinks them, so two points
+        close on the plot may be far apart in directions not shown.
+      gaps: >
+        A gap is real separation along the directions shown. Groups that overlap may still
+        be separate in directions not shown.
+      sizes: >
+        A group's spread is its variance along the directions shown, on one scale for
+        every group.
     handles_sparse: true
     sparse_note: >
       Sparse input uses TruncatedSVD, which does not centre. The result is then an SVD
@@ -213,6 +224,16 @@ ops:
     distorts: >
       Interpretability. Components live in feature space and have no expression in the
       original variables.
+    reading:
+      distances: >
+        Distances are the kernel's feature-space distances, projected onto its two leading
+        directions. With the RBF kernel every pair further apart than the kernel width
+        looks similarly far, so large distances are compressed.
+      gaps: >
+        A gap is separation in the kernel's feature space along the directions shown.
+      sizes: >
+        A group's spread is its variance in feature space, which with the RBF kernel
+        depends on the width as much as on the group.
     handles_sparse: true
     complexity: O(n^2 d) to build the kernel, O(n^3) to decompose it
     scales_to: 10000
@@ -272,6 +293,17 @@ ops:
     distorts: >
       Orthogonality and the variance ordering. Components are no longer orthogonal and
       no longer ranked by explained variance, so they cannot be read like PCA's.
+    reading:
+      distances: >
+        Distances are taken over a few sparse components, each built from few features.
+        The components need not be orthogonal, so the plot is not an exact projection and
+        distances along one axis leak into the other.
+      gaps: >
+        A gap is separation along the features the components select. Groups that differ
+        only in other features overlap.
+      sizes: >
+        A group's spread is its variance along the sparse components, on one scale for
+        every group.
     handles_sparse: false
     complexity: iterative dictionary learning; substantially slower than PCA
     scales_to: 50000
@@ -311,6 +343,16 @@ ops:
     distorts: >
       Global distances entirely; only the local graph structure is represented. Scale is
       arbitrary.
+    reading:
+      distances: >
+        Only neighbourhoods are kept: points joined in the graph are placed near each
+        other. Distances between points that are not neighbours mean nothing.
+      gaps: >
+        Groups weakly joined in the graph are pushed apart, and the width of the gap does
+        not measure how different they are.
+      sizes: >
+        The coordinates carry no eigenvalue weight, so a group's spread says nothing about
+        its spread in the data.
     handles_sparse: true
     complexity: O(n k) to build the graph, then a sparse eigenproblem
     scales_to: 50000
@@ -347,6 +389,17 @@ ops:
     distorts: >
       The embedding depends on diffusion time t; different t give different and equally
       valid geometries, so t must be reported alongside the result.
+    reading:
+      distances: >
+        Distances are diffusion distances: two points are close when random walks from
+        them reach the same places, so points joined by many short paths are close even
+        when far apart in the data.
+      gaps: >
+        A gap means few paths between the groups at this diffusion time. A longer time
+        merges groups.
+      sizes: >
+        Spread shrinks as the diffusion time grows, and dense groups contract, so a
+        group's size is not its spread in the data.
     handles_sparse: false
     complexity: O(n^2) memory for the dense kernel, O(n^3) to decompose
     scales_to: 10000
@@ -418,6 +471,15 @@ ops:
     distorts: >
       Local detail, when global fit demands it. Non-metric MDS preserves only the rank
       order of distances, which is more robust but discards their magnitudes.
+    reading:
+      distances: >
+        Distances approximate the data's pairwise distances as a whole, as far as the
+        stress reported allows. Large distances dominate that fit, so the smallest are the
+        least accurate.
+      gaps: >
+        A gap reflects real separation, within the stress.
+      sizes: >
+        A group's spread approximates its spread in the data.
     handles_sparse: false
     complexity: O(n^2) memory, iterative SMACOF
     scales_to: 5000
@@ -462,6 +524,16 @@ ops:
       Everything, if the graph is wrong. A single spurious edge between distant parts of
       the manifold short-circuits the geodesic and corrupts the whole embedding, not
       just its neighbourhood.
+    reading:
+      distances: >
+        Distances approximate geodesic distances along the neighbourhood graph, not
+        straight-line ones: points close on the plot are close along the data's manifold.
+      gaps: >
+        A gap is real separation, or a break in the neighbourhood graph. When the graph is
+        disconnected the placement of its pieces relative to each other means nothing.
+      sizes: >
+        A group's spread is its geodesic spread, comparable across groups when the graph
+        is connected.
     handles_sparse: false
     complexity: O(n^2 log n) for all-pairs shortest paths, O(n^2) memory
     scales_to: 5000
@@ -500,6 +572,16 @@ ops:
     distorts: >
       Global structure entirely, and the standard variant is prone to collapsing whole
       regions toward a point when the local weight problem is ill-conditioned.
+    reading:
+      distances: >
+        Only each point's reconstruction from its neighbours is kept. Distances beyond a
+        neighbourhood mean nothing.
+      gaps: >
+        A gap may be real separation or a failure of the neighbourhood graph, and a wrong
+        neighbourhood can fold parts of the data onto lines.
+      sizes: >
+        The coordinates are normalised to unit covariance, so a group's spread means
+        nothing.
     handles_sparse: false
     complexity: O(n k^3) for the weights, then a sparse eigenproblem
     scales_to: 20000
@@ -560,6 +642,16 @@ ops:
       carry no meaning, distances between clusters carry no meaning, and apparent gaps
       may be artefacts of the optimisation. Any interpretation that reads the layout as
       a map is wrong.
+    reading:
+      distances: >
+        Distances between well-separated groups mean nothing. Only who sits next to whom
+        within a group is kept.
+      gaps: >
+        The width of a gap does not measure how different two groups are, and a gap can
+        appear where the data has none.
+      sizes: >
+        Each point's bandwidth adapts to its local density, so dense and sparse groups are
+        drawn at similar sizes: a group's size says nothing about its spread.
     handles_sparse: false
     complexity: O(n log n) with the FFT-accelerated gradient
     scales_to: 500000
@@ -611,6 +703,16 @@ ops:
       Inter-cluster distances, which are more meaningful than t-SNE's but still not
       metric. min_dist controls how tightly points pack and is a display choice rather
       than a property of the data.
+    reading:
+      distances: >
+        Distances between groups are kept better than by t-SNE but are still not to scale.
+        Within a group, neighbourhood membership is what is kept.
+      gaps: >
+        The width of a gap does not measure dissimilarity; min_dist and the graph's
+        connectivity shape it.
+      sizes: >
+        Local distances are normalised point by point, so density is largely lost and a
+        group's size says little about its spread.
     handles_sparse: true
     complexity: approximate nearest neighbours, then stochastic optimisation
     scales_to: 1000000
