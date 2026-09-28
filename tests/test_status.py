@@ -7,6 +7,7 @@ log, because files can be deleted and the log cannot.
 from __future__ import annotations
 
 import json
+from plans import complete
 
 
 def _registered_run(cli, csv_dataset, tmp_path):
@@ -15,13 +16,13 @@ def _registered_run(cli, csv_dataset, tmp_path):
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
     run = runs / "r1"
-    (run / "plan.json").write_text(json.dumps({
+    (run / "plan.json").write_text(json.dumps(complete({
         "dataset": "d",
         "candidates": [
             {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
-    }), encoding="utf-8")
+    })), encoding="utf-8")
     cli("validate-plan", "--run-dir", run)
     return run
 
@@ -119,7 +120,7 @@ def test_a_ranking_from_before_the_latest_registration_is_stale(
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}},
     }
-    (run / "plan.json").write_text(json.dumps(plan))
+    (run / "plan.json").write_text(json.dumps(complete(plan)))
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("prepare-reference", "--run-dir", run).code == 0
     assert cli("embed", "--run-dir", run, "--id", "pca2", "--in-process").code == 0
@@ -134,7 +135,7 @@ def test_a_ranking_from_before_the_latest_registration_is_stale(
     plan["candidates"].append(
         {"id": "pca3", "stages": [{"op": "pca", "params": {"n_components": 3}}]}
     )
-    (run / "plan.json").write_text(json.dumps(plan))
+    (run / "plan.json").write_text(json.dumps(complete(plan)))
     assert cli("validate-plan", "--run-dir", run).code == 0
 
     after_replan = cli("status", "--run-dir", run).payload
@@ -161,7 +162,7 @@ def _register(cli, run, candidates, budget="standard"):
         "candidates": candidates,
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     return cli("validate-plan", "--run-dir", run)
 
 

@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 
 from drtools.cli import main
+from plans import complete
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ PCA_STAGES = [{"op": "pca", "params": {"n_components": 2}}]
 
 
 def plan_document(**overrides):
-    """A small, valid plan over the blobs fixture: one candidate and one rejection."""
+    """A small, valid plan over the blobs fixture: one candidate, every method accounted."""
     plan = {
         "dataset": "blobs",
         "budget": "fast",
@@ -93,7 +94,7 @@ def plan_document(**overrides):
         },
     }
     plan.update(overrides)
-    return plan
+    return complete(plan)
 
 
 @pytest.fixture(scope="session")

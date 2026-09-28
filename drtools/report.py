@@ -302,7 +302,8 @@ def _block_hyperparameters(run: RunDir) -> str:
 
     From the embedding record rather than the Plan: the Plan holds what was asked for,
     and the record holds what ran, with registry defaults filled in and
-    `param_provenance` marking which is which.
+    `param_provenance` marking which is which: `registry_default`, `suggested`,
+    `overridden` -- printed with the suggestion and the reason -- or `specified`.
     """
     ids = _candidate_ids(run)
     if not ids:
@@ -317,15 +318,16 @@ def _block_hyperparameters(run: RunDir) -> str:
         rows = []
         for stage in record["stages"]:
             provenance = stage.get("param_provenance") or {}
+            overrides = stage.get("param_overrides") or {}
             for name, value in (stage.get("params") or {}).items():
-                rows.append(
-                    [
-                        f"`{stage['op']}`",
-                        f"`{name}`",
-                        f"{value}",
-                        provenance.get(name, "unrecorded"),
-                    ]
-                )
+                source = provenance.get(name, "unrecorded")
+                if name in overrides:
+                    override = overrides[name]
+                    source = (
+                        f"overridden (suggested {override.get('suggested')}): "
+                        f"{override.get('reason')}"
+                    )
+                rows.append([f"`{stage['op']}`", f"`{name}`", f"{value}", source])
         if rows:
             sections.append(
                 f"**{candidate_id}**\n\n"

@@ -1,4 +1,5 @@
 import json
+from plans import complete
 
 
 def _plan(base, candidates):
@@ -19,7 +20,7 @@ def test_prepare_reference_takes_base_stages_from_the_plan(cli, csv_dataset, tmp
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
 
     result = cli("prepare-reference", "--run-dir", runs / "r1")
@@ -33,7 +34,7 @@ def test_reference_records_the_settings_it_fixes(cli, csv_dataset, tmp_path):
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1", "--seed", 4)
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     cli("prepare-reference", "--run-dir", runs / "r1")
 
@@ -49,7 +50,7 @@ def test_evaluate_refuses_when_the_plan_declares_a_base_and_none_was_prepared(
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     # embed derives the candidate's stages (base plus its own) from the registered
     # plan, since prepare-reference (below) has not run yet to give it anything else
@@ -69,7 +70,7 @@ def test_evaluate_needs_no_reference_when_the_plan_declares_no_base(
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
     (runs / "r1" / "plan.json").write_text(
-        json.dumps(_plan([], [{"id": "a", "stages": PCA}])), encoding="utf-8"
+        json.dumps(complete(_plan([], [{"id": "a", "stages": PCA}]))), encoding="utf-8"
     )
     cli("validate-plan", "--run-dir", runs / "r1")
     cli("embed", "--run-dir", runs / "r1", "--id", "a", "--in-process")
@@ -102,7 +103,7 @@ def test_evaluate_refuses_a_candidate_that_failed(cli, csv_dataset, tmp_path):
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
     (runs / "r1" / "plan.json").write_text(
-        json.dumps(_plan([], [{"id": "a", "stages": PCA}])), encoding="utf-8"
+        json.dumps(complete(_plan([], [{"id": "a", "stages": PCA}]))), encoding="utf-8"
     )
     cli("validate-plan", "--run-dir", runs / "r1")
     # A candidate whose embed attempt failed still leaves a record — just one with no

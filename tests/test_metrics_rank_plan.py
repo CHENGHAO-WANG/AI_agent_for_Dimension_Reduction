@@ -18,6 +18,7 @@ from drtools.metrics import METRIC_SPECS, evaluate_embedding
 from drtools.plan import Plan, validate_plan
 from drtools.profile import profile_dataset
 from drtools.rank import RankingError, rank_candidates
+from plans import complete
 
 BASE_WEIGHTS = {"trustworthiness": 0.5, "continuity": 0.3, "shepard_correlation": 0.2}
 
@@ -37,7 +38,7 @@ def make_plan(**overrides):
         "evaluation": {"weights": dict(BASE_WEIGHTS), "justification": "a reason"},
     }
     plan.update(overrides)
-    return plan
+    return complete(plan)
 
 
 @pytest.fixture(scope="module")
@@ -394,17 +395,6 @@ def test_a_perplexity_too_large_for_the_sample_count_is_rejected() -> None:
     )
 
     assert any(f["code"] == "perplexity_too_large" for f in report["findings"])
-
-
-def test_a_rejection_without_evidence_is_flagged_but_does_not_block(blobs) -> None:
-    _, _, profile = blobs
-
-    report = validate_plan(
-        make_plan(rejected=[{"method": "isomap", "reason": "too slow"}]), profile
-    )
-
-    assert report["valid"] is True
-    assert any(f["code"] == "unevidenced_rejection" for f in report["findings"])
 
 
 def test_an_unjustified_weighting_is_flagged(blobs) -> None:

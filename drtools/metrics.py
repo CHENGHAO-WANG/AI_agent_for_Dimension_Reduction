@@ -69,6 +69,10 @@ class MetricSpec:
     requires_labels: bool
     measures: str
     describes: str
+    # Section 2.4: runtime is measured and reported for every candidate, and never
+    # weighted. By ranking time the cost is paid, it varies on replay, and it rewards
+    # a candidate for looking at less data.
+    weightable: bool = True
 
     def normalise(self, value: float | None) -> float | None:
         """Map a raw value onto [0, 1] using the metric's own scale, not the cohort's.
@@ -141,10 +145,12 @@ METRIC_SPECS: dict[str, MetricSpec] = {
         name="runtime_s",
         higher_is_better=False,
         best=0.0,
-        worst=0.0,  # filled in per cohort; runtime has no absolute scale
+        worst=0.0,  # no absolute scale, which is one reason it carries no weight
         requires_labels=False,
         measures="cost",
-        describes="wall-clock seconds for the whole candidate pipeline",
+        describes="wall-clock seconds for the whole candidate pipeline; reported, "
+        "never weighted",
+        weightable=False,
     ),
 }
 

@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from plans import complete
 
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.status import MAX_ATTEMPTS
@@ -12,11 +13,11 @@ TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
 
 
 def _plan(candidates, weights={"trustworthiness": 1.0}):
-    return {
+    return complete({
         "dataset": "d",
         "candidates": candidates,
         "evaluation": {"weights": weights, "justification": "up front"},
-    }
+    })
 
 
 def _append_embed_decision(run, candidate_id, outcome):
@@ -63,11 +64,11 @@ def _rewrite_last_embed_outcome(run, candidate_id, outcome):
     )
 
 
-def _prepared(cli, csv_dataset, tmp_path, candidates):
+def _prepared(cli, csv_dataset, tmp_path, candidates, rows=60):
     runs = tmp_path / "runs"
-    cli("profile", "--data", csv_dataset(rows=60, cols=8),
+    cli("profile", "--data", csv_dataset(rows=rows, cols=8),
         "--runs-root", runs, "--run-id", "r1")
-    (runs / "r1" / "plan.json").write_text(json.dumps(_plan(candidates)), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(_plan(candidates))), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     return runs / "r1"
 
@@ -77,7 +78,7 @@ def _add_candidate(run, candidate_id, n_components=2):
     plan["candidates"].append(
         {"id": candidate_id, "stages": [{"op": "pca", "params": {"n_components": n_components}}]}
     )
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
 
 def _abandon(cli, run, candidate_id):
@@ -141,15 +142,19 @@ def test_rank_ignores_metrics_for_a_candidate_that_did_not_succeed(
 
 
 def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_path):
+    # A subsample registers only in front of a method whose limit the data exceeds,
+    # so the first attempt subsamples Isomap on more rows than its 5,000.
+    subsampled = [{"op": "subsample", "params": {"n_samples": 30}},
+                  {"op": "isomap", "params": {"n_components": 2}}]
     run = _prepared(cli, csv_dataset, tmp_path,
-                    [{"id": "a", "stages": [{"op": "subsample", "params": {"n_samples": 30}},
-                                            *PCA]}])
+                    [{"id": "base", "stages": PCA}, {"id": "a", "stages": subsampled}],
+                    rows=6000)
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
     assert (run / "embeddings" / "a.index.npy").exists()
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["candidates"][0]["stages"] = PCA
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    plan["candidates"][1]["stages"] = PCA
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     # a succeeded, so revising it is refused; a failed attempt is the retry path. The
     # freeze reads the decision log, so the retry needs the recorded outcome changed,
     # not just the artefact file rewritten — and changed rather than added to, or the
@@ -178,7 +183,7 @@ def test_any_unsuccessful_outcome_may_be_revised(cli, csv_dataset, tmp_path, out
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
 
@@ -189,7 +194,7 @@ def test_a_failed_candidate_can_be_revised_and_retried(cli, csv_dataset, tmp_pat
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("embed", "--run-dir", run, "--id", "a", "--in-process").code == 0
@@ -201,7 +206,7 @@ def test_a_successful_candidates_stages_cannot_be_revised(cli, csv_dataset, tmp_
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
     assert result.code == 2
@@ -214,7 +219,7 @@ def test_the_weighting_can_never_be_revised(cli, csv_dataset, tmp_path):
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
     assert result.code == 2
@@ -227,7 +232,7 @@ def test_adding_a_candidate_is_allowed_after_embedding(cli, csv_dataset, tmp_pat
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"].append({"id": "b", "stages": TSNE})
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
 
@@ -409,7 +414,7 @@ def test_a_changed_registration_after_ranking_does_spend_the_round(
     plan["candidates"].append(
         {"id": "b", "stages": [{"op": "pca", "params": {"n_components": 3}}]}
     )
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", run).code == 0
 
     after = cli("status", "--run-dir", run).payload
@@ -470,7 +475,7 @@ def test_the_exhaust_abandon_replace_cycle_terminates(cli, csv_dataset, tmp_path
 
     candidates = [{"id": "c0", "stages": PCA}]
     for cycle in range(1, 50):
-        (run / "plan.json").write_text(json.dumps(_plan(candidates)), encoding="utf-8")
+        (run / "plan.json").write_text(json.dumps(complete(_plan(candidates))), encoding="utf-8")
         # The validator returns a report rather than raising, so refusal shows as
         # `valid: false` and an unwritten plan.registered.json, not an exit code.
         result = cli("validate-plan", "--run-dir", run)
@@ -613,6 +618,6 @@ def test_revising_a_failed_candidate_after_the_round_stays_legal(
     for candidate in plan["candidates"]:
         if candidate["id"] == "a":
             candidate["stages"] = [{"op": "pca", "params": {"n_components": 5}}]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0

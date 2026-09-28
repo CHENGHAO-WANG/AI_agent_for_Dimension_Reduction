@@ -20,7 +20,7 @@ NAMED_ON_PURPOSE = {
     ("heuristics.py", "tsne"): "perplexity is t-SNE's own parameter; no other method has one",
     ("heuristics.py", "pca"): "the component count for a PCA first stage, read from the spectrum",
     ("heuristics.py", "diffusion_maps"): "alpha is density normalisation only here; sparse PCA's alpha is a sparsity penalty",
-    ("heuristics.py", "lle"): "LLE's cap of 12 comes from its own measured sensitivity to n_neighbors",
+    ("heuristics.py", "lle"): "LLE's own neighbour rule: its minimum, and the range of 6 to 12 it was measured to work in",
     ("plan.py", "pca"): "section 3.4 names PCA as the linear baseline every plan includes",
     ("plan.py", "tsne"): "perplexity below n/3 is a check on t-SNE's own parameter",
     ("runs.py", "umap"): "the umap-learn library, whose version the run records; not the op",

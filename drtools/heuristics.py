@@ -5,10 +5,12 @@ perplexity of 30 is offered just as readily for sixty points as for six hundred
 thousand. These suggestions are derived from the profile and the reconnaissance probes
 instead, and each one carries its reasoning and the keys it rests on.
 
-They are suggestions, not decisions. The planner may override any of them, and when it
-does the override is recorded as `specified` while these show as `registry_default` —
-which is exactly the distinction the report needs in order to say whether a value was
-chosen or merely inherited.
+They are suggestions, not decisions. `suggest-params` persists each one in the run, and
+registration compares every value a plan gives against it: a value equal to it is
+recorded as `suggested`, a different one as `overridden` -- refused unless the stage
+gives a reason -- a value nothing was suggested for as `specified`, and one left unset
+as `registry_default`. That is the distinction the report needs in order to say whether
+a value followed the data, departed from it, or was merely inherited.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from drtools.constraints import lle_neighbour_minimum
 from drtools.registry import Registry, load_registry
 
 
@@ -61,8 +64,15 @@ def suggest(
     profile: dict[str, Any],
     recon: dict[str, Any] | None = None,
     registry: Registry | None = None,
+    *,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Suggested parameters for `op` on this data, each with a rationale."""
+    """Suggested parameters for `op` on this data, each with a rationale.
+
+    `params` are the other settings the stage will run with, for a suggestion that
+    depends on them -- LLE's neighbour minimum grows with its variant and with d.
+    Unset ones take their registry defaults.
+    """
     registry = registry or load_registry()
     spec = registry.ops.get(op)
     n = int(profile.get("shape", {}).get("n_samples", 0))
@@ -81,9 +91,14 @@ def suggest(
 
     # Any op with a neighbourhood size gets the size-aware suggestion, starting from its
     # own registry default, so a new neighbour-graph method is offered one unedited.
-    if spec is not None and "n_neighbors" in spec.params:
+    # LLE has its own rule: the shared one raises k for connectivity and density, which
+    # collides with the range LLE works in and produced a clamped value whose rationale
+    # still named the raised one.
+    if op == "lle" and spec is not None:
+        suggestions.update(_lle_suggestion(spec, params or {}, recon))
+    elif spec is not None and "n_neighbors" in spec.params:
         base = int(spec.params["n_neighbors"].default)
-        suggestions.update(_neighbour_suggestion(op, base, n, recon))
+        suggestions.update(_neighbour_suggestion(base, n, recon))
 
     if op == "pca":
         suggestions.update(_component_suggestion(recon))
@@ -101,7 +116,7 @@ def suggest(
 
 
 def _neighbour_suggestion(
-    op: str, base: int, n: int, recon: dict[str, Any] | None
+    base: int, n: int, recon: dict[str, Any] | None
 ) -> dict[str, dict[str, Any]]:
     value = int(np.clip(base if n >= 1000 else max(5, n // 50), 5, 50))
     reasons = [f"a neighbourhood of {value} is a reasonable starting point at n = {n:,}"]
@@ -131,13 +146,55 @@ def _neighbour_suggestion(
             )
             evidence.append("recon.neighbourhood.density_ratio_p95_p05")
 
-    if op == "lle":
+    return {"n_neighbors": _entry(value, " ".join(reasons), evidence)}
+
+
+#: Where LLE recovers the manifold: measured on a Swiss roll, it does at k between 6 and
+#: 12 and collapses by k = 24.
+LLE_RANGE = (6, 12)
+
+
+def _lle_suggestion(
+    spec: Any, params: dict[str, Any], recon: dict[str, Any] | None
+) -> dict[str, dict[str, Any]]:
+    """The larger of LLE's neighbour minimum and its default, kept within its range.
+
+    Never raised for connectivity or density: a larger k is what makes LLE collapse.
+    A disconnected graph is said in the rationale and warned of by the validator, and
+    the value suggested is the value the rationale names.
+    """
+    method = str(params.get("method") or spec.params["method"].default)
+    d = int(params.get("n_components") or spec.params["n_components"].default)
+    minimum = lle_neighbour_minimum(method, d)
+    low, high = LLE_RANGE
+    value = int(np.clip(max(minimum, int(spec.params["n_neighbors"].default)), low, high))
+    evidence: list[str] = []
+
+    if minimum > high:
+        value = minimum
+        reasons = [
+            f"lle(method={method!r}) needs at least {minimum} neighbours for "
+            f"{d} components, so {minimum} is suggested. That is outside the range "
+            f"measured to work, k between {low} and {high} on a Swiss roll, with "
+            "collapse by k = 24: a lower d, or another variant, is the safer choice."
+        ]
+    else:
+        reasons = [
+            f"{value} neighbours: LLE recovers the manifold at k between {low} and "
+            f"{high} on a Swiss roll and collapses by k = 24, so it stays at the low "
+            f"end, above its minimum of {minimum} for method={method!r} at d = {d}."
+        ]
+
+    graph = (recon or {}).get("neighbourhood", {})
+    probe_k, parts = graph.get("k"), graph.get("n_connected_components")
+    if parts and parts > 1 and probe_k:
         reasons.append(
-            "LLE is the most sensitive of these to this parameter: measured on a Swiss "
-            "roll it recovers the manifold at k between 6 and 12 and collapses by k = 24, "
-            "so it should stay at the low end"
+            f"Reconnaissance found the k = {probe_k} graph split into {parts} "
+            "components, and LLE needs it connected. It is not raised to connect it, "
+            "since a larger k is what makes LLE collapse: on this data LLE is likely "
+            "unsuitable, and a rejection citing the disconnection is the honest record."
         )
-        value = int(min(value, 12))
+        evidence.append("recon.neighbourhood.n_connected_components")
 
     return {"n_neighbors": _entry(value, " ".join(reasons), evidence)}
 
@@ -162,9 +219,17 @@ def _component_suggestion(recon: dict[str, Any] | None) -> dict[str, dict[str, A
             "This is the value for an intermediate reduction; a terminal PCA for "
             "plotting needs 2.",
             ["recon.spectrum.probe.elbow", "recon.spectrum.probe.n_components_for_90pct"],
+            applies_to="intermediate",
         )
     }
 
 
-def _entry(value: Any, rationale: str, evidence: list[str]) -> dict[str, Any]:
-    return {"value": value, "rationale": rationale, "evidence": evidence}
+def _entry(
+    value: Any, rationale: str, evidence: list[str], applies_to: str | None = None
+) -> dict[str, Any]:
+    """One suggestion. `applies_to: intermediate` limits it to a stage with a method after
+    it, so registration does not read a terminal stage's own value as overriding it."""
+    entry = {"value": value, "rationale": rationale, "evidence": evidence}
+    if applies_to is not None:
+        entry["applies_to"] = applies_to
+    return entry

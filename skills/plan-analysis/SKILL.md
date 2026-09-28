@@ -26,13 +26,22 @@ the neighbourhood graph's component count each change what is worth running:
 
 **Base preprocessing.** `drtools suggest-base --run-dir runs/<id>` returns Stages, a
 rationale, and Evidence keys, derived from the same rule Reconnaissance used to choose
-its Probe representation. Adopt it or override it — an override needs a logged reason.
-Its output becomes the Reference every Candidate is scored against.
+its Probe representation, and persists them in the Run. Adopt it or replace it —
+replacing it needs a logged reason, and registration records whether the base matches
+it. Its output becomes the Reference every Candidate is scored against, so it
+holds preprocessing only: a Reduction or Visualization method there is refused.
 
-**Candidates.** Three to five, each a Stage list ending in a Reduction, deliberately
-spanning families: one linear baseline, one local-structure, one global-structure. A
-Candidate whose terminal Stage is plain `pca` is required — without a linear baseline
-there is nothing to measure the nonlinear methods against.
+**Candidates.** Three to five, each a Stage list ending in a Reduction or a
+Visualization method, deliberately spanning families: one Linear baseline, one
+local-structure, one global-structure. The Linear baseline is required, and it is a
+Candidate whose Stages are exactly one `pca` — without it there is nothing to measure
+the nonlinear methods against. Every other Candidate cites the Evidence keys that make it
+worth running, in its `evidence`, as a Rejection does.
+
+A Candidate holds at most two methods: one `pca` pre-step, then a different method. A
+`subsample` is allowed only in front of a method that would otherwise receive more rows
+than its `scales_to`; a method whose `new_rows` is `none` cannot be subsampled at all, so
+above its limit it is a Rejection citing `profile.shape.n_samples`.
 
 Read `drtools methods` for what each Op preserves, assumes, destroys, and where it
 stops scaling. You cannot introspect the library; the Capability records are what you
@@ -43,19 +52,49 @@ The best experiment available here is entering both `umap` on the Reference and
 pre-step helped.
 
 **Hyperparameters.** `drtools suggest-params --op <op> --run-dir runs/<id>` gives
-profile-derived starting values with the reasoning behind them. Library defaults are
+profile-derived starting values with the reasoning behind them, and persists them in the
+Run. Pass `--params` with the Stage's other settings when the Suggestion depends on them
+— LLE's neighbour minimum grows with `method` and `n_components`. Library defaults are
 usually wrong for the data at hand — a perplexity of 30 on 500 samples is not a
-judgement, it is an oversight. Override a suggestion with a logged reason.
+judgement, it is an oversight.
 
-**Rejections.** Every method you considered and did not run goes in `rejected`, with a
-reason and the Evidence keys behind it. `"MDS rejected — O(n^2) at n=107,000; PCA
-already captures the global variance structure it would recover"` is evidence of
-judgement. An uncited rejection carries no weight, and the validator will say so.
+Registration compares every value against the persisted Suggestion and records it as
+`suggested`, `overridden`, `specified` (nothing was suggested for it) or
+`registry_default` (not given, and no different Suggestion). A parameter left unset
+while its Suggestion differs from the default is an Override too. An Override is
+refused unless the Stage carries its reason:
+
+```json
+{"op": "tsne", "params": {"perplexity": 50},
+ "overrides": {"perplexity": {"reason": "...", "evidence": ["recon.neighbourhood.k"]}}}
+```
+
+**Rejections.** Every Reduction and Visualization method in `drtools methods` appears in
+a Candidate, in `rejected`, or both; one that appears in neither is refused. Each
+Rejection carries a reason and the Evidence keys behind it, and an uncited one is
+refused. `"MDS rejected — O(n^2) at n=107,000; PCA already captures the global variance
+structure it would recover"` is evidence of judgement. A method may be both rejected and
+run when the Rejection rules out one configuration — `umap` on the raw features — and
+every Candidate running it puts another method in front, as `pca50 -> umap` does. `pca`
+is never rejected, since the Linear baseline runs it alone.
 
 **The weighting.** Declare a weight per metric in the Battery, summing to 1, with a
 justification tied to what the user asked for and what the Profile says. You are
 choosing emphasis before you can see who wins — that is the point, and after
-registration it cannot move.
+registration the whole `evaluation` block is frozen: weights, justification and
+evidence.
+
+| Data | Default | Needs `evaluation.evidence` |
+|---|---|---|
+| No labels | trustworthiness 0.25, continuity 0.25, shepard_correlation 0.5 | only for a departure |
+| Labels | the unlabelled default, or 0.175, 0.175, 0.35, knn_label_preservation 0.20, silhouette 0.10 | always |
+
+With labels, choosing a default decides whether the labels are trusted: the labelled
+default says they were supplied with the data and not derived from it, the unlabelled
+one that they carry no weight — derived labels, or an analysis meant to find new
+groups. Cite what settles it. Any other weighting is a departure, allowed when its
+Evidence keys argue for it. The label metrics need labels, and `runtime_s` carries no
+weight: it is reported, never scored.
 
 ## Register it
 
@@ -69,6 +108,11 @@ This is the registration event. It simulates the Plan against the Profile — tr
 sample count, feature count, sparsity, and whether values are still raw counts — so it
 knows what each method will actually receive. `"Isomap on 107,000 points"` is refused
 where `"subsample to 3,000, then Isomap"` is not.
+
+Every Evidence key the Plan cites is resolved here, against the Run's `profile`,
+`recon`, `suggestions`, `metrics` and `ranking`, and one that does not resolve is
+refused. `plan.*` resolves because the Plan says so, so a Plan cites the artefacts that
+measured the data, never itself.
 
 A report with `valid: false` lists every finding at once, each with a `fix`. Revise and
 resubmit. **Every refusal is recorded**, and that record is worth having: the report

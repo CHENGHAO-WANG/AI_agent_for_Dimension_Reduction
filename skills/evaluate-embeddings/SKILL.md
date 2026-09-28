@@ -52,9 +52,9 @@ ranking means:
 - Candidates that produced no Embedding are excluded rather than scored as zero.
   Exclusion is a judgement on that configuration, not on the method.
 
-**Runtime is scaled within the cohort**, because two seconds is fast or slow only
-relative to the alternatives. Every other metric is on an absolute scale, so a field of
-uniformly poor Embeddings does not produce a winner that looks excellent.
+**Every weighted metric is on an absolute scale**, so a field of uniformly poor
+Embeddings does not produce a winner that looks excellent. Runtime is measured for every
+Candidate and reported, never weighted: by the time `rank` runs, the cost is paid.
 
 ## The weighting does not move
 
