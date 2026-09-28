@@ -18,10 +18,10 @@ import pandas as pd
 import pytest
 from plans import complete, reconnoitre
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 SUBSAMPLED = [
     {"op": "subsample", "params": {"n_samples": 30}},
-    {"op": "isomap", "params": {"n_components": 2}},
+    {"op": "isomap", "params": {}},
 ]
 ROWS = 6000
 

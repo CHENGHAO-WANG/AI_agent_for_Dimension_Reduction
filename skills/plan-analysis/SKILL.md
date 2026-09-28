@@ -74,21 +74,32 @@ stops scaling. You cannot introspect the library; the Capability records are wha
 reason over.
 
 The best experiment available here is entering both `umap` on the Reference and
-`pca50 -> umap` as separate Candidates, and letting the Battery settle whether the
+`pca -> umap` as separate Candidates, and letting the Battery settle whether the
 pre-step helped.
+
+**Tuning chooses d.** Every Candidate is tuned inside its `embed` Attempt: each method
+has one fidelity parameter scaled by a grid of multipliers, and its d is chosen by the
+criterion `drtools methods` lists for it — its own, or the Battery. A `pca` pre-step's
+output dimension is chosen by PCA's own criterion in the same way. So write every
+Reduction's Stage, and a pre-step `pca`, with `n_components` left out; tuning also sets
+`width_multiplier` and Diffusion Maps' `t`. The grids and thresholds live in the Plan's
+`tuning` block, and its defaults are the rule. A different grid is a Departure:
+`tuning.departure: {reason, evidence}`, argued from the data, frozen at registration
+like the weighting.
 
 **Hyperparameters.** `drtools suggest-params --op <op> --run-dir runs/<id>` gives
 profile-derived starting values with the reasoning behind them, and persists them in the
 Run. Pass `--params` with the Stage's other settings when the Suggestion depends on them
-— LLE's neighbour minimum grows with `method` and `n_components`. Library defaults are
-usually wrong for the data at hand — a perplexity of 30 on 500 samples is not a
-judgement, it is an oversight.
+— LLE's neighbour minimum grows with `method`. Library defaults are usually wrong for the
+data at hand — a perplexity of 30 on 500 samples is not a judgement, it is an oversight.
 
-Registration compares every value against the persisted Suggestion and records it as
-`suggested`, `overridden`, `specified` (nothing was suggested for it) or
-`registry_default` (not given, and no different Suggestion). A parameter left unset
-while its Suggestion differs from the default is an Override too. An Override is
-refused unless the Stage carries its reason:
+A tuned parameter left unset centres its grid on the Suggestion, recorded as `tuned`.
+Setting it centres the grid on your value instead, which is an Override. Every other
+value is compared against the persisted Suggestion and recorded as `suggested`,
+`overridden`, `specified` (nothing was suggested for it) or `registry_default` (not
+given, and no different Suggestion); one left unset while its Suggestion differs from
+the default is an Override too. An Override is refused unless the Stage carries its
+reason:
 
 ```json
 {"op": "tsne", "params": {"perplexity": 50},
@@ -101,7 +112,7 @@ Rejection carries a reason and the Evidence keys behind it, and an uncited one i
 refused. `"MDS rejected — O(n^2) at n=107,000; PCA already captures the global variance
 structure it would recover"` is evidence of judgement. A method may be both rejected and
 run when the Rejection rules out one configuration — `umap` on the raw features — and
-every Candidate running it puts another method in front, as `pca50 -> umap` does. `pca`
+every Candidate running it puts another method in front, as `pca -> umap` does. `pca`
 is never rejected, since the Linear baseline runs it alone.
 
 **The weighting.** Declare a weight per metric in the Battery, summing to 1, with a

@@ -51,9 +51,26 @@ carrying its rationale and Evidence keys and kept in the Run.
 _Avoid_: default, recommendation, heuristic
 
 **Override**:
-A Stage parameter whose value differs from its Suggestion, whether set explicitly or left
-at a registry default that differs, recorded with its reason.
+A Stage parameter whose value differs from its Suggestion, recorded with its reason:
+set explicitly, or, for a parameter Tuning does not scale, left at a registry default
+that differs. An Override of a Fidelity parameter moves the centre of its Tuning grid.
 _Avoid_: departure, deviation
+
+**Fidelity parameter**:
+The one parameter of a method that governs how much of the data's structure it can
+represent, such as a perplexity, a neighbourhood size or a kernel width, and so the one
+Tuning scales.
+_Avoid_: tuning parameter, hyperparameter
+
+**Tuning**:
+Choosing a Candidate's d, and the multiplier applied to its Fidelity parameter, inside
+its Attempt and on at most 2,000 rows of the Reference, before its Refit.
+_Avoid_: sweep, grid search, hyperparameter optimisation
+
+**Refit**:
+The one fit of a Candidate at the values Tuning chose, on every row under the Run's seed.
+It is the fit that is scored and ranked.
+_Avoid_: final fit, retraining
 
 **Departure**:
 A choice that differs from the default a rule gives — a Pre-registered weighting other

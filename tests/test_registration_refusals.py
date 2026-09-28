@@ -53,7 +53,7 @@ def codes(report: dict) -> set[str]:
     return {finding["code"] for finding in report["findings"]}
 
 
-BASELINE = [stage("pca", n_components=2)]
+BASELINE = [stage("pca")]
 
 
 # ------------------------------------------------------------------ chain length
@@ -61,14 +61,14 @@ BASELINE = [stage("pca", n_components=2)]
 
 def test_a_second_pca_after_pca_is_refused() -> None:
     with pytest.raises(PipelineError, match="stage 1 .*pca.*repeat"):
-        validate_stages([stage("pca", n_components=10), stage("pca", n_components=2)])
+        validate_stages([stage("pca"), stage("pca")])
 
 
 def test_pca_twice_before_a_method_is_refused() -> None:
     with pytest.raises(PipelineError, match="stage 1 .*pca.*repeat"):
         validate_stages([
-            stage("pca", n_components=20),
-            stage("pca", n_components=10),
+            stage("pca"),
+            stage("pca"),
             stage("umap", n_components=2),
         ])
 
@@ -83,8 +83,8 @@ def test_a_third_method_is_refused_even_when_all_three_differ() -> None:
     with pytest.raises(PipelineError, match="stage 2 .*umap.*at most two"):
         validate_stages(
             [
-                stage("pca", n_components=20),
-                stage("kernel_pca", n_components=10),
+                stage("pca"),
+                stage("kernel_pca"),
                 stage("umap", n_components=2),
             ],
             registry,
@@ -94,7 +94,7 @@ def test_a_third_method_is_refused_even_when_all_three_differ() -> None:
 def test_a_pre_step_and_a_different_method_are_accepted() -> None:
     validate_stages([
         stage("standardise"),
-        stage("pca", n_components=10),
+        stage("pca"),
         stage("umap", n_components=2),
     ])
 
@@ -104,7 +104,7 @@ def test_a_pre_step_and_a_different_method_are_accepted() -> None:
 
 def test_a_reduction_in_the_base_preprocessing_is_refused() -> None:
     report = validate_plan(
-        plan([BASELINE], base_preprocessing=[stage("pca", n_components=5)]), profile()
+        plan([BASELINE], base_preprocessing=[stage("pca")]), profile()
     )
     assert "reduction_in_base" in codes(report)
     assert not report["valid"]
@@ -121,7 +121,7 @@ def test_a_base_of_preprocessing_only_draws_no_such_finding() -> None:
 
 def test_a_subsampled_pca_is_not_the_linear_baseline() -> None:
     report = validate_plan(
-        plan([[stage("subsample", n_samples=50), stage("pca", n_components=2)]]),
+        plan([[stage("subsample", n_samples=50), stage("pca")]]),
         profile(),
     )
     assert "no_linear_baseline" in codes(report)
@@ -129,7 +129,7 @@ def test_a_subsampled_pca_is_not_the_linear_baseline() -> None:
 
 def test_a_pca_behind_a_candidate_specific_preprocessing_is_not_the_baseline() -> None:
     report = validate_plan(
-        plan([[stage("standardise"), stage("pca", n_components=2)]]), profile()
+        plan([[stage("standardise"), stage("pca")]]), profile()
     )
     assert "no_linear_baseline" in codes(report)
 
@@ -159,34 +159,34 @@ def test_hessian_lle_at_its_neighbour_minimum_is_accepted() -> None:
 
 
 def test_a_subsample_the_method_does_not_need_is_refused() -> None:
-    candidate = [stage("subsample", n_samples=100), stage("isomap", n_components=2)]
+    candidate = [stage("subsample", n_samples=100), stage("isomap")]
     report = validate_plan(plan([BASELINE, candidate]), profile(n_samples=300))
     found = [f for f in report["findings"] if f["code"] == "subsample_not_needed"]
     assert found and "5,000" in found[0]["message"]
 
 
 def test_a_subsample_above_the_method_limit_is_accepted() -> None:
-    candidate = [stage("subsample", n_samples=3000), stage("isomap", n_components=2)]
+    candidate = [stage("subsample", n_samples=3000), stage("isomap")]
     report = validate_plan(plan([BASELINE, candidate]), profile(n_samples=20000))
     assert "subsample_not_needed" not in codes(report)
     assert "exceeds_scale_limit" not in codes(report)
 
 
 def test_a_method_that_cannot_place_new_rows_is_refused_above_its_limit() -> None:
-    candidate = [stage("subsample", n_samples=3000), stage("mds", n_components=2)]
+    candidate = [stage("subsample", n_samples=3000), stage("mds")]
     report = validate_plan(plan([BASELINE, candidate]), profile(n_samples=20000))
     found = [f for f in report["findings"] if f["code"] == "cannot_place_new_rows"]
     assert found and "profile.shape.n_samples" in found[0]["fix"]
 
 
 def test_the_same_method_within_its_limit_draws_no_such_finding() -> None:
-    report = validate_plan(plan([BASELINE, [stage("mds", n_components=2)]]),
+    report = validate_plan(plan([BASELINE, [stage("mds")]]),
                            profile(n_samples=300))
     assert "cannot_place_new_rows" not in codes(report)
 
 
 def test_the_scale_limit_fix_does_not_offer_a_subsample_to_mds() -> None:
-    report = validate_plan(plan([BASELINE, [stage("mds", n_components=2)]]),
+    report = validate_plan(plan([BASELINE, [stage("mds")]]),
                            profile(n_samples=20000))
     for finding in report["findings"]:
         if finding["op"] == "mds":
@@ -214,7 +214,7 @@ def test_a_plan_accounting_for_every_method_draws_no_such_finding() -> None:
 
 
 def test_a_method_rejected_and_run_behind_a_pre_step_is_accepted() -> None:
-    pre_step = [stage("pca", n_components=5), stage("umap", n_components=2)]
+    pre_step = [stage("pca"), stage("umap", n_components=2)]
     document = complete(plan([BASELINE, pre_step], rejected=[reject("umap")]))
     report = validate_plan(document, profile())
     assert report["valid"], report["findings"]
@@ -493,8 +493,9 @@ def test_a_value_equal_to_the_suggestion_is_recorded_as_suggested(cli, csv_datas
     result = _register(cli, run, _tsne_plan(params={"perplexity": 5}))
     assert result.code == 0, result.payload
     params = _provenance(run)
-    assert params["perplexity"]["state"] == "suggested"
-    assert params["n_components"]["state"] == "specified"  # nothing was suggested for it
+    # perplexity is tuned: its grid is centred on the suggestion it equals (day 15)
+    assert params["perplexity"] == {"state": "tuned", "centre": "suggestion"}
+    assert params["n_components"]["state"] == "specified"  # 2 by rule for t-SNE
     assert params["n_iter"]["state"] == "registry_default"
 
 
@@ -515,7 +516,7 @@ def test_an_override_with_a_reason_is_recorded_with_it(cli, csv_dataset, tmp_pat
     result = _register(cli, run, _tsne_plan(params={"perplexity": 8}, overrides=reason))
     assert result.code == 0, result.payload
     perplexity = _provenance(run)["perplexity"]
-    assert perplexity == {"state": "overridden", "suggested": 5.0,
+    assert perplexity == {"state": "overridden", "suggested": 5.0, "centre": "override",
                           "reason": "a wider neighbourhood for the clusters"}
 
 
@@ -524,10 +525,12 @@ def _stage_of(report, candidate, op):
     return next(s for s in report["provenance"][candidate] if s["op"] == op)["params"]
 
 
-def _with_suggestion(value, *, given=None, overrides=None):
-    suggestions = {"tsne": {"suggested": {"perplexity": {
+def _with_suggestion(value, *, given=None, overrides=None, param="n_iter"):
+    """A persisted suggestion for one t-SNE parameter. `n_iter` is not tuned, so the
+    day 12 rules hold for it; `perplexity` is, so they do not (day 15)."""
+    suggestions = {"tsne": {"suggested": {param: {
         "value": value, "rationale": "", "evidence": []}}}}
-    tsne = {"op": "tsne", "params": {"n_components": 2, **({"perplexity": given}
+    tsne = {"op": "tsne", "params": {"n_components": 2, **({param: given}
                                                           if given is not None else {})}}
     if overrides:
         tsne["overrides"] = overrides
@@ -538,44 +541,80 @@ def _with_suggestion(value, *, given=None, overrides=None):
 
 def test_leaving_out_a_parameter_whose_suggestion_differs_is_an_override() -> None:
     """Omitting the parameter must not be a way around giving the reason."""
-    report = _with_suggestion(5.0)  # the registry default is 30
+    report = _with_suggestion(1000)  # the registry default is 500
     found = [f for f in report["findings"] if f["code"] == "unexplained_override"]
     assert found and "left unset" in found[0]["message"]
-    perplexity = _stage_of(report, "c1", "tsne")["perplexity"]
-    assert perplexity == {"state": "overridden", "suggested": 5.0}
+    n_iter = _stage_of(report, "c1", "tsne")["n_iter"]
+    assert n_iter == {"state": "overridden", "suggested": 1000}
 
 
 def test_leaving_out_a_parameter_with_a_reason_is_accepted() -> None:
-    report = _with_suggestion(5.0, overrides={"perplexity": {"reason": "the default suits"}})
+    report = _with_suggestion(1000, overrides={"n_iter": {"reason": "the default suits"}})
     assert "unexplained_override" not in codes(report)
-    assert _stage_of(report, "c1", "tsne")["perplexity"]["reason"] == "the default suits"
+    assert _stage_of(report, "c1", "tsne")["n_iter"]["reason"] == "the default suits"
 
 
 def test_leaving_out_a_parameter_whose_suggestion_is_the_default_follows_it() -> None:
-    report = _with_suggestion(30.0)
+    report = _with_suggestion(500)
     assert "unexplained_override" not in codes(report)
-    assert _stage_of(report, "c1", "tsne")["perplexity"]["state"] == "registry_default"
+    assert _stage_of(report, "c1", "tsne")["n_iter"]["state"] == "registry_default"
+
+
+def test_leaving_out_a_tuned_parameter_centres_its_grid_on_the_suggestion() -> None:
+    """Day 15: unset, a tuned parameter follows the suggestion, whatever its default."""
+    report = _with_suggestion(5.0, param="perplexity")  # the registry default is 30
+    assert "unexplained_override" not in codes(report)
+    perplexity = _stage_of(report, "c1", "tsne")["perplexity"]
+    assert perplexity == {"state": "tuned", "centre": "suggestion"}
+
+
+def test_a_tuned_parameter_set_away_from_its_suggestion_still_needs_a_reason() -> None:
+    report = _with_suggestion(5.0, param="perplexity", given=12)
+    assert "unexplained_override" in codes(report)
+    reasoned = _with_suggestion(
+        5.0, param="perplexity", given=12,
+        overrides={"perplexity": {"reason": "clusters are wide"}},
+    )
+    assert "unexplained_override" not in codes(reasoned)
+    assert _stage_of(reasoned, "c1", "tsne")["perplexity"]["centre"] == "override"
 
 
 def test_a_pre_step_suggestion_is_not_held_against_the_baseline() -> None:
     """The PCA component count is for a pre-step; a terminal PCA is not overriding it."""
     suggestions = {"pca": {"suggested": {"n_components": {
         "value": 10, "rationale": "", "evidence": [], "applies_to": "intermediate"}}}}
-    pre_step = [stage("pca", n_components=10), stage("umap", n_components=2)]
+    pre_step = [stage("pca"), stage("umap", n_components=2)]
     document = complete(plan([BASELINE, pre_step]))
     report = validate_plan(document, profile(),
                            artifacts={"profile": profile(), "suggestions": suggestions})
     assert "unexplained_override" not in codes(report)
-    assert _stage_of(report, "c0", "pca")["n_components"]["state"] == "specified"
-    assert _stage_of(report, "c1", "pca")["n_components"]["state"] == "suggested"
+    # Since day 15 both are chosen inside the Attempt: the baseline's d by PCA's own
+    # criterion, and the pre-step's k by the same criterion.
+    assert _stage_of(report, "c0", "pca")["n_components"]["state"] == "tuned"
+    assert _stage_of(report, "c1", "pca")["n_components"]["state"] == "tuned"
 
 
 def test_the_pca_suggestion_says_it_is_for_a_pre_step() -> None:
     from drtools.heuristics import suggest
 
-    recon = {"spectrum": {"probe": {"elbow": 8, "n_components_for_90pct": 20}}}
+    cumulative = [0.40, 0.70, 0.85, 0.90, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97]
+    recon = {"spectrum": {"probe": {"cumulative": cumulative}}}
     entry = suggest("pca", {"shape": {"n_samples": 500}}, recon)["n_components"]
     assert entry["applies_to"] == "intermediate"
+
+
+def test_the_pca_suggestion_is_the_rule_that_chooses_k() -> None:
+    """Day 15: the suggestion previews PCA's own criterion, so the two cannot disagree."""
+    from drtools.heuristics import suggest
+    from drtools.tuning import choose_d_by_curve
+
+    cumulative = [0.40, 0.70, 0.85, 0.90, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97]
+    recon = {"spectrum": {"probe": {"cumulative": cumulative}}}
+    entry = suggest("pca", {"shape": {"n_samples": 500}}, recon)["n_components"]
+    expected = choose_d_by_curve(
+        {k: cumulative[k - 1] for k in range(2, 11)}, flatness=0.10, fallback_share=0.90
+    )["d"]
+    assert entry["value"] == expected
 
 
 def test_an_op_with_suggestions_never_requested_draws_a_warning(cli, csv_dataset, tmp_path):
@@ -600,7 +639,8 @@ def test_re_running_suggest_params_after_registration_does_not_relabel(
     assert cli("embed", "--run-dir", run, "--id", "c1", "--in-process").code == 0
     record = json.loads((run / "embeddings" / "c1.json").read_text(encoding="utf-8"))
     tsne = next(s for s in record["stages"] if s["op"] == "tsne")
-    assert tsne["param_provenance"]["perplexity"] == "suggested"
+    # Frozen at registration as tuned around the suggestion then persisted (day 15).
+    assert tsne["param_provenance"]["perplexity"] == "tuned"
 
 
 def test_a_base_taken_from_suggest_base_registers_as_the_rule(cli, csv_dataset, tmp_path):

@@ -54,7 +54,7 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
     plan = {
         "dataset": "d",
         "candidates": [
-            {"id": "c1", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "c1", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
     }
@@ -83,7 +83,7 @@ def test_evaluating_with_a_conflicting_seed_is_refused(cli, csv_dataset, tmp_pat
     plan = {
         "dataset": "d",
         "candidates": [
-            {"id": "c1", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "c1", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
     }

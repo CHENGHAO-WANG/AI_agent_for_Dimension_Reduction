@@ -359,3 +359,116 @@ def _notes(
         )
 
     return notes
+
+
+class BatteryScorer:
+    """The battery on one fixed set of rows, for scoring many embeddings of them.
+
+    Tuning scores every cell of its grid on the same tuning rows against the same
+    Reference rows (section 3.5), so everything computed from the Reference alone is
+    computed once: its distance ranks for trustworthiness, its neighbours for
+    continuity, the ranks of its pairwise distances for the Shepard correlation. Each
+    metric follows `evaluate_embedding`'s definition exactly, and a test holds the two
+    equal; trustworthiness is scikit-learn's computation with its reference half kept.
+    Only the metrics named in `wanted` are computed.
+    """
+
+    def __init__(
+        self,
+        reference: Matrix,
+        labels: np.ndarray | None,
+        *,
+        k: int,
+        wanted: set[str] | None = None,
+    ) -> None:
+        from scipy.stats import rankdata
+
+        self.n = int(reference.shape[0])
+        self.k = int(k)
+        self.labels = None if labels is None else np.asarray(labels)
+        self.wanted = set(wanted) if wanted is not None else set(METRIC_SPECS)
+        self.local = self.n >= LOCAL_METRIC_FLOOR
+        distances = pairwise_distances(reference)
+        self.upper = np.triu_indices(self.n, k=1)
+        if self.local and self.wanted & {"trustworthiness", "continuity"}:
+            self.reference_ranks = _inverted_ranks(distances)
+            self.reference_neighbours = _neighbour_indices(distances, self.k)
+        if self.local and "shepard_correlation" in self.wanted:
+            ranked = rankdata(distances[self.upper])
+            self.reference_order = (ranked - ranked.mean()) / np.linalg.norm(
+                ranked - ranked.mean()
+            )
+
+    def score(self, embedding: np.ndarray) -> dict[str, float | None]:
+        from scipy.stats import rankdata
+
+        embedding = np.asarray(embedding, dtype=np.float64)
+        values: dict[str, float | None] = {}
+        distances = None
+        if self.local and self.wanted & {
+            "trustworthiness", "continuity", "shepard_correlation"
+        }:
+            distances = pairwise_distances(embedding)
+        if "trustworthiness" in self.wanted:
+            values["trustworthiness"] = (
+                _trust(self.reference_ranks, _neighbour_indices(distances, self.k), self.k)
+                if self.local
+                else None
+            )
+        if "continuity" in self.wanted:
+            values["continuity"] = (
+                _trust(_inverted_ranks(distances), self.reference_neighbours, self.k)
+                if self.local
+                else None
+            )
+        if "shepard_correlation" in self.wanted:
+            if self.local:
+                ranked = rankdata(distances[self.upper])
+                centred = ranked - ranked.mean()
+                norm = np.linalg.norm(centred)
+                values["shepard_correlation"] = (
+                    float(centred @ self.reference_order / norm) if norm > 0 else 0.0
+                )
+            else:
+                values["shepard_correlation"] = None
+        n_classes = 0 if self.labels is None else int(np.unique(self.labels).size)
+        if "silhouette" in self.wanted:
+            values["silhouette"] = (
+                float(silhouette_score(embedding, self.labels))
+                if self.labels is not None and 1 < n_classes < self.n
+                else None
+            )
+        if "knn_label_preservation" in self.wanted:
+            values["knn_label_preservation"] = (
+                _label_agreement(embedding, self.labels, self.k)
+                if self.labels is not None and n_classes > 1 and self.k + 1 <= self.n
+                else None
+            )
+        return values
+
+
+def _inverted_ranks(distances: np.ndarray) -> np.ndarray:
+    """rank[i, j]: j's position among i's neighbours, 1 for the nearest, self excluded."""
+    n = distances.shape[0]
+    masked = distances.copy()
+    np.fill_diagonal(masked, np.inf)
+    order = np.argsort(masked, axis=1)
+    ranks = np.zeros((n, n), dtype=np.int64)
+    rows = np.arange(n)[:, None]
+    ranks[rows, order] = np.arange(1, n + 1)[None, :]
+    return ranks
+
+
+def _neighbour_indices(distances: np.ndarray, k: int) -> np.ndarray:
+    """Each row's k nearest other rows, as NearestNeighbors returns them."""
+    masked = distances.copy()
+    np.fill_diagonal(masked, np.inf)
+    return np.argsort(masked, axis=1, kind="stable")[:, :k]
+
+
+def _trust(ranks: np.ndarray, neighbours: np.ndarray, k: int) -> float:
+    """scikit-learn's trustworthiness, given one space's ranks and the other's neighbours."""
+    n = ranks.shape[0]
+    excess = ranks[np.arange(n)[:, None], neighbours] - k
+    penalty = float(excess[excess > 0].sum())
+    return 1.0 - penalty * (2.0 / (n * k * (2.0 * n - 3.0 * k - 1.0)))

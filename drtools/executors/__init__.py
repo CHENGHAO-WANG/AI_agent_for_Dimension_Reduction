@@ -60,6 +60,10 @@ class Context:
     feature_index: np.ndarray | None = None
     history: list[str] = field(default_factory=list)
     projection: Projection | None = None
+    #: Set by tuning: a method with its own criterion for d then records it in
+    #: `criterion`, measured on the rows it was fitted on (sections 3.5 and 3.7).
+    measure_criterion: bool = False
+    criterion: dict[str, Any] | None = None
 
     def project_with(self, function: Callable[[Matrix], Matrix], kind: str) -> None:
         """Record how rows this stage was not fitted on are to pass through it."""

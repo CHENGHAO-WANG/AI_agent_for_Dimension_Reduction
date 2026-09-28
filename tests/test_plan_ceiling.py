@@ -30,7 +30,7 @@ def _plan(n_candidates: int, **overrides):
     return {
         "dataset": "d",
         "candidates": [
-            {"id": f"c{i}", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": f"c{i}", "stages": [{"op": "pca", "params": {}}]}
             for i in range(n_candidates)
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},

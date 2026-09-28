@@ -691,16 +691,28 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
     # retry existed to act on was destroyed by the refusal to run it.
     seed = run_seed(run, args.seed)
     stages = plan.stages_for(candidate)
+    # Every candidate is tuned inside its Attempt (section 3.5): the worker needs to
+    # know where the Base ends, the weighting the cells are scored under, and the
+    # plan's tuning block. All three come from the registered plan.
+    tuning = {
+        "n_base": len(plan.base_preprocessing),
+        "weights": dict(plan.evaluation.weights),
+        "settings": plan.tuning.model_dump(exclude={"departure"}),
+    }
 
     _invalidate_candidate(run, args.id)
 
     if not args.in_process:
         # A candidate that exhausts memory or never converges cannot be caught in
         # process, so by default it runs somewhere that can be killed.
-        outcome = run_candidate(run, args.id, stages, seed=seed, timeout_s=timeout_s)
+        outcome = run_candidate(
+            run, args.id, stages, seed=seed, timeout_s=timeout_s, tuning=tuning
+        )
     else:
+        from drtools._worker import execute
+
         try:
-            result = run_pipeline(X, labels, stages, seed=seed)
+            result, tuning_record = execute(run, X, labels, stages, seed, tuning)
         except (ExecutionError, PipelineError) as error:
             # An in-process failure has to become a record like any other. Letting it
             # propagate skipped the decision below, so the attempt was never counted
@@ -723,7 +735,8 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
 
         embeddings = run.path / "embeddings"
         save_embedding(embeddings, args.id, result)
-        outcome = {"id": args.id, "status": "ok", **result.as_dict()}
+        outcome = {"id": args.id, "status": "ok", **result.as_dict(),
+                   "tuning": tuning_record}
         jsonio.write(embeddings / f"{args.id}.json", outcome)
 
     stages_recorded = _apply_registered_provenance(run, args.id)
@@ -888,6 +901,18 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
             "is frozen at registration, not only its weights: the reasons for a "
             "weighting are what registration fixed before any result existed. Restore "
             "the registered evaluation, or start a new run."
+        )
+
+    # The grids and rules every candidate is tuned under are frozen for the same reason
+    # the weighting is: moved after results exist, they could be chosen for what they
+    # would select.
+    if proposed.tuning != existing.tuning:
+        raise ContractError(
+            "this run already registered a plan, and the plan just submitted changes "
+            "the tuning block. The grids of d and of multipliers, the rules' thresholds "
+            "and the cycle cap are frozen at registration, as the weighting is: moved "
+            "after results exist, they could be chosen for the choices they produce. "
+            "Restore the registered tuning block, or start a new run."
         )
 
     existing_base = [stage.model_dump() for stage in existing.base_preprocessing]

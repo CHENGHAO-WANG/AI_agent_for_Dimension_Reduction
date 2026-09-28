@@ -6,7 +6,7 @@ from plans import complete, reconnoitre
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.status import MAX_ATTEMPTS
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 # perplexity must stay well below n/3 for the 60-row fixture dataset, or validate-plan
 # refuses the candidate outright (see validate_plan's perplexity_too_large finding).
 TSNE = [{"op": "tsne", "params": {"n_components": 2, "perplexity": 5}}]
@@ -74,10 +74,11 @@ def _prepared(cli, csv_dataset, tmp_path, candidates, rows=60):
     return runs / "r1"
 
 
-def _add_candidate(run, candidate_id, n_components=2):
+def _add_candidate(run, candidate_id, whiten=None):
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"].append(
-        {"id": candidate_id, "stages": [{"op": "pca", "params": {"n_components": n_components}}]}
+        {"id": candidate_id, "stages": [
+            {"op": "pca", "params": {} if whiten is None else {"whiten": whiten}}]}
     )
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
@@ -98,7 +99,7 @@ def _abandon(cli, run, candidate_id):
 def _spend_the_round(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
-    _add_candidate(run, "b", n_components=3)
+    _add_candidate(run, "b", whiten=True)
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("status", "--run-dir", run).payload["replan_round_spent"] is True
     return run
@@ -147,7 +148,7 @@ def test_a_retry_clears_what_the_previous_attempt_left(cli, csv_dataset, tmp_pat
     # A subsample registers only in front of a method whose limit the data exceeds,
     # so the first attempt subsamples Isomap on more rows than its 5,000.
     subsampled = [{"op": "subsample", "params": {"n_samples": 30}},
-                  {"op": "isomap", "params": {"n_components": 2}}]
+                  {"op": "isomap", "params": {}}]
     run = _prepared(cli, csv_dataset, tmp_path,
                     [{"id": "base", "stages": PCA}, {"id": "a", "stages": subsampled}],
                     rows=6000)
@@ -184,7 +185,7 @@ def test_any_unsuccessful_outcome_may_be_revised(cli, csv_dataset, tmp_path, out
     _rewrite_last_embed_outcome(run, "a", outcome)
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"whiten": True}}]
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
@@ -195,7 +196,7 @@ def test_a_failed_candidate_can_be_revised_and_retried(cli, csv_dataset, tmp_pat
     cli("embed", "--run-dir", run, "--id", "a", "--timeout", "0.01")
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"whiten": True}}]
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
@@ -207,7 +208,7 @@ def test_a_successful_candidates_stages_cannot_be_revised(cli, csv_dataset, tmp_
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
-    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"n_components": 3}}]
+    plan["candidates"][0]["stages"] = [{"op": "pca", "params": {"whiten": True}}]
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
@@ -348,20 +349,24 @@ def test_a_candidate_out_of_attempts_is_not_offered_for_execution(
     assert status["next"] == "evaluate"
 
 
-def test_an_in_process_failure_is_counted_as_an_attempt(cli, csv_dataset, tmp_path):
+def test_an_in_process_failure_is_counted_as_an_attempt(
+    cli, csv_dataset, tmp_path, monkeypatch
+):
     """A route that runs a candidate without recording one is a route that evades.
 
     The in-process path let `run_pipeline` raise past the decision record, so the
     attempt was never counted: repeating the same failing command bypassed the
     two-attempt allowance while `status` reported no attempts at all.
     """
-    run = _prepared(
-        cli,
-        csv_dataset,
-        tmp_path,
-        # 60 rows, so asking PCA for 80 components cannot be satisfied.
-        [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 80}}]}],
-    )
+    from drtools.executors import EXECUTORS, ExecutionError
+
+    def failing(X, ctx, **params):
+        raise ExecutionError("pca cannot run here")
+
+    # Since day 15 a plan cannot ask PCA for an impossible d, so the stage fails
+    # directly; what is tested is how the failure is counted.
+    monkeypatch.setitem(EXECUTORS, "pca", failing)
+    run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
     first = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
     assert first.payload["status"] == "failed", first.stderr
 
@@ -415,7 +420,7 @@ def test_a_changed_registration_after_ranking_does_spend_the_round(
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"].append(
-        {"id": "b", "stages": [{"op": "pca", "params": {"n_components": 3}}]}
+        {"id": "b", "stages": [{"op": "pca", "params": {"whiten": True}}]}
     )
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", run).code == 0
@@ -576,7 +581,7 @@ def test_a_second_round_of_extending_the_portfolio_is_refused(
     """
     run = _spend_the_round(cli, csv_dataset, tmp_path)
 
-    _add_candidate(run, "c", n_components=4)
+    _add_candidate(run, "c", whiten=False)
     result = cli("validate-plan", "--run-dir", run)
 
     assert result.code == 2
@@ -596,7 +601,7 @@ def test_replacing_an_abandoned_candidate_after_the_round_stays_legal(
     run = _spend_the_round(cli, csv_dataset, tmp_path)
     assert _abandon(cli, run, "b").code == 0
 
-    _add_candidate(run, "c", n_components=4)
+    _add_candidate(run, "c", whiten=False)
     result = cli("validate-plan", "--run-dir", run)
 
     assert result.code == 0, result.stderr
@@ -622,7 +627,7 @@ def test_revising_a_failed_candidate_after_the_round_stays_legal(
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     for candidate in plan["candidates"]:
         if candidate["id"] == "a":
-            candidate["stages"] = [{"op": "pca", "params": {"n_components": 5}}]
+            candidate["stages"] = [{"op": "pca", "params": {"whiten": True}}]
     (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0

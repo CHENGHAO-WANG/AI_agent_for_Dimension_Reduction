@@ -119,7 +119,7 @@ def test_a_suggested_plan_registers(cli, tmp_path):
         "dataset": "sparse_counts",
         "base_preprocessing": suggestion["stages"],
         "candidates": [
-            {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "pca2", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }

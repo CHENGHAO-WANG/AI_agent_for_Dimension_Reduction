@@ -16,7 +16,7 @@ import json
 from drtools.isolation import budget_timeout
 from plans import complete, reconnoitre
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 
 
 def _registered(cli, csv_dataset, tmp_path, budget="standard"):
@@ -37,7 +37,7 @@ def _registered(cli, csv_dataset, tmp_path, budget="standard"):
         "budget": budget,
         "candidates": [
             {"id": "pca2", "stages": PCA},
-            {"id": "pca3", "stages": [{"op": "pca", "params": {"n_components": 3}}]},
+            {"id": "pca3", "stages": [{"op": "pca", "params": {"whiten": True}}]},
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }

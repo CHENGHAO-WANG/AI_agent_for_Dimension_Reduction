@@ -70,6 +70,12 @@ def pca(
         notes = {"solver": "PCA", "centred": True, "whitened": bool(whiten)}
 
     ratios = np.asarray(model.explained_variance_ratio_)
+    if ctx.measure_criterion:
+        # Q(d) at every d up to the fit's: the share of the variance the first d keep.
+        ctx.criterion = {
+            "kind": "explained_variance",
+            "curve": [float(v) for v in np.cumsum(ratios)],
+        }
     notes.update(
         {
             "explained_variance_ratio": [float(r) for r in ratios],
@@ -87,6 +93,7 @@ def kernel_pca(
     n_components: int = 2,
     kernel: str = "rbf",
     gamma: float | None = None,
+    width_multiplier: float = 1.0,
     **_: Any,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     dense = require_dense(X, "kernel_pca")
@@ -106,8 +113,12 @@ def kernel_pca(
         gamma = recorded_gamma = _median_heuristic_gamma(dense, ctx.seed)
         gamma_source = "median pairwise distance heuristic"
     else:
-        recorded_gamma = 1.0 / dense.shape[1]
+        gamma = recorded_gamma = 1.0 / dense.shape[1]
         gamma_source = "1/n_features (scikit-learn default)"
+    # Tuning scales the width, from the rule or an explicit value alike, on the rows
+    # this fit sees (section 3.5).
+    if gamma is not None and width_multiplier != 1.0:
+        gamma = recorded_gamma = float(gamma) * float(width_multiplier)
 
     model = KernelPCA(
         n_components=n_components,
@@ -126,11 +137,34 @@ def kernel_pca(
             "components; the kernel matrix is rank-deficient, which usually means the "
             "bandwidth is far too small and every point looks equally dissimilar"
         )
+    if ctx.measure_criterion:
+        ctx.criterion = {
+            "kind": "kernel_variance",
+            "curve": _kernel_variance_curve(model, dense, kernel, gamma),
+        }
     return embedding, {
         "kernel": kernel,
         "gamma": float(recorded_gamma) if recorded_gamma is not None else None,
         "gamma_source": gamma_source,
+        "width_multiplier": float(width_multiplier),
     }
+
+
+def _kernel_variance_curve(
+    model: Any, dense: np.ndarray, kernel: str, gamma: float | None
+) -> list[float]:
+    """Q(d): the share of the centred kernel's trace the first d eigenvalues carry.
+
+    The trace of the centred kernel is the total variance in feature space, so this is
+    the exact kernel counterpart of PCA's explained variance.
+    """
+    from sklearn.metrics.pairwise import pairwise_kernels
+
+    options = {} if kernel == "cosine" else {"gamma": gamma}
+    matrix = pairwise_kernels(dense, metric=kernel, **options)
+    total = float(np.trace(matrix) - matrix.sum() / matrix.shape[0])
+    eigenvalues = np.clip(np.asarray(model.eigenvalues_, dtype=np.float64), 0.0, None)
+    return [float(v) for v in np.cumsum(eigenvalues) / total] if total > 0 else []
 
 
 @executor("sparse_pca")

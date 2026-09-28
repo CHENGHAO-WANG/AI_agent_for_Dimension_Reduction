@@ -17,6 +17,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 from drtools import jsonio
 from drtools.cache import read_cache
@@ -43,7 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     try:
         X, labels, meta = read_cache(run)
-        result = run_pipeline(X, labels, job["stages"], seed=job.get("seed", 0))
+        result, tuning = execute(run, X, labels, job["stages"], job.get("seed", 0),
+                                 job.get("tuning"))
     except (ExecutionError, PipelineError) as error:
         jsonio.write(
             record_path,
@@ -94,9 +96,39 @@ def main(argv: list[str] | None = None) -> int:
             "seed": job.get("seed", 0),
             "embedding_path": str(embeddings / f"{candidate_id}.npy"),
             **result.as_dict(),
+            **({"tuning": tuning} if tuning is not None else {}),
         },
     )
     return EXIT_OK
+
+
+def execute(
+    run: RunDir,
+    X: Any,
+    labels: Any,
+    stages: list[dict[str, Any]],
+    seed: int,
+    tuning: dict[str, Any] | None,
+) -> tuple[Any, dict[str, Any] | None]:
+    """Run one Attempt: tuned when the job carries a tuning payload, as given if not.
+
+    Shared with `embed --in-process`, so the two routes cannot tune differently.
+    """
+    if tuning is None:
+        return run_pipeline(X, labels, stages, seed=seed), None
+    from drtools.tuning import TuningSettings, tune_and_refit
+
+    profile = run.read_artifact("profile.json") if run.profile_path.exists() else {}
+    recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
+    return tune_and_refit(
+        X, labels, stages,
+        n_base=int(tuning["n_base"]),
+        seed=seed,
+        weights=dict(tuning["weights"]),
+        settings=TuningSettings.from_plan(tuning.get("settings")),
+        profile=profile,
+        recon=recon,
+    )
 
 
 if __name__ == "__main__":

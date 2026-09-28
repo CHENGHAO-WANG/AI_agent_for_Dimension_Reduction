@@ -191,25 +191,39 @@ def _lle_suggestion(
 
 
 def _component_suggestion(recon: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """For a PCA stage feeding a neighbour embedding, take the spectrum's elbow."""
+    """For a PCA pre-step: the rule that chooses its k, read on the probe spectrum.
+
+    Since day 15 a PCA before a method has its k chosen inside the Attempt by PCA's own
+    criterion, the shared elbow procedure on cumulative variance. This reports what the
+    same rule gives on reconnaissance's probe, so the suggestion and the choice cannot
+    disagree by construction; the choice is made again on the candidate's own input.
+    """
+    from drtools.tuning import (
+        D_CAP,
+        DEFAULT_FALLBACK_SHARE,
+        DEFAULT_FLATNESS,
+        choose_d_by_curve,
+    )
+
     if recon is None:
         return {}
-    spectrum = recon.get("spectrum", {}).get("probe", {})
-    elbow = spectrum.get("elbow")
-    ninety = spectrum.get("n_components_for_90pct")
-    if elbow is None:
+    cumulative = recon.get("spectrum", {}).get("probe", {}).get("cumulative") or []
+    points = {k: float(cumulative[k - 1]) for k in range(2, min(len(cumulative), D_CAP) + 1)}
+    if not points:
         return {}
-
-    value = int(elbow if ninety is None else max(elbow, min(ninety, 50)))
+    choice = choose_d_by_curve(
+        points, flatness=DEFAULT_FLATNESS, fallback_share=DEFAULT_FALLBACK_SHARE
+    )
+    value = int(choice["d"])
     return {
         "n_components": _entry(
             value,
-            f"the cumulative variance curve bends at {elbow} components"
-            + (f" and reaches 90% by {ninety}" if ninety else "")
-            + f", so {value} retains the structure without carrying the noise tail. "
-            "This is the value for an intermediate reduction; a terminal PCA for "
-            "plotting needs 2.",
-            ["recon.spectrum.probe.elbow", "recon.spectrum.probe.n_components_for_90pct"],
+            f"PCA's own criterion on the probe's cumulative variance gives {value} "
+            f"components (rule: {choice['rule']}), which keeps "
+            f"{points[value]:.0%} of the variance. A PCA before a method has its k "
+            "chosen by this rule on the candidate's own input when it runs, so this "
+            "value is a preview, not a setting.",
+            ["recon.spectrum.probe.cumulative"],
             applies_to="intermediate",
         )
     }

@@ -75,6 +75,13 @@ def laplacian_eigenmaps(
     embedding = model.fit_transform(X)
     extension = LaplacianNystrom(X, embedding, model.affinity_matrix_, n_neighbors)
     ctx.project_with(extension, "nystrom")
+    if ctx.measure_criterion:
+        # The random-walk eigenvalues of the fitted coordinates, largest first; the
+        # eigengap rule reads them, so tuning fits one coordinate more than d_max.
+        ctx.criterion = {
+            "kind": "eigengap",
+            "eigenvalues": [float(v) for v in extension.eigenvalues],
+        }
     return embedding, {
         "n_neighbors": int(n_neighbors),
         "graph_connected": True,
@@ -93,6 +100,7 @@ def diffusion_maps(
     epsilon: float | None = None,
     alpha: float = 1.0,
     t: int = 1,
+    width_multiplier: float = 1.0,
     **_: Any,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Coifman and Lafon's diffusion maps.
@@ -126,6 +134,9 @@ def diffusion_maps(
             squared_distances, ctx.seed
         )
         epsilon_source = "kernel-sum scaling criterion (Coifman and Singer)"
+    # Tuning scales the bandwidth, from the criterion or an explicit value alike, on the
+    # rows this fit sees (section 3.5).
+    epsilon = float(epsilon) * float(width_multiplier)
     if epsilon <= 0:
         raise ExecutionError(
             "the kernel bandwidth resolved to zero, which happens when most points are "
@@ -163,6 +174,14 @@ def diffusion_maps(
         ),
         "nystrom",
     )
+    if ctx.measure_criterion:
+        # Every non-trivial eigenvalue, not only the kept ones: the share of diffusion
+        # distance d coordinates retain is a share of all of them (section 3.7).
+        ctx.criterion = {
+            "kind": "diffusion_distance",
+            "eigenvalues": [float(v) for v in eigenvalues[1:]],
+            "t": int(t),
+        }
 
     spectral_gap = (
         float(eigenvalues[1] - eigenvalues[2]) if eigenvalues.size > 2 else None
@@ -173,6 +192,7 @@ def diffusion_maps(
         "dimension_implied_by_bandwidth": estimated_dimension,
         "alpha": float(alpha),
         "t": int(t),
+        "width_multiplier": float(width_multiplier),
         "eigenvalues": [float(v) for v in eigenvalues[: n_components + 1]],
         "spectral_gap_after_first_coordinate": spectral_gap,
         "caveat": "the geometry depends on the diffusion time t; a different t gives a "

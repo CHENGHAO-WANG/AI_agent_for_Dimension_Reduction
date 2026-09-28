@@ -120,12 +120,13 @@ def test_the_metrics_block_prints_the_values_metrics_recorded(finished_run):
     assert f"{metrics['values']['trustworthiness']:.4f}" in body
 
 
-def test_the_hyperparameter_block_separates_specified_from_default(finished_run):
-    """param_provenance is the only record of which values the agent actually chose."""
+def test_the_hyperparameter_block_separates_tuned_from_default(finished_run):
+    """param_provenance is the only record of where each value came from."""
     body = build_blocks(finished_run)["hyperparameters"]
 
     assert "n_components" in body
-    assert "specified" in body
+    assert "tuned" in body
+    assert "registry_default" in body
 
 
 def test_the_methods_block_carries_the_rejections_with_their_reasons(finished_run):

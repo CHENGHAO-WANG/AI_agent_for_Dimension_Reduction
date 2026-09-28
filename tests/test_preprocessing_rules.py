@@ -247,7 +247,7 @@ def test_registration_refuses_without_a_recorded_decision() -> None:
     profile = {"shape": {"n_samples": 300, "n_features": 10, "storage": "dense"},
                "values": {"suspected_kind": "continuous"}, "labels": {"present": False}}
     document = complete({"dataset": "d", "candidates": [
-        {"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}],
+        {"id": "a", "stages": [{"op": "pca", "params": {}}]}],
         "evaluation": {"weights": {"trustworthiness": 0.25, "continuity": 0.25,
                                    "shepard_correlation": 0.5}}})
     report = validate_plan(document, profile, recon=None)
@@ -282,7 +282,7 @@ def _stage(op, **params):
     return {"op": op, "params": params}
 
 
-PCA2 = [_stage("pca", n_components=2)]
+PCA2 = [_stage("pca")]
 
 
 def _plan(candidates, **overrides):
@@ -368,20 +368,20 @@ UMAP = _stage("umap", n_components=2)
 
 
 def test_a_euclidean_first_method_on_many_features_of_one_type_must_select() -> None:
-    report = _validate(_plan([PCA2, [_stage("pca", n_components=10), UMAP]]), WIDE)
+    report = _validate(_plan([PCA2, [_stage("pca"), UMAP]]), WIDE)
     found = [f for f in report["findings"] if f["code"] == "selection_required"]
     assert found and found[0]["candidate"] == "c1"
 
 
 def test_the_required_selection_and_z_score_are_accepted() -> None:
-    report = _validate(_plan([PCA2, [*SELECT, _stage("pca", n_components=10), UMAP]]), WIDE)
+    report = _validate(_plan([PCA2, [*SELECT, _stage("pca"), UMAP]]), WIDE)
     assert report["valid"], report["findings"]
 
 
 def test_the_linear_baseline_never_selects() -> None:
     report = _validate(_plan([PCA2]), WIDE)
     assert "selection_required" not in _codes(report)
-    report = _validate(_plan([PCA2, [*SELECT, _stage("pca", n_components=2)]]), WIDE)
+    report = _validate(_plan([PCA2, [*SELECT, _stage("pca")]]), WIDE)
     assert report["valid"], report["findings"]  # that one is not the baseline
 
 
@@ -426,15 +426,16 @@ def test_the_estimate_is_the_loaded_data_plus_the_heaviest_stage() -> None:
     from drtools.plan import _stage_peaks
     from drtools.registry import load_registry
 
-    candidate = [_stage("drop_constant"), *SELECT, _stage("pca", n_components=50), UMAP]
+    candidate = [_stage("drop_constant"), *SELECT, _stage("pca"), UMAP]
     loaded_bytes = 107_180 * 2352 * 4
     selected = 107_180 * 2000 * 4
     loaded, peaks = _stage_peaks(candidate, PATHMNIST, load_registry())
     by_op = dict(peaks)
     assert loaded == loaded_bytes
-    # selection holds its full input beside its output; PCA its input and a centred copy
+    # selection holds its full input beside its output; PCA its input and a centred copy,
+    # and, since tuning chooses its k, the largest output it could choose: 100 columns
     assert by_op["select_variable_features"] == pytest.approx(loaded_bytes + selected)
-    assert by_op["pca"] == pytest.approx(2 * selected + 107_180 * 50 * 4)
+    assert by_op["pca"] == pytest.approx(2 * selected + 107_180 * 100 * 4)
     assert estimate_peak_bytes(candidate, PATHMNIST) == pytest.approx(
         loaded_bytes + loaded_bytes + selected)
 
@@ -442,7 +443,7 @@ def test_the_estimate_is_the_loaded_data_plus_the_heaviest_stage() -> None:
 def test_a_z_score_of_sparse_input_is_counted_dense() -> None:
     sparse = _profile(n=100_000, d=2000, storage="sparse_csr", sparsity=0.9)
     dense_out = 100_000 * 2000 * 4
-    assert estimate_peak_bytes([_stage("standardise"), _stage("pca", n_components=2)],
+    assert estimate_peak_bytes([_stage("standardise"), _stage("pca")],
                                sparse) > 2 * dense_out
 
 
@@ -452,13 +453,13 @@ SPARSE = _profile(n=107_000, d=20_000, storage="sparse_csr", sparsity=0.98)
 
 
 def test_on_dense_data_the_baseline_is_the_heaviest_candidate() -> None:
-    selecting = [_stage("drop_constant"), *SELECT, _stage("pca", n_components=50)]
-    baseline = [_stage("drop_constant"), _stage("pca", n_components=2)]
+    selecting = [_stage("drop_constant"), *SELECT, _stage("pca")]
+    baseline = [_stage("drop_constant"), _stage("pca")]
     assert estimate_peak_bytes(baseline, PATHMNIST) > estimate_peak_bytes(selecting, PATHMNIST)
 
 
 def test_a_candidate_over_the_limit_is_refused_naming_the_stage() -> None:
-    candidate = [*SELECT, _stage("pca", n_components=50), UMAP]
+    candidate = [*SELECT, _stage("pca"), UMAP]
     report = _validate(_plan([PCA2, candidate]), SPARSE, memory_limit_bytes=int(1.5 * GB))
     found = [f for f in report["findings"] if f["code"] == "exceeds_memory_limit"]
     assert [f["candidate"] for f in found] == ["c1"]
@@ -467,7 +468,7 @@ def test_a_candidate_over_the_limit_is_refused_naming_the_stage() -> None:
 
 def test_memory_is_a_reason_to_subsample() -> None:
     candidate = [_stage("subsample", n_samples=20_000), *SELECT,
-                 _stage("pca", n_components=50), UMAP]
+                 _stage("pca"), UMAP]
     report = _validate(_plan([PCA2, candidate]), SPARSE, memory_limit_bytes=int(1.5 * GB))
     assert "subsample_not_needed" not in _codes(report)
     assert "exceeds_memory_limit" not in _codes(report)
@@ -475,15 +476,15 @@ def test_memory_is_a_reason_to_subsample() -> None:
 
 def test_a_subsample_within_both_limits_is_still_refused() -> None:
     candidate = [_stage("subsample", n_samples=20_000), *SELECT,
-                 _stage("pca", n_components=50), UMAP]
+                 _stage("pca"), UMAP]
     report = _validate(_plan([PCA2, candidate]), SPARSE, memory_limit_bytes=int(3 * GB))
     assert "subsample_not_needed" in _codes(report)
 
 
 def test_a_method_that_cannot_place_new_rows_is_refused_over_the_memory_limit() -> None:
     wide = _profile(n=4000, d=200_000, dtype="float64")  # within MDS's 5,000 rows
-    candidate = [_stage("subsample", n_samples=1000), _stage("mds", n_components=2)]
-    report = _validate(_plan([[_stage("pca", n_components=2)], candidate]), wide,
+    candidate = [_stage("subsample", n_samples=1000), _stage("mds")]
+    report = _validate(_plan([[_stage("pca")], candidate]), wide,
                        memory_limit_bytes=int(2 * GB))
     assert "cannot_place_new_rows" in _codes(report)
 
@@ -573,7 +574,7 @@ def test_a_re_registration_keeps_the_limit_the_run_first_recorded(
     run = _reconnoitred(cli, csv_dataset, tmp_path)
     assert _register(cli, run, _plan([PCA2])).code == 0
     monkeypatch.setattr(drtools.memory, "physical_memory_bytes", lambda: 2 * 2**30)
-    assert _register(cli, run, _plan([PCA2, [_stage("pca", n_components=3)]])).code == 0
+    assert _register(cli, run, _plan([PCA2, [_stage("pca")]])).code == 0
     assert [r["memory"]["limit_bytes"] for r in _registrations(run)] == [8 * 2**30] * 2
 
 
@@ -602,7 +603,7 @@ def _reported_run(cli, tmp_path, data, decision_fields, base, **plan_fields):
     assert cli("recon", "--run-dir", run, "--decision", decision(**decision_fields)).code == 0
     document = complete({
         "dataset": "d", "base_preprocessing": base,
-        "candidates": [{"id": "pca2", "stages": [_stage("pca", n_components=2)]}],
+        "candidates": [{"id": "pca2", "stages": [_stage("pca")]}],
         "evaluation": {"weights": {"trustworthiness": 0.25, "continuity": 0.25,
                                    "shepard_correlation": 0.5}},
         **plan_fields,

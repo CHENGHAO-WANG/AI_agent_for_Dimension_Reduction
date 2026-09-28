@@ -1,7 +1,7 @@
 import json
 from plans import complete, reconnoitre
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 
 
 def _prepared(cli, csv_dataset, tmp_path):
@@ -40,7 +40,10 @@ def test_stages_come_from_the_registered_plan(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path)
     result = cli("embed", "--run-dir", run, "--id", "a", "--in-process")
     assert result.code == 0
-    assert result.payload["output_shape"] == [60, 2]
+    # d is chosen by tuning inside the Attempt (day 15), and the record says which.
+    chosen = result.payload["tuning"]["chosen"]["d"]
+    assert result.payload["output_shape"] == [60, chosen]
+    assert [s["op"] for s in result.payload["stages"]][-1] == "pca"
 
 
 def test_every_attempt_is_recorded_with_its_outcome(cli, csv_dataset, tmp_path):

@@ -72,8 +72,14 @@ def run_candidate(
     seed: int = 0,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     python: str | None = None,
+    tuning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute one candidate in a subprocess, returning its outcome record either way."""
+    """Execute one candidate in a subprocess, returning its outcome record either way.
+
+    `tuning` carries what the worker needs to tune the candidate inside this Attempt:
+    how many of the stages are the Base preprocessing, the registered weighting and the
+    plan's `tuning` block. Without it the stages run as given.
+    """
     jobs = run.path / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     job_path = jobs / f"{candidate_id}.json"
@@ -84,6 +90,7 @@ def run_candidate(
             "run_dir": str(run.path),
             "stages": stages,
             "seed": seed,
+            "tuning": tuning,
         },
     )
 

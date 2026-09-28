@@ -20,7 +20,7 @@ def _registered_run(cli, csv_dataset, tmp_path):
     (run / "plan.json").write_text(json.dumps(complete({
         "dataset": "d",
         "candidates": [
-            {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "pca2", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     })), encoding="utf-8")
@@ -117,7 +117,7 @@ def test_a_ranking_from_before_the_latest_registration_is_stale(
     plan = {
         "dataset": "csv",
         "candidates": [
-            {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "pca2", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}},
     }
@@ -134,7 +134,7 @@ def test_a_ranking_from_before_the_latest_registration_is_stale(
 
     # The re-plan round: one added candidate, the weighting untouched.
     plan["candidates"].append(
-        {"id": "pca3", "stages": [{"op": "pca", "params": {"n_components": 3}}]}
+        {"id": "pca3", "stages": [{"op": "pca", "params": {"whiten": True}}]}
     )
     (run / "plan.json").write_text(json.dumps(complete(plan)))
     assert cli("validate-plan", "--run-dir", run).code == 0
@@ -200,7 +200,7 @@ def test_a_candidate_given_up_on_stops_offering_a_retry(cli, csv_dataset, tmp_pa
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}]).code == 0
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {}}]}]).code == 0
     cli("prepare-reference", "--run-dir", run)
 
     _mark(run, "a", "failed")
@@ -223,7 +223,7 @@ def test_a_run_where_everything_failed_is_not_sent_to_rank(cli, csv_dataset, tmp
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}]).code == 0
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {}}]}]).code == 0
     cli("prepare-reference", "--run-dir", run)
 
     _mark(run, "a", "failed")
@@ -247,7 +247,7 @@ def test_a_refused_re_registration_writes_nothing(cli, csv_dataset, tmp_path):
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    candidates = [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}]
+    candidates = [{"id": "a", "stages": [{"op": "pca", "params": {}}]}]
     assert _register(cli, run, candidates, budget="fast").code == 0
 
     # A sentinel rather than a copy of the real report: the refused plan differs only
@@ -273,8 +273,8 @@ def test_an_all_failed_run_does_not_offer_the_replan_round_forever(
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
-    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+    pca2 = [{"op": "pca", "params": {}}]
+    pca3 = [{"op": "pca", "params": {"whiten": True}}]
 
     assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
     cli("prepare-reference", "--run-dir", run)
@@ -306,9 +306,9 @@ def test_revising_a_failed_candidate_does_not_spend_the_replan_round(
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
 
-    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]}]).code == 0
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {}}]}]).code == 0
     _mark(run, "a", "failed")
-    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"n_components": 3}}]}]).code == 0
+    assert _register(cli, run, [{"id": "a", "stages": [{"op": "pca", "params": {"whiten": True}}]}]).code == 0
 
     assert cli("status", "--run-dir", run).payload["replan_round_spent"] is False
 
@@ -322,8 +322,8 @@ def test_adding_a_candidate_before_anything_ran_is_not_the_round(
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
-    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+    pca2 = [{"op": "pca", "params": {}}]
+    pca3 = [{"op": "pca", "params": {"whiten": True}}]
 
     assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
     assert _register(cli, run, [{"id": "a", "stages": pca2}, {"id": "b", "stages": pca3}]).code == 0
@@ -363,8 +363,8 @@ def test_replacing_a_failed_candidate_does_not_spend_the_replan_round(
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
-    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
+    pca2 = [{"op": "pca", "params": {}}]
+    pca3 = [{"op": "pca", "params": {"whiten": True}}]
 
     assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
     _mark(run, "a", "failed")
@@ -385,9 +385,9 @@ def test_extending_beyond_a_replacement_does_spend_the_round(cli, csv_dataset, t
         "--runs-root", runs, "--run-id", "r1")
     reconnoitre(cli, runs / "r1")
     run = runs / "r1"
-    pca2 = [{"op": "pca", "params": {"n_components": 2}}]
-    pca3 = [{"op": "pca", "params": {"n_components": 3}}]
-    pca4 = [{"op": "pca", "params": {"n_components": 4}}]
+    pca2 = [{"op": "pca", "params": {}}]
+    pca3 = [{"op": "pca", "params": {"whiten": True}}]
+    pca4 = [{"op": "pca", "params": {"whiten": False}}]
 
     assert _register(cli, run, [{"id": "a", "stages": pca2}]).code == 0
     _mark(run, "a", "failed")
@@ -416,7 +416,7 @@ def test_the_candidate_set_comes_from_the_log_not_the_registered_file(
 
     registered = json.loads((run / "plan.registered.json").read_text(encoding="utf-8"))
     registered["candidates"].append(
-        {"id": "ghost", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+        {"id": "ghost", "stages": [{"op": "pca", "params": {}}]}
     )
     (run / "plan.registered.json").write_text(json.dumps(registered), encoding="utf-8")
 

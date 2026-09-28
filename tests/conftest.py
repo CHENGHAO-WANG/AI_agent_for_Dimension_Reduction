@@ -65,7 +65,7 @@ def allow_in_process(monkeypatch):
     monkeypatch.setenv("DRTOOLS_ALLOW_IN_PROCESS", "1")
 
 
-PCA_STAGES = [{"op": "pca", "params": {"n_components": 2}}]
+PCA_STAGES = [{"op": "pca", "params": {}}]
 
 
 def plan_document(**overrides):

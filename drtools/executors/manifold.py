@@ -57,6 +57,12 @@ def mds(
         normalized_stress="auto",
     )
     embedding = model.fit_transform(dense)
+    if ctx.measure_criterion:
+        # One value per fit: MDS is not nested in d, so tuning fits it at each d.
+        ctx.criterion = {
+            "kind": "stress",
+            "value": 1.0 - kruskal_stress_1(dense, embedding),
+        }
 
     return embedding, {
         "variant": "metric" if metric else "non-metric (ordinal)",
@@ -103,6 +109,11 @@ def isomap(
     # A new row's geodesic distance to every fitted row runs through its nearest fitted
     # neighbours, so each chunk costs a chunk-by-fitted-rows matrix.
     ctx.project_with(lambda Z: model.transform(require_dense(Z, "isomap")), "transform")
+    if ctx.measure_criterion:
+        ctx.criterion = {
+            "kind": "residual_variance",
+            "curve": _isomap_fit_curve(model.dist_matrix_, embedding),
+        }
 
     return embedding, {
         "n_neighbors": int(n_neighbors),
@@ -186,6 +197,37 @@ def lle(
             "modified variant is the usual remedy."
         )
     return embedding, notes
+
+
+def kruskal_stress_1(dense: np.ndarray, embedding: np.ndarray) -> float:
+    """Kruskal's stress-1 against the input distances, which metric MDS fits directly.
+
+    sqrt(sum (delta - d)^2 / sum d^2), over pairs. Normalised, unlike the SMACOF
+    objective the executor reports, so it can be compared across d (section 3.7).
+    """
+    from scipy.spatial.distance import pdist
+
+    delta, fitted = pdist(dense), pdist(embedding)
+    denominator = float((fitted**2).sum())
+    return float(np.sqrt(((delta - fitted) ** 2).sum() / denominator)) if denominator else 1.0
+
+
+def _isomap_fit_curve(geodesic: np.ndarray, embedding: np.ndarray) -> list[float]:
+    """Q(d) = 1 - residual variance at every d up to the fit's (Tenenbaum et al.).
+
+    The residual variance is 1 - R^2 between the graph's geodesic distances and the
+    embedding's Euclidean distances. The squared distances grow one coordinate at a
+    time, so the whole curve costs one pass over the pairs per coordinate.
+    """
+    upper = np.triu_indices(geodesic.shape[0], k=1)
+    target = geodesic[upper]
+    squared = np.zeros_like(target)
+    curve: list[float] = []
+    for column in embedding.T:
+        squared += (column[upper[0]] - column[upper[1]]) ** 2
+        r = np.corrcoef(target, np.sqrt(squared))[0, 1]
+        curve.append(float(r * r) if np.isfinite(r) else 0.0)
+    return curve
 
 
 def _graph_components(X: np.ndarray, n_neighbors: int) -> tuple[int, np.ndarray]:
