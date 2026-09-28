@@ -14,7 +14,12 @@
 # Every property a check reads is declared in the entry: the class, whether the method
 # works through Euclidean geometry, whether it is nested in d, whether it needs a
 # connected graph, its emphasis, how it reaches new rows, and the named limits on d it
-# obeys. A method may also bring a suggestion rule or a check on its own parameters;
+# obeys, and how it is tuned: the one fidelity parameter tuning scales by a multiplier
+# (`param`), whether the value scaled is a suggestion or the executor's own rule
+# (`base`), when the parameter applies at all (`applies`), and what chooses its d
+# (`criterion`): one of the method's own criteria, the battery, or `fixed` for a
+# visualization method, which runs at d = 2. A method may also bring a suggestion rule
+# or a check on its own parameters;
 # tests/test_extension_point.py lists every place outside the executors that names a
 # method, and why a new method can be absent from each.
 
@@ -180,6 +185,9 @@ ops:
     stochastic: false
     euclidean: true
     nested_in_d: true
+    tuning:
+      param: null
+      criterion: explained_variance
     requires_connected_graph: false
     emphasis: global
     new_rows: transform
@@ -211,6 +219,11 @@ ops:
     stochastic: false
     euclidean: {when: {kernel: [rbf]}}
     nested_in_d: true
+    tuning:
+      param: gamma
+      base: rule
+      applies: {when: {kernel: [rbf, sigmoid, poly]}}
+      criterion: kernel_variance
     requires_connected_graph: false
     emphasis: null
     emphasis_reason: >
@@ -237,6 +250,15 @@ ops:
           on up to 1,000 sampled rows, which puts the width where the kernel varies;
           poly takes scikit-learn's 1/n_features; cosine has no width. The stage record's
           gamma_source says which rule ran.
+      width_multiplier:
+        type: float
+        default: 1.0
+        min: 0.0
+        describes: >
+          set by tuning, never by a plan: the multiplier applied to the width, whether
+          it comes from the rule or from an explicit value, so that the multiplier
+          chosen on the tuning rows is applied to the width recomputed on the rows the
+          refit sees.
     fails_when:
       - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
 
@@ -258,6 +280,9 @@ ops:
     # Not measured. Declared false, which costs a refit at every d and never overstates
     # fidelity; a claim of true would have to pass tests/test_nested_in_d.py.
     nested_in_d: false
+    tuning:
+      param: null
+      criterion: battery
     requires_connected_graph: false
     emphasis: global
     new_rows: transform
@@ -292,6 +317,10 @@ ops:
     stochastic: true
     euclidean: true
     nested_in_d: true
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: eigengap
     requires_connected_graph: true
     emphasis: local
     new_rows: nystrom
@@ -324,6 +353,13 @@ ops:
     stochastic: false
     euclidean: true
     nested_in_d: true
+    tuning:
+      param: epsilon
+      base: rule
+      criterion: diffusion_distance
+      # Swept on every fit at no cost: the coordinates are psi * lambda**t from one
+      # decomposition, so each t in the plan's t_grid is a rescaling, not a refit.
+      swept: t
     requires_connected_graph: false
     emphasis: global
     new_rows: nystrom
@@ -352,6 +388,15 @@ ops:
         default: 1
         min: 1
         describes: diffusion time; larger t emphasises coarser structure
+      width_multiplier:
+        type: float
+        default: 1.0
+        min: 0.0
+        describes: >
+          set by tuning, never by a plan: the multiplier applied to the width, whether
+          it comes from the rule or from an explicit value, so that the multiplier
+          chosen on the tuning rows is applied to the width recomputed on the rows the
+          refit sees.
     fails_when:
       - n_samples above roughly 10000, where the dense kernel matrix exhausts memory
 
@@ -379,6 +424,9 @@ ops:
     stochastic: true
     euclidean: true
     nested_in_d: false
+    tuning:
+      param: null
+      criterion: stress
     requires_connected_graph: false
     emphasis: global
     new_rows: none
@@ -420,6 +468,10 @@ ops:
     stochastic: false
     euclidean: true
     nested_in_d: true
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: residual_variance
     requires_connected_graph: true
     emphasis: global
     new_rows: transform
@@ -454,6 +506,10 @@ ops:
     stochastic: true
     euclidean: true
     nested_in_d: {when: {method: [standard]}}
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: battery
     requires_connected_graph: true
     emphasis: local
     new_rows: transform
@@ -510,6 +566,10 @@ ops:
     stochastic: true
     euclidean: true
     nested_in_d: false
+    tuning:
+      param: perplexity
+      base: suggestion
+      criterion: fixed
     requires_connected_graph: false
     emphasis: local
     new_rows: transform
@@ -559,6 +619,10 @@ ops:
     # A smaller fit agrees with a larger one only through the spectral initialiser,
     # which is itself nested; under random initialisation it does not (section 3.5).
     nested_in_d: false
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: fixed
     requires_connected_graph: false
     emphasis: local
     new_rows: transform

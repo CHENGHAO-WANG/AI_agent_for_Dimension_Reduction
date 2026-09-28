@@ -181,8 +181,8 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
     plan = {
         "dataset": "d",
         "candidates": [
-            {"id": "a", "stages": [{"op": "pca", "params": {"n_components": 2}}]},
-            {"id": "b", "stages": [{"op": "pca", "params": {"n_components": 3}}]},
+            {"id": "a", "stages": [{"op": "pca", "params": {}}]},
+            {"id": "b", "stages": [{"op": "pca", "params": {"whiten": True}}]},
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }

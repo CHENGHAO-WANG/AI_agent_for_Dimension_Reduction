@@ -44,6 +44,23 @@ CONDITIONAL_PROPERTIES = ("euclidean", "nested_in_d", "requires_connected_graph"
 EMPHASES = ("local", "global", "balanced")
 NEW_ROWS = ("transform", "nystrom", "none")
 
+#: What chooses a method's d (sections 3.5 and 3.7). The first six are methods' own
+#: criteria; `battery` reads the weighted battery score; `fixed` is a visualization
+#: method's d = 2.
+CRITERIA = (
+    "explained_variance",
+    "kernel_variance",
+    "residual_variance",
+    "stress",
+    "diffusion_distance",
+    "eigengap",
+    "battery",
+    "fixed",
+)
+#: What a tuned parameter's multiplier scales: the profile-derived suggestion, or the
+#: executor's own rule for a width left unset.
+TUNING_BASES = ("suggestion", "rule")
+
 # A property that holds always, never, or only while each named parameter takes one of
 # the listed values.
 Condition = Union[bool, dict[str, tuple[Any, ...]]]
@@ -83,6 +100,18 @@ class ParamSpec:
 
 
 @dataclass(frozen=True)
+class TuningDecl:
+    """How a method is tuned: the parameter scaled, what it scales, what picks d."""
+
+    param: str | None
+    base: str | None
+    criterion: str
+    applies: Condition = True
+    #: A parameter swept over the plan's t_grid on every fit rather than refitted.
+    swept: str | None = None
+
+
+@dataclass(frozen=True)
 class OpSpec:
     name: str
     kind: str
@@ -91,6 +120,15 @@ class OpSpec:
     raw: dict[str, Any] = field(default_factory=dict)
     conditions: dict[str, Condition] = field(default_factory=dict)
     d_limits: tuple[str, ...] = ()
+    tuning: TuningDecl | None = None
+
+    def tuned_param(self, params: dict[str, Any] | None = None) -> str | None:
+        """The parameter tuning scales for a stage running with `params`, if any."""
+        if self.tuning is None or self.tuning.param is None:
+            return None
+        if not _condition_holds(self.tuning.applies, params or {}, self.params):
+            return None
+        return self.tuning.param
 
     @property
     def is_reduction(self) -> bool:
@@ -416,6 +454,57 @@ def _parse_op(name: str, raw: Any) -> OpSpec:
         raw=raw,
         conditions=conditions,
         d_limits=d_limits,
+        tuning=_parse_tuning(name, kind, raw.get("tuning"), params),
+    )
+
+
+def _parse_tuning(
+    name: str, kind: str, raw: Any, params: dict[str, ParamSpec]
+) -> TuningDecl | None:
+    """Validate a method's tuning declaration. Every method must carry one."""
+    if kind == "preprocessing":
+        if raw is not None:
+            raise RegistryError(f"{name}: preprocessing is not tuned; remove `tuning`")
+        return None
+    if not isinstance(raw, dict):
+        raise RegistryError(
+            f"{name}: a {kind} must declare `tuning` -- the parameter it scales (or "
+            "null), what that parameter's multiplier scales, and what chooses its d"
+        )
+    criterion = raw.get("criterion")
+    if criterion not in CRITERIA:
+        raise RegistryError(
+            f"{name}: tuning.criterion must be one of {', '.join(CRITERIA)}, "
+            f"got {criterion!r}"
+        )
+    if (criterion == "fixed") != (kind == "visualization"):
+        raise RegistryError(
+            f"{name}: tuning.criterion is `fixed` exactly for a visualization method, "
+            "which runs at d = 2"
+        )
+    swept = raw.get("swept")
+    if swept is not None and (swept not in params or params[swept].type != "int"):
+        raise RegistryError(f"{name}: tuning.swept must name one of its integer parameters")
+    param = raw.get("param")
+    base = raw.get("base")
+    if param is None:
+        if base is not None or "applies" in raw:
+            raise RegistryError(f"{name}: tuning with no param takes no base or applies")
+        return TuningDecl(param=None, base=None, criterion=criterion)
+    if param not in params:
+        raise RegistryError(f"{name}: tuning.param {param!r} is not one of its parameters")
+    if base not in TUNING_BASES:
+        raise RegistryError(
+            f"{name}: tuning.base must be one of {', '.join(TUNING_BASES)}, got {base!r}"
+        )
+    if base == "rule" and "width_multiplier" not in params:
+        raise RegistryError(
+            f"{name}: a width tuned from the executor's rule needs a width_multiplier "
+            "parameter, since the rule is computed inside the executor"
+        )
+    applies = _parse_condition(raw.get("applies", True), f"{name}.tuning.applies", params)
+    return TuningDecl(
+        param=param, base=base, criterion=criterion, applies=applies, swept=swept
     )
 
 

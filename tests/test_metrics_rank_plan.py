@@ -39,7 +39,7 @@ def make_plan(**overrides):
     plan = {
         "dataset": "blobs",
         "candidates": [
-            {"id": "pca2", "stages": [{"op": "pca", "params": {"n_components": 2}}]}
+            {"id": "pca2", "stages": [{"op": "pca", "params": {}}]}
         ],
         "evaluation": {"weights": dict(BASE_WEIGHTS), "justification": "a reason"},
     }
@@ -92,7 +92,7 @@ def test_label_metrics_report_the_reference_value_as_context(blobs) -> None:
     from drtools.pipeline import run_pipeline
 
     X, labels, _ = blobs
-    embedding = run_pipeline(X, labels, [{"op": "pca", "params": {"n_components": 2}}]).embedding
+    embedding = run_pipeline(X, labels, [{"op": "pca", "params": {}}]).embedding
 
     metrics = evaluate_embedding(X, embedding, labels, k=K)
 
@@ -332,9 +332,9 @@ def test_pca_on_raw_counts_is_rejected() -> None:
 
 
 def test_a_pca_first_stage_does_not_carry_raw_counts_past_the_check() -> None:
-    """pca(50) -> tsne passed before day 11: pca was unchecked and cleared the flag."""
+    """pca -> tsne passed before day 11: pca was unchecked and cleared the flag."""
     findings = _raw_count_findings(
-        [{"id": "c", "stages": [{"op": "pca", "params": {"n_components": 50}},
+        [{"id": "c", "stages": [{"op": "pca", "params": {}},
                                 {"op": "tsne", "params": {"perplexity": 30}}]}]
     )
     assert [f["op"] for f in findings] == ["pca"]

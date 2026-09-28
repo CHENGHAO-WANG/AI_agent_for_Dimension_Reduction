@@ -11,7 +11,7 @@ def _plan(base, candidates):
     }
 
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 STANDARDISE = [{"op": "standardise", "params": {}}]
 
 

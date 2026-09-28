@@ -53,7 +53,7 @@ def split(result, n_rows: int) -> tuple[np.ndarray, np.ndarray]:
 
 def test_projected_rows_are_the_fitted_pca_applied_to_them(roll) -> None:
     X, _ = roll
-    result = run_pipeline(X, None, [SUBSAMPLE, {"op": "pca", "params": {"n_components": 2}}])
+    result = run_pipeline(X, None, [SUBSAMPLE, {"op": "pca", "params": {}}])
     fitted, rest = split(result, len(X))
 
     model = PCA(n_components=2, random_state=0).fit(X[fitted])
@@ -194,7 +194,7 @@ def test_every_preprocessing_stage_can_follow_a_subsample() -> None:
         if spec.is_reduction or spec.is_visualization or name == "subsample":
             continue
         stages = [{"op": "subsample", "params": {"n_samples": 100}}, {"op": name},
-                  {"op": "pca", "params": {"n_components": 2}}]
+                  {"op": "pca", "params": {}}]
         result = run_pipeline(X, None, stages)
         assert result.embedding.shape == (300, 2), name
         assert result.stages[1].projection is not None, name
@@ -204,7 +204,7 @@ def test_mds_cannot_follow_a_subsample(roll) -> None:
     """Registration refuses this first; the engine refuses it too, and says what to do."""
     X, _ = roll
     stages = [{"op": "subsample", "params": {"n_samples": 100}},
-              {"op": "mds", "params": {"n_components": 2}}]
+              {"op": "mds", "params": {}}]
     with pytest.raises(ExecutionError) as error:
         run_pipeline(X[:300], None, stages)
     assert "no way to place rows" in str(error.value)
@@ -216,7 +216,7 @@ def test_a_candidate_subsamples_once(roll) -> None:
     X, _ = roll
     stages = [{"op": "subsample", "params": {"n_samples": 400}},
               {"op": "subsample", "params": {"n_samples": 200}},
-              {"op": "pca", "params": {"n_components": 2}}]
+              {"op": "pca", "params": {}}]
     with pytest.raises(PipelineError, match="subsamples twice"):
         run_pipeline(X[:600], None, stages)
 
@@ -224,7 +224,7 @@ def test_a_candidate_subsamples_once(roll) -> None:
 def test_a_subsample_that_keeps_every_row_fits_every_row(roll) -> None:
     X, _ = roll
     stages = [{"op": "subsample", "params": {"n_samples": 5000}},
-              {"op": "pca", "params": {"n_components": 2}}]
+              {"op": "pca", "params": {}}]
     result = run_pipeline(X, None, stages)
     assert result.as_dict()["rows"]["fitted_on"] == "every row"
     assert result.coverage.fitted_index is None
@@ -252,7 +252,7 @@ def test_chunked_projection_matches_projecting_at_once(roll, op, monkeypatch) ->
 def test_the_record_says_which_rows_were_fitted_and_which_projected(roll) -> None:
     X, _ = roll
     stages = [{"op": "standardise"}, SUBSAMPLE,
-              {"op": "pca", "params": {"n_components": 2}}]
+              {"op": "pca", "params": {}}]
     record = run_pipeline(X, None, stages).as_dict()
 
     assert record["rows"] == {
@@ -278,18 +278,18 @@ def test_the_memory_estimate_holds_the_matrix_the_subsample_was_taken_from() -> 
                          "storage": "dense"}, "values": {}}
     stages = [{"op": "drop_constant"}, {"op": "standardise"},
               {"op": "subsample", "params": {"n_samples": 5_000}},
-              {"op": "isomap", "params": {"n_components": 2}}]
+              {"op": "isomap", "params": {}}]
     _, peaks = _stage_peaks(stages, profile, load_registry())
 
     standardised = 100_000 * 2_000 * 8
     isomap_input = 5_000 * 2_000 * 8
-    isomap_output = 5_000 * 2 * 8
+    isomap_output = 5_000 * 100 * 8  # the largest d tuning could choose (day 15)
     assert dict(peaks)["isomap"] == standardised + isomap_input + isomap_output
 
 
 def test_labels_come_back_for_every_row() -> None:
     X, labels, _ = load("blobs", n_samples=600, n_clusters=3)
     stages = [{"op": "subsample", "params": {"n_samples": 150}},
-              {"op": "pca", "params": {"n_components": 2}}]
+              {"op": "pca", "params": {}}]
     result = run_pipeline(X, labels, stages)
     np.testing.assert_array_equal(result.labels, labels)

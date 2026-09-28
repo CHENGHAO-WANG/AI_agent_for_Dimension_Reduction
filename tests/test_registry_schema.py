@@ -28,10 +28,19 @@ def _registry(tmp_path, body: str, name: str = "registry.yaml"):
     return load_registry(path)
 
 
-def _toy(extra: str = "", kind: str = "reduction") -> str:
+#: The least a method may declare about tuning, by class (day 15).
+TOY_TUNING = {
+    "reduction": "tuning: {param: null, criterion: battery}\n",
+    "visualization": "tuning: {param: null, criterion: fixed}\n",
+}
+
+
+def _toy(extra: str = "", kind: str = "reduction", tuning: str | None = None) -> str:
+    tuning = TOY_TUNING.get(kind, "") if tuning is None else tuning
     return (
         f"toy:\n  kind: {kind}\n  summary: a toy method\n"
         + textwrap.indent(textwrap.dedent(extra), "  ")
+        + textwrap.indent(tuning, "  ")
         + textwrap.indent(textwrap.dedent(TOY_PARAMS), "  ")
     )
 
@@ -115,7 +124,8 @@ def test_an_unknown_limit_on_d_is_refused_and_a_known_one_is_described(tmp_path)
 
 def _toy_with_gamma(rule: str) -> str:
     return (
-        "toy:\n  kind: reduction\n  summary: a toy method\n  params:\n"
+        "toy:\n  kind: reduction\n  summary: a toy method\n"
+        "  tuning: {param: null, criterion: battery}\n  params:\n"
         "    n_components: {type: int, default: 2, min: 1}\n"
         "    kernel: {type: str, default: rbf, choices: [rbf, poly, cosine]}\n"
         "    gamma:\n      type: float\n      default: null\n"
@@ -165,3 +175,60 @@ def test_a_null_default_without_a_rule_stops_the_registry_loading(tmp_path) -> N
     )
     with pytest.raises(RegistryError, match="default_rule"):
         _registry(tmp_path, body)
+
+
+# ------------------------------------------------------------------ tuning (day 15)
+
+
+def test_a_method_must_declare_how_it_is_tuned(tmp_path) -> None:
+    with pytest.raises(RegistryError, match="must declare `tuning`"):
+        _registry(tmp_path, _toy(tuning=""))
+
+
+def test_the_tuning_criterion_is_one_the_toolbox_implements(tmp_path) -> None:
+    with pytest.raises(RegistryError, match="tuning.criterion"):
+        _registry(tmp_path, _toy(tuning="tuning: {param: null, criterion: aic}\n"))
+
+
+def test_fixed_d_belongs_to_visualization_methods_only(tmp_path) -> None:
+    with pytest.raises(RegistryError, match="fixed"):
+        _registry(tmp_path, _toy(tuning="tuning: {param: null, criterion: fixed}\n"))
+    with pytest.raises(RegistryError, match="fixed"):
+        _registry(
+            tmp_path,
+            _toy(kind="visualization", tuning="tuning: {param: null, criterion: battery}\n"),
+            "b.yaml",
+        )
+
+
+def test_a_tuned_parameter_is_one_of_the_method_s_own(tmp_path) -> None:
+    with pytest.raises(RegistryError, match="not one of its parameters"):
+        _registry(tmp_path, _toy(
+            tuning="tuning: {param: perplexity, base: suggestion, criterion: battery}\n"
+        ))
+
+
+def test_a_width_tuned_from_the_rule_needs_a_width_multiplier(tmp_path) -> None:
+    body = _toy_with_gamma("default_rule: median heuristic\n").replace(
+        "tuning: {param: null, criterion: battery}",
+        "tuning: {param: gamma, base: rule, criterion: battery}",
+    )
+    with pytest.raises(RegistryError, match="width_multiplier"):
+        _registry(tmp_path, body)
+
+
+def test_a_tuned_parameter_can_apply_under_a_condition(tmp_path) -> None:
+    spec = _registry(tmp_path, _toy(tuning=(
+        "tuning: {param: kernel, base: suggestion, applies: {when: {kernel: [rbf]}},"
+        " criterion: battery}\n"
+    )))["toy"]
+    assert spec.tuned_param({"kernel": "rbf"}) == "kernel"
+    assert spec.tuned_param({"kernel": "poly"}) is None
+
+
+def test_every_real_method_declares_its_tuning() -> None:
+    registry = load_registry()
+    for name, spec in registry.ops.items():
+        if spec.is_reduction or spec.is_visualization:
+            assert spec.tuning is not None, name
+            assert (spec.tuning.criterion == "fixed") == spec.is_visualization, name

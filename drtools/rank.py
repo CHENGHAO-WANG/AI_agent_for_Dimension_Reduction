@@ -216,3 +216,25 @@ def _notes(
         )
 
     return notes
+
+
+def weighted_score(values: dict[str, float | None], weights: dict[str, float]) -> float | None:
+    """One embedding's score under a weighting, as `rank_candidates` computes it.
+
+    The weights are renormalised over the metrics that could be computed, and a
+    metric that could not is left out. Tuning scores its cells with this (section
+    3.5); every cell of one candidate is scored on the same rows, so the same metrics
+    are available to all of them.
+    """
+    usable = {
+        name: weight
+        for name, weight in weights.items()
+        if weight > 0 and METRIC_SPECS[name].normalise(values.get(name)) is not None
+    }
+    total = sum(usable.values())
+    if total <= 0:
+        return None
+    return sum(
+        weight / total * METRIC_SPECS[name].normalise(values.get(name))
+        for name, weight in usable.items()
+    )

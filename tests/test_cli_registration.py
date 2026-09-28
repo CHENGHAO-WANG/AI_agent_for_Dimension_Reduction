@@ -1,7 +1,7 @@
 import json
 from plans import complete, reconnoitre
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 # perplexity is kept well below n/3 = 20 for the 60-row dataset these tests profile;
 # the default of 30 trips validate-plan's perplexity_too_large check and the plan
 # would never reach registration, which is incidental to what this file tests.

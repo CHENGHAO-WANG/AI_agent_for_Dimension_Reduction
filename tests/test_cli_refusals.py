@@ -9,7 +9,7 @@ to be one of those.
 import json
 from plans import complete, reconnoitre
 
-PCA = [{"op": "pca", "params": {"n_components": 2}}]
+PCA = [{"op": "pca", "params": {}}]
 
 
 def _plan(**overrides):

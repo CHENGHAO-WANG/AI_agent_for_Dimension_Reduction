@@ -283,8 +283,16 @@ def run_pipeline(
     seed: int = 0,
     registry: Registry | None = None,
     require_terminal_reduction: bool = True,
+    measure_criterion: bool = False,
+    densify: bool = True,
 ) -> PipelineResult:
-    """Apply `stages` in order. Raises `ExecutionError` with an actionable message."""
+    """Apply `stages` in order. Raises `ExecutionError` with an actionable message.
+
+    `measure_criterion` is set by tuning: a method with its own criterion for d then
+    records it in the result's context. `densify=False` returns the last stage's output
+    in the storage it came in, which the Base preprocessing needs so that a sparse
+    Reference reaches the candidate's stages sparse.
+    """
     registry = registry or load_registry()
     stages = validate_stages(
         stages, registry, require_terminal_reduction=require_terminal_reduction
@@ -295,6 +303,7 @@ def run_pipeline(
         labels=None if all_labels is None else all_labels.copy(),
         seed=seed,
         n_samples_original=int(X.shape[0]),
+        measure_criterion=measure_criterion,
     )
     current: Matrix = X
     records: list[StageRecord] = []
@@ -366,10 +375,15 @@ def run_pipeline(
             )
         )
 
+    coverage = Coverage(n_rows=int(X.shape[0]))
+    if not densify and split is None:
+        return PipelineResult(
+            embedding=current, labels=all_labels, stages=records, context=context,
+            coverage=coverage,
+        )
     fitted = np.asarray(
         current.todense() if sp.issparse(current) else current, dtype=np.float64
     )
-    coverage = Coverage(n_rows=int(X.shape[0]))
     embedding = (
         fitted
         if split is None

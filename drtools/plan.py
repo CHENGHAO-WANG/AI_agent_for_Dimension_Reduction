@@ -34,6 +34,15 @@ from drtools.metrics import METRIC_SPECS
 from drtools.rank import RankingError, _check_weights, matching_default
 from drtools.registry import Registry, load_registry
 from drtools.runs import MISSING, resolve_evidence, unresolved_message
+from drtools.tuning import (
+    D_CAP,
+    DEFAULT_D_GRID,
+    DEFAULT_FALLBACK_SHARE,
+    DEFAULT_FLATNESS,
+    DEFAULT_MAX_CYCLES,
+    DEFAULT_MULTIPLIERS,
+    DEFAULT_T_GRID,
+)
 
 Severity = Literal["error", "warning"]
 
@@ -102,6 +111,32 @@ class EvaluationSpec(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class TuningSpec(BaseModel):
+    """How every candidate is tuned (sections 3.5 and 3.7, settled on day 15).
+
+    One block for the whole plan, frozen at registration. The defaults are the rule;
+    anything else is a departure, argued from evidence as a weighting's is. Which
+    criterion chooses each candidate's d follows from its method, so it is not here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    d_grid: list[int] = Field(default_factory=lambda: list(DEFAULT_D_GRID))
+    multipliers: list[float] = Field(default_factory=lambda: list(DEFAULT_MULTIPLIERS))
+    t_grid: list[int] = Field(default_factory=lambda: list(DEFAULT_T_GRID))
+    #: Absolute: a curve rising at most this much above its value at the smallest d.
+    flatness: float = DEFAULT_FLATNESS
+    #: Relative: the fallback's smallest d reaching this share of the best.
+    fallback_share: float = DEFAULT_FALLBACK_SHARE
+    max_cycles: int = DEFAULT_MAX_CYCLES
+    departure: DepartureSpec | None = None
+
+    def is_default(self) -> bool:
+        return self.model_dump(exclude={"departure"}) == TuningSpec().model_dump(
+            exclude={"departure"}
+        )
+
+
 class Plan(BaseModel):
     """What will be run, what was rejected, and how the results will be judged."""
 
@@ -118,6 +153,7 @@ class Plan(BaseModel):
     candidates: list[CandidateSpec]
     rejected: list[RejectionSpec] = Field(default_factory=list)
     evaluation: EvaluationSpec
+    tuning: TuningSpec = Field(default_factory=TuningSpec)
 
     def stages_for(self, candidate: CandidateSpec) -> list[dict[str, Any]]:
         """The full stage list a candidate runs: shared base, then its own."""
@@ -168,8 +204,15 @@ class PlanState:
         elif op == "l2_normalise":
             self.normalised_per_sample = True
 
-        if spec.is_reduction or spec.is_visualization:
-            self.n_features = int(params.get("n_components") or 2)
+        if spec.is_visualization:
+            self.n_features = 2
+            self.is_raw_counts = False
+        elif spec.is_reduction:
+            # Tuning chooses d inside the Attempt, so the estimate takes the largest it
+            # could choose: section 3.7's cap, below the features the stage receives.
+            # The resolved parameters always hold the registry's default of 2, and a plan
+            # may not give another, so the value is not read.
+            self.n_features = max(1, min(D_CAP, self.n_features - 1))
             self.is_raw_counts = False
         if not spec.preserves_sparsity:
             self.is_sparse = False
@@ -229,8 +272,10 @@ def validate_plan(
     decision = recorded_decision(recon)
     weighting_findings, weighting = _check_weighting(plan, profile)
     base_findings, base = _check_base(plan, decision)
+    tuning_findings, tuning = _check_tuning(plan, registry)
     findings: list[Finding] = []
     findings += _check_structure(plan, registry)
+    findings += tuning_findings
     findings += base_findings
     findings += weighting_findings
     findings += _check_rejections(plan)
@@ -255,6 +300,7 @@ def validate_plan(
         "n_candidates": len(plan.candidates),
         "weighting": weighting,
         "base": base,
+        "tuning": tuning,
         "memory": {
             "limit_bytes": memory_limit_bytes,
             "peak_bytes": {cid: int(value) for cid, value in peaks.items()},
@@ -448,6 +494,142 @@ def _check_base(
         )
     )
     return findings, "departure"
+
+
+def tuned_by_rule(op: str, spec: Any, params: dict[str, Any]) -> set[str]:
+    """The parameters tuning sets outright on a method's stage, which a plan may not.
+
+    `n_components` on a reduction, `width_multiplier`, and any parameter the registry
+    says tuning sweeps -- Diffusion Maps' `t`. A visualization method's `n_components`
+    is 2 by rule, not by tuning, so it is not among them.
+    """
+    names = {"width_multiplier"} & set(spec.params)
+    if spec.is_reduction:
+        names.add("n_components")
+    if spec.tuning is not None and spec.tuning.swept:
+        names.add(spec.tuning.swept)
+    return names
+
+
+def _check_tuning(plan: Plan, registry: Registry) -> tuple[list[Finding], str]:
+    """The tuning block is usable and argued, and nothing tuning chooses is set by hand.
+
+    Returns the findings and whether the block is the `default` or a `departure`, which
+    the registration record keeps. Three things a stage may not set (day 15): a
+    reduction's `n_components`, which tuning chooses by the method's criterion; a PCA
+    pre-step's `n_components`, which PCA's own criterion chooses as it chooses a PCA's
+    d; and `width_multiplier`, which is how tuning scales a width.
+    """
+    findings: list[Finding] = []
+    block = plan.tuning
+
+    def problem(message: str, fix: str) -> None:
+        findings.append(
+            Finding(code="invalid_tuning", severity="error", message=message, fix=fix)
+        )
+
+    if not block.d_grid or block.d_grid != sorted(set(block.d_grid)) or block.d_grid[0] < 1:
+        problem("tuning.d_grid must be a strictly increasing list of dimensions from 1",
+                "list the grid of d in increasing order, without repeats")
+    if (not block.multipliers or any(m <= 0 for m in block.multipliers)
+            or len(set(block.multipliers)) != len(block.multipliers)):
+        problem("tuning.multipliers must be distinct positive numbers",
+                "list the multipliers applied to each suggestion, such as [0.5, 1, 2]")
+    if not block.t_grid or any(t < 1 for t in block.t_grid):
+        problem("tuning.t_grid must be diffusion times of 1 or more",
+                "list the diffusion times swept, such as [1, 2, 4]")
+    if not 0 <= block.flatness < 1:
+        problem("tuning.flatness is an absolute difference on a 0-1 curve, so it lies in "
+                "[0, 1)", "set flatness between 0 and 1")
+    if not 0 < block.fallback_share <= 1:
+        problem("tuning.fallback_share is a share of the best value, so it lies in (0, 1]",
+                "set fallback_share between 0 and 1")
+    if block.max_cycles < 1:
+        problem("tuning.max_cycles must be at least 1", "allow one cycle or more")
+
+    state = "default"
+    if not block.is_default():
+        state = "departure"
+        departure = block.departure
+        if departure is None or not departure.reason.strip() or not departure.evidence:
+            findings.append(
+                Finding(
+                    code="unexplained_tuning_departure",
+                    severity="error",
+                    message="the tuning block differs from the defaults -- the d grid "
+                    f"{list(DEFAULT_D_GRID)}, multipliers {list(DEFAULT_MULTIPLIERS)}, "
+                    f"t in {list(DEFAULT_T_GRID)}, flatness {DEFAULT_FLATNESS}, fallback "
+                    f"share {DEFAULT_FALLBACK_SHARE} and {DEFAULT_MAX_CYCLES} cycles -- "
+                    "without a departure. A different grid is allowed, argued from the "
+                    "data, and has to show as one.",
+                    fix="restore the defaults, or give tuning.departure a reason and the "
+                    "evidence keys it rests on",
+                )
+            )
+
+    for candidate in plan.candidates:
+        for position, stage in enumerate(candidate.stages):
+            if stage.op not in registry:
+                continue
+            spec = registry[stage.op]
+            last = position == len(candidate.stages) - 1
+            for name in sorted(tuned_by_rule(stage.op, spec, {}) - {"n_components"}):
+                if name not in stage.params:
+                    continue
+                what = (
+                    "how tuning scales the width"
+                    if name == "width_multiplier"
+                    else f"swept by tuning over the plan's t_grid {plan.tuning.t_grid}"
+                )
+                fix = (
+                    f"remove width_multiplier; to move the width's centre, set "
+                    f"{spec.tuning.param} itself with an override reason"
+                    if name == "width_multiplier"
+                    else "remove t; to sweep other diffusion times, change tuning.t_grid "
+                    "with a departure"
+                )
+                findings.append(
+                    Finding(
+                        code="set_by_tuning",
+                        severity="error",
+                        candidate=candidate.id,
+                        op=stage.op,
+                        message=f"{stage.op}.{name} is {what}; a plan never sets it.",
+                        fix=fix,
+                    )
+                )
+            if "n_components" not in stage.params or not spec.is_reduction:
+                continue
+            if last:
+                findings.append(
+                    Finding(
+                        code="d_is_tuned",
+                        severity="error",
+                        candidate=candidate.id,
+                        op=stage.op,
+                        message=f"{stage.op}.n_components is set to "
+                        f"{stage.params['n_components']}, but a reduction's d is chosen "
+                        f"by tuning, by {stage.op}'s criterion "
+                        f"({spec.tuning.criterion}), from the grid the plan declares. A "
+                        "d set by hand skips that rule and the comparison of d across "
+                        "candidates, while the record would still read as tuned.",
+                        fix="remove n_components from this stage",
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        code="k_is_chosen",
+                        severity="error",
+                        candidate=candidate.id,
+                        op=stage.op,
+                        message=f"the {stage.op} before the method sets n_components to "
+                        f"{stage.params['n_components']}, but a PCA pre-step's output "
+                        "dimension is chosen by PCA's own criterion, as a PCA's d is.",
+                        fix="remove n_components from this stage",
+                    )
+                )
+    return findings, state
 
 
 def is_linear_baseline(candidate: CandidateSpec) -> bool:
@@ -665,6 +847,8 @@ def _check_evidence(plan: Plan, artifacts: dict[str, Any]) -> list[Finding]:
         places.append((f"candidate {candidate.id}", candidate.id, None, candidate.evidence))
     if plan.base_departure is not None:
         places.append(("the base departure", None, None, plan.base_departure.evidence))
+    if plan.tuning.departure is not None:
+        places.append(("the tuning departure", None, None, plan.tuning.departure.evidence))
     for where, candidate_id, stages in [
         ("base preprocessing", None, plan.base_preprocessing),
         *[(f"candidate {c.id}", c.id, c.stages) for c in plan.candidates],
@@ -766,8 +950,23 @@ def _check_provenance(
                 if not (terminal and entry.get("applies_to") == "intermediate")
             }
             params: dict[str, dict[str, Any]] = {}
+            chosen_by_tuning = (
+                set()
+                if in_base or not (spec.is_reduction or spec.is_visualization)
+                else tuned_by_rule(stage.op, spec, resolved)
+            )
+            tuned_param = None if in_base else spec.tuned_param(resolved)
             for name, param in spec.params.items():
                 given = name in stage.params
+                if name in chosen_by_tuning:
+                    # Chosen inside the Attempt; registration refuses a value given.
+                    params[name] = {"state": "tuned"}
+                    continue
+                if name == tuned_param and not given:
+                    # Unset, the multiplier grid is centred on the suggestion or the
+                    # rule, so leaving it out follows the data rather than a default.
+                    params[name] = {"state": "tuned", "centre": spec.tuning.base}
+                    continue
                 if name not in persisted:
                     state = "specified" if given else "registry_default"
                     params[name] = {"state": state}
@@ -776,7 +975,10 @@ def _check_provenance(
                 if _same_value(param, resolved[name], suggested):
                     # Left unset, a value equal to the suggestion follows it by default.
                     state = "suggested" if given else "registry_default"
-                    params[name] = {"state": state}
+                    if name == tuned_param:
+                        params[name] = {"state": "tuned", "centre": "suggestion"}
+                    else:
+                        params[name] = {"state": state}
                     continue
                 # Different from the suggestion, whether given or left at a default that
                 # differs: leaving a parameter out is no way around giving the reason.
@@ -806,6 +1008,8 @@ def _check_provenance(
                             "..., \"evidence\": [...]}}, or set the suggested value",
                         )
                     )
+                if name == tuned_param:
+                    entry["centre"] = "override"
                 params[name] = entry
             stages_out.append({"op": stage.op, "params": params})
 

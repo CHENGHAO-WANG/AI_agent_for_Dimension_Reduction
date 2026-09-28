@@ -67,7 +67,7 @@ def test_a_successful_candidate_records_ok_and_writes_its_embedding(
     run = run_with_data("blobs", n_samples=200, n_features=8)
 
     outcome = run_candidate(
-        run, "pca2", [{"op": "pca", "params": {"n_components": 2}}], timeout_s=120
+        run, "pca2", [{"op": "pca", "params": {}}], timeout_s=120
     )
 
     assert outcome["status"] == "ok"
