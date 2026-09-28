@@ -26,6 +26,17 @@ picture. Each Run has exactly one, and it decides which Ops may be Candidates an
 Candidates are ranked.
 _Avoid_: mode, goal, task, objective
 
+**Focus**:
+Which structure a Run cares about most: local, the neighbourhoods; global, the distances;
+or balanced. It decides which default Pre-registered weighting the Plan is held to.
+_Avoid_: emphasis, which is a method's property, not a Run's; priority
+
+**Checkpoint**:
+The point after Reconnaissance where the user is asked at most three questions -- the
+feature types when the evidence is unclear, the Purpose and the Focus -- and the answers,
+or their defaults, are recorded. Frozen once a Plan is registered.
+_Avoid_: interview, intake
+
 **Plan**:
 The declaration of what a Run will do — its Candidates, its Rejections, and its
 Pre-registered weighting — fixed before any Embedding exists.
@@ -246,6 +257,16 @@ _Avoid_: metric suite, scorecard, criteria
 The relative importance the Plan assigns to each metric in the Battery, declared before
 any Embedding is computed.
 _Avoid_: weights, scoring config, priorities
+
+**Recommendation**:
+In a Visualization run, the agent's judgment, made after the results, of which Candidates
+suit the Focus, citing each metric on its own. A set, with no order and no Winner.
+_Avoid_: ranking, pick, shortlist
+
+**Adoption**:
+The picture the user chooses after seeing a Visualization run's results and its
+Recommendation. Only the user adopts.
+_Avoid_: selection, winner
 
 **Amendment**:
 A change to the Pre-registered weighting made once results exist, recorded with its
