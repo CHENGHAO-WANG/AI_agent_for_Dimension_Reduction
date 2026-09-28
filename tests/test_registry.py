@@ -114,7 +114,8 @@ def test_terminal_methods_are_marked_as_terminal(registry) -> None:
 
 def test_sparse_capability_matches_what_the_executors_accept(registry) -> None:
     assert registry["pca"].handles_sparse
-    assert not registry["standardise"].handles_sparse
+    assert registry["standardise"].handles_sparse  # densifies, counted by the validator
+    assert not registry["standardise"].preserves_sparsity
     assert not registry["diffusion_maps"].handles_sparse
 
 

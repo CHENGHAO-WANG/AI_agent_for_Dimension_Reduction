@@ -26,10 +26,12 @@ ops:
 
   drop_constant:
     kind: preprocessing
-    summary: Remove features with zero variance.
+    summary: Remove features constant by the range test, max - min <= 1e-12 * max(1, max |x|).
     rationale: >
       Constant features carry no information and make standardisation divide by zero.
-      Dropping them is close to free and prevents a class of silent NaN propagation.
+      The range, not the variance, is tested: a floating-point variance is rarely exactly
+      zero for a constant column, and a z-score would turn its rounding error into a
+      feature of unit variance. Always the first stage of the base preprocessing.
     handles_sparse: true
     preserves_sparsity: true
     deterministic: true
@@ -76,10 +78,12 @@ ops:
       Puts features on a comparable scale so that no feature dominates a distance
       purely because it was measured in larger units.
     caution: >
-      Destroys sparsity, since centring makes every zero non-zero. On a wide sparse
-      matrix this can turn megabytes into gigabytes. It also inflates noise in
-      near-constant features, which is why drop_constant belongs before it.
-    handles_sparse: false
+      Accepts sparse input and returns it dense, since centring makes every zero
+      non-zero: on a wide sparse matrix megabytes become gigabytes, and the plan
+      validator counts that dense output against the memory limit. Keeps the input's
+      dtype. It also inflates noise in near-constant features, which is why
+      drop_constant belongs before it.
+    handles_sparse: true
     preserves_sparsity: false
     deterministic: true
     params: {}
@@ -115,14 +119,9 @@ ops:
         type: int
         default: 2000
         min: 2
-        describes: how many features to retain
-      criterion:
-        type: str
-        default: variance
-        choices: [variance, dispersion]
         describes: >
-          variance ranks raw spread; dispersion ranks variance-to-mean ratio, which is
-          less biased toward highly expressed features
+          how many features to retain, ranked by variance; registration requires
+          exactly 2000 wherever section 3.10's rule selects
 
   densify:
     kind: preprocessing

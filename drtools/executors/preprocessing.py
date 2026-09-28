@@ -25,19 +25,58 @@ def _feature_variance(X: Matrix) -> np.ndarray:
     return np.asarray(X).var(axis=0)
 
 
+#: Section 3.10's tolerance for a constant feature.
+CONSTANT_EPS = 1e-12
+
+
+def constant_features(X: Matrix) -> tuple[np.ndarray, np.ndarray]:
+    """Which features are constant, and which of those only up to the tolerance.
+
+    A feature is constant when `max - min <= eps * max(1, max |x|)`. The range, not the
+    variance: a variance computed in floating point is rarely exactly zero for a
+    constant non-zero column (defect 19), while the range of stored identical values is.
+    The floor of 1 makes the test absolute below magnitude 1, which catches a column
+    zero only up to rounding, at the cost of dropping a feature whose genuine range is
+    below 1e-12. That is why the second mask exists: every drop the tolerance made,
+    whose range was not exactly zero, is listed so a wrong one is visible.
+
+    On sparse data a column's implicit zeros count toward its minimum and maximum.
+    """
+    if sp.issparse(X):
+        X = sp.csc_matrix(X)
+        high = np.asarray(X.max(axis=0).todense()).ravel().astype(np.float64)
+        low = np.asarray(X.min(axis=0).todense()).ravel().astype(np.float64)
+    else:
+        dense = np.asarray(X)
+        high = dense.max(axis=0).astype(np.float64)
+        low = dense.min(axis=0).astype(np.float64)
+    spread = high - low
+    magnitude = np.maximum(np.abs(high), np.abs(low))
+    constant = spread <= CONSTANT_EPS * np.maximum(1.0, magnitude)
+    return constant, constant & (spread > 0)
+
+
 @executor("drop_constant")
 def drop_constant(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
-    variance = _feature_variance(X)
-    keep = np.flatnonzero(variance > 0)
+    constant, by_tolerance = constant_features(X)
+    keep = np.flatnonzero(~constant)
     if keep.size == 0:
         raise ExecutionError(
             "every feature is constant; there is no variation to embed"
         )
+    # Indices into the loaded matrix, so the report can name them whatever ran before.
+    original = (
+        ctx.feature_index
+        if ctx.feature_index is not None
+        else np.arange(X.shape[1])
+    )
+    tolerated = [int(original[i]) for i in np.flatnonzero(by_tolerance)]
     ctx.select_features(keep)
     return X[:, keep], {
         "n_features_in": int(X.shape[1]),
         "n_features_out": int(keep.size),
         "n_dropped": int(X.shape[1] - keep.size),
+        "dropped_by_tolerance": tolerated,
     }
 
 
@@ -76,19 +115,25 @@ def log1p(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
 
 @executor("standardise")
 def standardise(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, Any]]:
-    if sp.issparse(X):
-        n, d = X.shape
-        raise ExecutionError(
-            "standardise centres the data, which makes every zero non-zero and would "
-            f"turn this sparse matrix into {n * d * 8 / 1e9:.2f} GB dense. Select "
-            "features first, or use a sparse-capable reduction instead."
-        )
-    dense = np.asarray(X, dtype=np.float64)
-    std = dense.std(axis=0)
+    """Centre and scale every feature, returning a dense matrix in the input's dtype.
+
+    Sparse input is densified rather than refused: centring makes every zero non-zero,
+    so the output is dense whatever the input, and the plan validator has already
+    counted that dense matrix against the memory limit before this runs. Float32 stays
+    float32, which is ample precision for a z-score and halves the matrix.
+    """
+    dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else np.float64
+    dense = np.asarray(X.todense() if sp.issparse(X) else X, dtype=dtype)
+    mean = dense.mean(axis=0, dtype=np.float64)
+    std = dense.std(axis=0, dtype=np.float64)
     n_constant = int((std == 0).sum())
     std[std == 0] = 1.0
-    return (dense - dense.mean(axis=0)) / std, {
-        "n_constant_features_left_unscaled": n_constant
+    out = dense - mean.astype(dtype)
+    out /= std.astype(dtype)
+    return out, {
+        "n_constant_features_left_unscaled": n_constant,
+        "densified": bool(sp.issparse(X)),
+        "dtype": str(np.dtype(dtype)),
     }
 
 
@@ -115,7 +160,6 @@ def select_variable_features(
     ctx: Context,
     *,
     n_features: int = 2000,
-    criterion: str = "variance",
     **_: Any,
 ) -> tuple[Matrix, dict[str, Any]]:
     available = X.shape[1]
@@ -126,28 +170,16 @@ def select_variable_features(
             "note": f"requested {n_features} of {available} features; kept all",
         }
 
+    # Variance is the only criterion (section 3.10): a feature's share of the expected
+    # squared Euclidean distance is its share of the variance.
     variance = _feature_variance(X)
-    if criterion == "dispersion":
-        mean = (
-            np.asarray(X.mean(axis=0)).ravel()
-            if sp.issparse(X)
-            else np.asarray(X).mean(axis=0)
-        )
-        score = np.divide(
-            variance, mean, out=np.zeros_like(variance), where=mean > 0
-        )
-    elif criterion == "variance":
-        score = variance
-    else:  # pragma: no cover - the registry constrains this
-        raise ExecutionError(f"unknown selection criterion {criterion!r}")
-
-    keep = np.sort(np.argsort(score)[::-1][:n_features])
+    keep = np.sort(np.argsort(variance)[::-1][:n_features])
     ctx.select_features(keep)
     return X[:, keep], {
-        "criterion": criterion,
+        "criterion": "variance",
         "n_features_in": int(available),
         "n_features_out": int(keep.size),
-        "score_threshold": float(score[keep].min()),
+        "score_threshold": float(variance[keep].min()),
     }
 
 

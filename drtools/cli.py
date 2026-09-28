@@ -47,6 +47,8 @@ from drtools.report import (
 )
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
+from drtools import memory as memory_module
+from drtools.decision import DataDecision, default_decision, recorded_decision
 from drtools.runs import MISSING, RunDir, resolve_evidence, unresolved_message
 from drtools.status import (
     MAX_ATTEMPTS,
@@ -155,6 +157,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_data_arguments(recon)
     _add_run_arguments(recon)
+    recon.add_argument(
+        "--decision",
+        help="JSON object, or @file: whether the values are raw counts and whether the "
+        "features are of one type -- values, features, decided_by, rationale, evidence",
+    )
     recon.add_argument(
         "--k", type=int, default=None, help="neighbours for the k-NN graph probe"
     )
@@ -525,6 +532,49 @@ def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
     return profile
 
 
+def _read_decision(argument: str | None, profile: dict[str, Any]) -> DataDecision:
+    """The data decision `recon` runs under, refused before anything is measured.
+
+    Whether the values are raw counts and whether the features are of one type are the
+    two facts section 3.10's rules read, and the matrix cannot settle either alone. An
+    agent's call cites evidence from the profile, resolved here; a user's declaration
+    needs none; the default is stated in the refusal so it is one step away.
+    """
+    if argument is None:
+        default = default_decision(profile).model_dump()
+        raise ContractError(
+            "recon needs the data decision it will probe under: whether the values are "
+            "raw counts, and whether the features are of one type. Pass --decision with "
+            "values (raw_counts | not_counts), features (one_type | mixed), decided_by "
+            "(user | agent | default), a rationale, and evidence when the call is "
+            "yours. With nothing declared and the evidence unclear, or under --auto, "
+            f"the default for this profile is: {json.dumps(default)}"
+        )
+    document = _read_json_argument(argument, flag="--decision")
+    try:
+        decision = DataDecision.model_validate(document)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc']) or 'decision'}: {item['msg']}"
+            for item in error.errors()
+        )
+        raise ContractError(f"--decision is not a valid data decision -- {problems}.") from error
+    if decision.decided_by == "agent" and not decision.evidence:
+        raise ContractError(
+            "this data decision is the agent's, and it cites no evidence. Cite the "
+            "profile keys it rests on -- profile.features.column_kinds, "
+            "profile.values.suspected_kind, profile.features.source_format -- or, if "
+            "the evidence is unclear and nothing was declared, take the default and say "
+            "decided_by: default."
+        )
+    citable = {"profile": profile}
+    resolved = resolve_evidence(decision.evidence, citable)
+    unresolved = [key for key, value in resolved.items() if value is MISSING]
+    if unresolved:
+        raise ContractError(unresolved_message(unresolved, citable))
+    return decision
+
+
 def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
     run, X, labels, meta = _resolve_run(args)
     seed = run_seed(run, args.seed)
@@ -537,11 +587,13 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
             dataset=meta.get("name"), spec=args.data or meta.get("source"), seed=seed
         )
         run.write_artifact("profile.json", profile)
+    decision = _read_decision(args.decision, profile)
 
     recon = reconnaissance(
         X,
         labels,
         profile,
+        decision=decision,
         seed=seed,
         max_samples=args.max_samples,
         k=args.k,
@@ -553,12 +605,19 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
     representation = recon["probe_representation"]
     run.log_decision(
         stage="recon",
-        question="Which representation should the structural probes be measured on?",
-        chosen=" -> ".join(representation["transform"]) or "raw values",
-        rationale=representation["reason"],
-        evidence=["profile.values.suspected_kind", "profile.features.std_ratio_p95_p05"],
-        options_considered=["raw values", "normalise_total -> log1p", "standardise"],
-        actor="rules",
+        question="Are the values raw counts, are the features of one type, and so which "
+        "representation are the structural probes measured on?",
+        chosen=f"{decision.values}, {decision.features}: "
+        + " -> ".join(representation["transform"]),
+        rationale=(decision.rationale + " " if decision.rationale else "")
+        + representation["reason"],
+        evidence=decision.evidence,
+        evidence_resolved=jsonio.jsonable(
+            resolve_evidence(decision.evidence, {"profile": profile})
+        ),
+        options_considered=["raw_counts or not_counts", "one_type or mixed"],
+        actor=decision.decided_by,
+        data_decision=decision.model_dump(),
     )
     return recon
 
@@ -1208,10 +1267,12 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         run.read_artifact("recon.json") if run.recon_path.exists() else None
     )
 
+    memory = _run_memory_limit(run)
     report = validate_plan(
         plan, profile, recon,
         artifacts=_artifacts_for_evidence(run),
         frozen_provenance=frozen,
+        memory_limit_bytes=memory["limit_bytes"],
     )
     jsonio.write(run.path / "plan_validation.json", report)
 
@@ -1252,7 +1313,11 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         weights=dict(registered.evaluation.weights),
         weighting=report["weighting"],
         provenance=report["provenance"],
-        base_matches_suggestion=report["base_matches_suggestion"],
+        base=report["base"],
+        base_departure=(
+            registered.base_departure.model_dump() if registered.base_departure else None
+        ),
+        memory={**memory, "peak_bytes": report["memory"]["peak_bytes"]},
         candidates=[c.id for c in registered.candidates],
         # Recorded even when nothing was declared, so that "claimed no restraint"
         # and "this record predates the field" stay distinguishable.
@@ -1260,6 +1325,23 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     )
     report["plan_digest"] = digest
     return report
+
+
+def _run_memory_limit(run: RunDir) -> dict[str, int]:
+    """The memory limit this Run is held to: measured once, then reused.
+
+    Half the physical memory, detected at the Run's first registration and recorded in
+    its registration record. Every later registration reads it back, so resuming the
+    Run on another machine cannot change a verdict the Run has already reached.
+    """
+    for record in run.decisions():
+        if record.get("stage") == "register_plan" and record.get("memory"):
+            recorded = record["memory"]
+            return {
+                "physical_bytes": int(recorded["physical_bytes"]),
+                "limit_bytes": int(recorded["limit_bytes"]),
+            }
+    return memory_module.memory_limit()
 
 
 def _frozen_provenance(run: RunDir, existing: Plan, proposed: Plan) -> dict[str, Any]:
@@ -1342,6 +1424,12 @@ def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
+    if recorded_decision(recon) is None:
+        raise ContractError(
+            "the base preprocessing follows from the data decision -- raw counts or "
+            "not, features of one type or mixed -- and none is recorded yet. Run "
+            "`drtools recon --decision ...` first."
+        )
     document = suggest_base(profile, recon)
     run.suggestions_dir.mkdir(exist_ok=True)
     jsonio.write(run.suggestions_dir / "base.json", document)

@@ -1,5 +1,5 @@
 import json
-from plans import complete
+from plans import complete, reconnoitre
 
 
 def _seed(run_dir):
@@ -10,6 +10,7 @@ def test_reprofiling_cannot_move_the_seed(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     data = csv_dataset(rows=60, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 0)
+    reconnoitre(cli, runs / "r1")
     assert _seed(runs / "r1") == 0
 
     result = cli("profile", "--data", data, "--run-dir", runs / "r1", "--seed", 7)
@@ -23,6 +24,7 @@ def test_reprofiling_with_the_same_seed_is_fine(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     data = csv_dataset(rows=60, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 3)
+    reconnoitre(cli, runs / "r1")
     result = cli("profile", "--data", data, "--run-dir", runs / "r1", "--seed", 3)
     assert result.code == 0
     assert _seed(runs / "r1") == 3
@@ -32,6 +34,7 @@ def test_omitting_the_seed_keeps_the_recorded_one(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     data = csv_dataset(rows=60, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 5)
+    reconnoitre(cli, runs / "r1")
     result = cli("profile", "--data", data, "--run-dir", runs / "r1")
     assert result.code == 0
     assert _seed(runs / "r1") == 5
@@ -47,6 +50,7 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
     runs = tmp_path / "runs"
     data = csv_dataset(rows=2500, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 0)
+    reconnoitre(cli, runs / "r1")
     plan = {
         "dataset": "d",
         "candidates": [
@@ -58,6 +62,7 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
     cli("validate-plan", "--run-dir", runs / "r1")
     cli("embed", "--run-dir", runs / "r1", "--id", "c1", "--in-process")
 
+    cli("prepare-reference", "--run-dir", runs / "r1")
     first = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
     second = cli("evaluate", "--run-dir", runs / "r1", "--id", "c1")
 
@@ -74,6 +79,7 @@ def test_evaluating_with_a_conflicting_seed_is_refused(cli, csv_dataset, tmp_pat
     runs = tmp_path / "runs"
     data = csv_dataset(rows=60, cols=8)
     cli("profile", "--data", data, "--runs-root", runs, "--run-id", "r1", "--seed", 0)
+    reconnoitre(cli, runs / "r1")
     plan = {
         "dataset": "d",
         "candidates": [

@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from plans import complete
+from plans import complete, reconnoitre
 
 from drtools.isolation import BUDGET_MAX_CANDIDATES
 from drtools.status import MAX_ATTEMPTS
@@ -68,6 +68,7 @@ def _prepared(cli, csv_dataset, tmp_path, candidates, rows=60):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=rows, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(_plan(candidates))), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     return runs / "r1"
@@ -126,6 +127,7 @@ def test_rank_ignores_metrics_for_a_candidate_that_did_not_succeed(
                     [{"id": "a", "stages": PCA}, {"id": "b", "stages": TSNE}])
     for candidate in ("a", "b"):
         cli("embed", "--run-dir", run, "--id", candidate, "--in-process")
+        cli("prepare-reference", "--run-dir", run)
         cli("evaluate", "--run-dir", run, "--id", candidate)
 
     # Exactly what a timed-out retry used to leave behind: a stale metrics file beside
@@ -263,6 +265,7 @@ def test_a_refused_embed_appends_no_decision_lines(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8, seed=1),
         "--runs-root", runs, "--run-id", "r2")
+    reconnoitre(cli, runs / "r2")
     unregistered = runs / "r2"
     before_unregistered = _decision_lines(unregistered)
     result = cli("embed", "--run-dir", unregistered, "--id", "a", "--in-process")
@@ -471,6 +474,7 @@ def test_the_exhaust_abandon_replace_cycle_terminates(cli, csv_dataset, tmp_path
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     run = runs / "r1"
 
     candidates = [{"id": "c0", "stages": PCA}]
@@ -545,6 +549,7 @@ def test_a_refused_retry_leaves_the_previous_metrics_alone(cli, csv_dataset, tmp
     """The same refusal, against the other artefact `_invalidate_candidate` removes."""
     run = _prepared(cli, csv_dataset, tmp_path, [{"id": "a", "stages": PCA}])
     cli("embed", "--run-dir", run, "--id", "a", "--in-process")
+    cli("prepare-reference", "--run-dir", run)
     assert cli("evaluate", "--run-dir", run, "--id", "a").code == 0
     metrics = run / "metrics" / "a.json"
     assert metrics.exists()

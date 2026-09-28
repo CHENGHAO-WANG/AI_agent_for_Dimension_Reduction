@@ -148,13 +148,6 @@ def test_sparse_pca_uses_truncated_svd_and_says_it_did_not_centre() -> None:
     assert "uncentred" in notes["caveat"]
 
 
-def test_standardising_a_sparse_matrix_is_refused_with_the_memory_cost() -> None:
-    X = sp.csr_array(np.eye(500, 4000, dtype=np.float64))
-
-    with pytest.raises(ExecutionError, match="GB dense"):
-        run_pipeline(X, None, [{"op": "standardise"}, {"op": "pca"}])
-
-
 def test_a_dense_only_method_names_the_stage_that_would_fix_it() -> None:
     X = sp.csr_array(np.eye(100, 20, dtype=np.float64))
 

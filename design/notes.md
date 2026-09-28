@@ -1175,9 +1175,8 @@ dropped. It runs after `log1p` where the counts rule applies, as the registry's 
 selection already requires.
 
 *The linear baseline never selects features*, so it stays a pure anchor: the base
-preprocessing followed by a single `pca`. Whether it may carry any candidate-specific
-stage at all, a subsample for instance, is the question about `no_linear_baseline` left
-open on day 10.
+preprocessing followed by a single `pca`. Day 12 settled that it carries no
+candidate-specific stage at all, a subsample included.
 
 *Why the scores stay comparable.* Candidate-specific stages do not change the Reference.
 A candidate that keeps 2,000 of 20,000 features is still scored against the full-feature
@@ -1203,10 +1202,12 @@ without centring was considered. It gives the same result for PCA, which centres
 itself, and for every method that works from Euclidean distances, which do not change when
 a constant is added to a feature; and it keeps a sparse matrix sparse. It was not adopted.
 The cost of that is memory. Centring makes every zero non-zero, so at n = 107,000 the
-2,000 selected features become a dense 1.7 GB matrix against the 2 GB budget, and PCA's
-own centred copy doubles it. The validator's memory estimate must count the dense output
-of z-scoring, and refuse such a candidate at registration rather than let it fail in
-execution.
+2,000 selected features become a dense 1.7 GB matrix in float64, and PCA's own centred
+copy doubles it. The validator's memory estimate counts the dense output of z-scoring,
+and refuses such a candidate at registration rather than let it fail in execution.
+*Settled on day 13:* the limit is half the machine's memory, detected at a run's first
+registration and kept for the run; z-scoring keeps float32 input in float32, which halves
+that matrix; and memory, like `scales_to`, is a reason to subsample.
 
 **The Probe representation follows the same rule.** Decided on day 10. Reconnaissance
 chose its Probe representation by a rule of its own: raw counts, then normalise and log;
@@ -1424,7 +1425,8 @@ refused above its limit.**
 
 **Subsampling only where it is needed.** A candidate may subsample only when its first
 reduction or visualization method would otherwise receive more rows than that op's
-`scales_to`.
+`scales_to`, or, since day 13, when its pipeline on every row would exceed the run's
+memory limit; a method that cannot place new rows is refused over either.
 PCA's limit is 2,000,000, so `subsample(n_samples=50) -> pca` -- one route to a degenerate
 baseline, registered on day 10 without a finding -- is refused.
 
@@ -3114,3 +3116,92 @@ first on the code about to change. No cut is planned for now; the rule above sta
   the default.
 
   566 tests, 68s.
+
+- **Day 13** — Preprocessing by rule: the two facts the rules read are decided before
+  reconnaissance, and every layer of preprocessing follows from them.
+
+  The items section 3.10 carried went in as written: `drop_constant` by the range test
+  `max - min <= 1e-12 * max(1, max |x|)`, recording by name every feature the tolerance
+  dropped whose range was not exactly zero, with the profile's constant count now on
+  the same test (defect 19); the base by rule -- `drop_constant`, then `normalise_total`
+  and `log1p` for raw counts, then `standardise` for mixed types -- applied by the Probe
+  representation and offered by `suggest-base`, so reconnaissance's own 100-fold rule
+  is gone; the candidate-specific rule enforced at registration, selection of exactly
+  2,000 features then `standardise`, required where the features are of one type, more
+  than 2,000 remain and the first method is Euclidean at its set parameters, and
+  forbidden elsewhere and in the Linear baseline; and `dispersion` removed. Six items
+  the notes named only as a requirement were settled in chat, again treated as bounded
+  at the user's direction.
+
+  *The data decision is an argument to `recon`.* Whether the values are raw counts and
+  whether the features are of one type go in `recon --decision`, with `decided_by`
+  user, agent or default; an agent's call must cite evidence, resolved against the
+  profile. The defaults are raw counts when the profile suspects them, and mixed
+  features. `recon` records the decision and probes under it, and registration refuses
+  without one, which makes reconnaissance required before registration. The raw-counts
+  check now reads the decision rather than the profile's guess. Rejected: a separate
+  decide command between profiling and reconnaissance, which would have needed a
+  staleness check -- reconnaissance stamped with a decision since replaced. As chosen,
+  the decision changes only by running `recon` again, so no stale state can exist, and
+  section 3.10's rule that a changed decision makes reconnaissance stale holds without
+  a mechanism.
+
+  *Evidence for feature type, as counts and never a verdict.* The profile records the
+  binary, integer and continuous columns on up to 2,000 rows, with examples, beside the
+  source format and the first feature names, and an Observation reads the mix aloud.
+  Rejected: a derived `suggested_feature_type`, a rule pretending to settle what the
+  matrix cannot -- counts of one type can look mixed when a rare gene shows only 0 and 1
+  on a sample.
+
+  *Memory: half the machine, measured once per run.* Registration estimates each
+  candidate's peak: the loaded data, plus the heaviest stage's input, output and PCA's
+  centred copy. The notes named a "2 GB budget" that nothing defined; I proposed a fixed
+  8 GB, and the user chose half of the detected RAM for every budget. It is detected
+  with the standard library at the run's first registration and stored in the
+  registration record, and later registrations reuse it, so resuming a run elsewhere
+  cannot move a verdict. The user added that memory is a reason to subsample, as
+  `scales_to` is: a method that can place new rows is fitted on a subsample, a method
+  that cannot is refused. `standardise` now densifies sparse input instead of refusing
+  it, since the estimate guards it, and keeps the input's dtype, which halves the
+  matrix for float32 data.
+
+  Working the arithmetic changed where the limit bites. On dense data the Linear
+  baseline is the heaviest candidate, because its PCA copies the whole matrix while
+  selection keeps 2,000 of PathMNIST's 2,352 features; there the limit can block a plan
+  but never forces a subsample. The case section 3.10 worried about is sparse and wide,
+  where z-scoring 2,000 selected features turns a 0.34 GB sparse matrix into a 0.86 GB
+  dense one and PCA's copy doubles it; the tests are written on that case.
+
+  *Telling the user.* At planning, the skill has the agent say the values look like raw
+  counts, cite the evidence, and say what will be done, before registering; under
+  `--auto` the statement goes in the log. Report section 2's generated block states the
+  decision, whether the base follows the rule or departs from it and why, a fixed
+  sentence with the median target `normalise_total` recorded, and every feature the
+  tolerance dropped, by name.
+
+  *Departing from the base rule.* `base_departure: {reason, evidence}`, a reason and at
+  least one resolving key, the pattern a weighting's departure follows. The registration
+  record stores `base: rule | departure`, replacing day 12's `base_matches_suggestion`.
+  `drop_constant` first is refused whatever the reason, as section 3.10's "always, and
+  first" says; the candidate-specific rule has no departure route. Named a departure and
+  not an override, since the glossary's Override is a Stage parameter differing from its
+  Suggestion.
+
+  *Found on the way, and queued.* `run_pipeline` densifies its final output to float64,
+  so the Reference is stored dense whatever the base keeps sparse, and the memory
+  estimate, which covers candidates, does not cover `prepare-reference`: at 100,000 rows
+  and 20,000 features a dense float64 Reference is 16 GB. Keeping a sparse Reference
+  sparse, and counting it, is the fix. Also, two tests encoded behaviour that changed by
+  design -- `standardise` refusing sparse input, and evaluation without a Reference when
+  a plan has no base, a state that no longer exists since every base holds
+  `drop_constant` -- and were removed. Registration needing reconnaissance added about
+  six seconds to the suite.
+
+  *The glossary.* `CONTEXT.md` gains Data decision and Departure. A Departure covers
+  both a weighting other than its default and a base other than the rule's, the two
+  places a rule gives a default the agent may leave with evidence; it stays distinct
+  from an Override, which is one Stage parameter against its Suggestion. Two entries were
+  corrected with them: the Base preprocessing is given by the rule, not chosen by the
+  agent, and the Reference is always its output, since no plan now lacks one.
+
+  622 tests, 74s.

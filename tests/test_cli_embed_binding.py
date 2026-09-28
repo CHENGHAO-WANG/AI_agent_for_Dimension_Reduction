@@ -1,5 +1,5 @@
 import json
-from plans import complete
+from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -8,6 +8,7 @@ def _prepared(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = {
         "dataset": "d",
         "candidates": [{"id": "a", "stages": PCA}],
@@ -22,6 +23,7 @@ def test_embedding_without_a_registered_plan_is_refused(cli, csv_dataset, tmp_pa
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     result = cli("embed", "--run-dir", runs / "r1", "--id", "a", "--in-process")
     assert result.code == 2
     assert "validate-plan" in result.stderr

@@ -1,5 +1,5 @@
 import json
-from plans import complete
+from plans import complete, reconnoitre
 
 
 def _plan(base, candidates):
@@ -19,6 +19,7 @@ def test_prepare_reference_takes_base_stages_from_the_plan(cli, csv_dataset, tmp
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
@@ -26,13 +27,17 @@ def test_prepare_reference_takes_base_stages_from_the_plan(cli, csv_dataset, tmp
     result = cli("prepare-reference", "--run-dir", runs / "r1")
 
     assert result.code == 0
-    assert result.payload["stages"] == [{"op": "standardise", "params": {}}]
+    assert result.payload["stages"] == [
+        {"op": "drop_constant", "params": {}},
+        {"op": "standardise", "params": {}},
+    ]
 
 
 def test_reference_records_the_settings_it_fixes(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1", "--seed", 4)
+    reconnoitre(cli, runs / "r1")
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
@@ -49,6 +54,7 @@ def test_evaluate_refuses_when_the_plan_declares_a_base_and_none_was_prepared(
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     plan = _plan(STANDARDISE, [{"id": "a", "stages": PCA}])
     (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
@@ -61,22 +67,6 @@ def test_evaluate_refuses_when_the_plan_declares_a_base_and_none_was_prepared(
 
     assert result.code == 2
     assert "prepare-reference" in result.stderr
-
-
-def test_evaluate_needs_no_reference_when_the_plan_declares_no_base(
-    cli, csv_dataset, tmp_path
-):
-    runs = tmp_path / "runs"
-    cli("profile", "--data", csv_dataset(rows=60, cols=8),
-        "--runs-root", runs, "--run-id", "r1")
-    (runs / "r1" / "plan.json").write_text(
-        json.dumps(complete(_plan([], [{"id": "a", "stages": PCA}]))), encoding="utf-8"
-    )
-    cli("validate-plan", "--run-dir", runs / "r1")
-    cli("embed", "--run-dir", runs / "r1", "--id", "a", "--in-process")
-
-    result = cli("evaluate", "--run-dir", runs / "r1", "--id", "a")
-    assert result.code == 0
 
 
 def test_evaluate_rejects_a_neighbourhood_argument(cli, tmp_path):
@@ -102,6 +92,7 @@ def test_evaluate_refuses_a_candidate_that_failed(cli, csv_dataset, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
+    reconnoitre(cli, runs / "r1")
     (runs / "r1" / "plan.json").write_text(
         json.dumps(complete(_plan([], [{"id": "a", "stages": PCA}]))), encoding="utf-8"
     )
@@ -114,6 +105,7 @@ def test_evaluate_refuses_a_candidate_that_failed(cli, csv_dataset, tmp_path):
         encoding="utf-8",
     )
 
+    cli("prepare-reference", "--run-dir", runs / "r1")
     result = cli("evaluate", "--run-dir", runs / "r1", "--id", "a")
 
     assert result.code == 2

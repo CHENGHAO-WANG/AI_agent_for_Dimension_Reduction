@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 from drtools.isolation import budget_timeout
-from plans import complete
+from plans import complete, reconnoitre
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -31,6 +31,7 @@ def _registered(cli, csv_dataset, tmp_path, budget="standard"):
         "--run-id",
         "r1",
     )
+    reconnoitre(cli, runs / "r1")
     plan = {
         "dataset": "d",
         "budget": budget,

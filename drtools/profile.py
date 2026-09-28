@@ -13,12 +13,14 @@ module's job is to make the decision well-posed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
 
 from drtools.contract import Matrix
+from drtools.executors.preprocessing import constant_features
 
 # Sampling caps. Profiling must stay cheap enough to run on anything.
 DUPLICATE_SAMPLE = 5_000
@@ -56,6 +58,7 @@ def profile_dataset(
     value_facts["suspected_kind"] = _suspect_kind(value_facts)
 
     feature_facts = _feature_statistics(X)
+    feature_facts.update(_feature_type_evidence(X, meta))
     sample_facts = _sample_statistics(X)
     label_facts = _label_statistics(labels, meta)
 
@@ -117,13 +120,93 @@ def _feature_statistics(X: Matrix) -> dict[str, Any]:
         np.percentile(nonzero_std, [5, 95]) if nonzero_std.size else (0.0, 0.0)
     )
     return {
-        "n_constant": int((std == 0).sum()),
-        "n_near_constant": int((std < 1e-8).sum()),
+        # The test `drop_constant` applies, so the count is of what the base will drop.
+        "n_constant": int(constant_features(X)[0].sum()),
         "std_min": float(nonzero_std.min()) if nonzero_std.size else 0.0,
         "std_median": float(np.median(nonzero_std)) if nonzero_std.size else 0.0,
         "std_max": float(nonzero_std.max()) if nonzero_std.size else 0.0,
         "std_ratio_p95_p05": float(high / low) if low > 0 else None,
     }
+
+
+#: Rows the column kinds are measured on. A sample can only undercount a column's distinct
+#: values, so no column is called continuous by mistake.
+KIND_SAMPLE = 2_000
+KIND_EXAMPLES = 5
+
+
+def _feature_type_evidence(X: Matrix, meta: dict[str, Any]) -> dict[str, Any]:
+    """The signals section 3.10 names toward deciding whether features are of one type.
+
+    Reported as counts with examples, never as a verdict: the matrix alone cannot settle
+    the question. Counts of one type can look mixed, since a rarely expressed gene may
+    show only 0 and 1 on a sample and count as binary. The decision is the agent's.
+    """
+    n_samples = X.shape[0]
+    rows = (
+        np.arange(n_samples)
+        if n_samples <= KIND_SAMPLE
+        else np.sort(
+            np.random.default_rng(0).choice(n_samples, size=KIND_SAMPLE, replace=False)
+        )
+    )
+    block = X[rows]
+    constant, _ = constant_features(X)
+    names = meta.get("feature_names")
+    non_integer, two_valued = _column_shapes(block)
+
+    kinds: dict[str, list[int]] = {"binary": [], "integer": [], "continuous": []}
+    for column in np.flatnonzero(~constant):
+        if non_integer[column]:
+            kinds["continuous"].append(int(column))
+        elif two_valued[column]:
+            kinds["binary"].append(int(column))
+        else:
+            kinds["integer"].append(int(column))
+
+    def label(column: int) -> str:
+        return str(names[column]) if names is not None else f"column {column}"
+
+    source = str(meta.get("source") or "")
+    suffix = Path(source).suffix.lower() if "." in Path(source).name else ""
+    return {
+        "column_kinds": {
+            **{f"n_{kind}": len(columns) for kind, columns in kinds.items()},
+            "examples": {
+                kind: [label(c) for c in columns[:KIND_EXAMPLES]]
+                for kind, columns in kinds.items()
+            },
+            "n_rows_examined": int(rows.size),
+        },
+        "source_format": suffix or None,
+        "names_head": [str(name) for name in names[:10]] if names is not None else None,
+    }
+
+
+def _column_shapes(block: Matrix) -> tuple[np.ndarray, np.ndarray]:
+    """Per column: whether any value is not whole, and whether it holds at most two values.
+
+    Vectorised, and sparse input stays sparse, so a 30,000-gene matrix is not densified
+    to be profiled. A sparse column's implicit zeros count as values.
+    """
+    if sp.issparse(block):
+        csc = sp.csc_matrix(block)
+        low = np.asarray(csc.min(axis=0).todense()).ravel()
+        high = np.asarray(csc.max(axis=0).todense()).ravel()
+        column_of = np.repeat(np.arange(csc.shape[1]), np.diff(csc.indptr))
+        data = csc.data
+        non_integer = np.bincount(
+            column_of, weights=(data != np.round(data)), minlength=csc.shape[1]
+        ) > 0
+        other = (data != low[column_of]) & (data != high[column_of])
+        two_valued = np.bincount(column_of, weights=other, minlength=csc.shape[1]) == 0
+        return non_integer, two_valued
+    dense = np.asarray(block)
+    non_integer = ~np.all(dense == np.round(dense), axis=0)
+    two_valued = np.all(
+        (dense == dense.min(axis=0)) | (dense == dense.max(axis=0)), axis=0
+    )
+    return non_integer, two_valued
 
 
 def _sample_statistics(X: Matrix) -> dict[str, Any]:
@@ -279,9 +362,30 @@ def _observations(profile: dict[str, Any]) -> list[dict[str, str]]:
     if scale_ratio is not None and scale_ratio > 100:
         note(
             f"Feature standard deviations span a factor of {scale_ratio:,.0f} between "
-            "the 5th and 95th percentiles. Unstandardised, a handful of high-variance "
-            "features will dominate every distance and every principal component.",
+            "the 5th and 95th percentiles. That is weak evidence toward features of "
+            "mixed types, which often differ in scale; features of one type, such as "
+            "genes, can span orders of magnitude too.",
             "features.std_ratio_p95_p05",
+        )
+
+    kinds = features["column_kinds"]
+    present = [kind for kind in ("binary", "integer", "continuous") if kinds[f"n_{kind}"]]
+    if kinds["n_continuous"] and (kinds["n_binary"] or kinds["n_integer"]):
+        note(
+            f"{kinds['n_binary']:,} binary, {kinds['n_integer']:,} integer and "
+            f"{kinds['n_continuous']:,} continuous columns sit side by side, so features "
+            "of mixed types are likely: z-scoring puts them on one scale. Examples: "
+            + "; ".join(
+                f"{kind}: {', '.join(kinds['examples'][kind])}" for kind in present
+            )
+            + ".",
+            "features.column_kinds",
+        )
+    elif present and not kinds["n_continuous"]:
+        note(
+            "Every non-constant column is whole-numbered, which counts of one type would "
+            "also produce; it does not by itself mean the features are of mixed types.",
+            "features.column_kinds",
         )
 
     if features["n_constant"] > 0:
