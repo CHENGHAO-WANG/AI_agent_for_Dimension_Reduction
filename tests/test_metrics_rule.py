@@ -102,3 +102,15 @@ def test_label_agreement_is_absent_when_k_exceeds_the_rows_available():
     )["values"]
     assert values["knn_label_preservation"] is None
     assert values["silhouette"] is not None
+
+
+def test_the_tuning_scorer_breaks_distance_ties_as_the_battery_does() -> None:
+    """Found by review: on binary data a stable sort chose other neighbours than
+    NearestNeighbors, and continuity came out 0.8577 against the battery's 0.8709."""
+    from drtools.metrics import BatteryScorer, evaluate_embedding
+
+    X = np.random.default_rng(2).integers(0, 2, size=(40, 4)).astype(float)
+    scored = BatteryScorer(X, None, k=5).score(X[:, :2])
+    battery = evaluate_embedding(X, X[:, :2], None, k=5, seed=0)["values"]
+    for name in ("trustworthiness", "continuity", "shepard_correlation"):
+        assert abs(scored[name] - battery[name]) < 1e-12, name

@@ -398,7 +398,10 @@ class Tuner:
         d_max = min(D_CAP, p_in - 1, n_fit - 1, n_fit_refit - 1)
         fixed = 2 if spec.is_visualization else self.settings.fixed_d
         if fixed is not None:
-            d_max = min(d_max, fixed)
+            # A picture is drawn at d = 2 whatever its input's width. The cap above
+            # bounds a d that tuning chooses, and here nothing is chosen: a PCA
+            # pre-step keeping two components must not leave UMAP asked for one.
+            d_max = fixed if n_fit > fixed and n_fit_refit > fixed else 0
         if d_max < 1:
             raise TuningError(f"{op} receives {p_in} feature(s): nothing to reduce")
 
@@ -709,6 +712,16 @@ class Tuner:
             return memo[key]
 
         start = self._starting_d(grid)
+        # Reconnaissance's d can be infeasible for every multiplier -- Hessian LLE at
+        # d = 8 needs 45 neighbours -- while other points of the grid run. Move to the
+        # nearest grid point where one does, the smaller d on a tie, rather than
+        # refuse a candidate that has feasible cells.
+        estimated = start
+        by_distance = sorted(grid, key=lambda g: (abs(grid.index(g) - grid.index(start)), g))
+        start = next(
+            (g for g in by_distance if any(cell(m, g).feasible for m in cells_by_multiplier)),
+            start,
+        )
         multiplier = min(cells_by_multiplier, key=_nearest_one)
         d = start
         steps: list[dict[str, Any]] = []
@@ -744,6 +757,11 @@ class Tuner:
             d = int(choice["d"])
         chosen = cell(multiplier, d)
         self.record["alternating"] = {"start_d": start, "steps": steps, "outcome": outcome}
+        if start != estimated:
+            self.record["alternating"]["estimated_d"] = estimated
+            self.record["alternating"]["start_moved"] = (
+                f"no multiplier could run at reconnaissance's d = {estimated}"
+            )
         if outcome == "stopped at the cap":
             self.record["alternating"]["neighbours"] = self._neighbour_check(
                 chosen, grid, sorted(cells_by_multiplier), cell
