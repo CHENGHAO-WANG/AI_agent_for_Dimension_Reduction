@@ -514,9 +514,16 @@ its hyperparameter near the chosen value, which is most of what a sensitivity an
 would say. A separate full-data sensitivity check on the winner and its close competitors
 remains available, reported and never used to re-rank.
 
-**None of this is built yet.** No command runs a sweep of either kind, `suggest-params`
-writes nothing into the run, and provenance distinguishes only `specified` from
-`registry_default`. The day 10 log carries the defects.
+**Built on day 15**, in `drtools/tuning.py`, and run inside every `embed` Attempt. The
+day 15 log records what was settled that this section left open:
+- one plan-level `tuning` block, whose defaults are the rule and whose departures are
+  argued from evidence;
+- one Fidelity parameter per method, declared in the registry;
+- multipliers of {0.5, 1, 2}, with a choice at either end flagged;
+- Diffusion Maps' t swept over {1, 2, 4} at no cost;
+- tuning on the candidate's own stages over at most 2,000 Reference rows, with the
+  Base fitted on every row;
+- the refit's suggestion recomputed at the rows the method is fitted on.
 
 ### 3.6 Plan validation gate
 
@@ -564,7 +571,8 @@ argument is about timing, not uniformity.
 
 **Several methods bring their own criterion, and it is usually better than a generic
 one.** PCA has the eigenvalue spectrum, Isomap the residual-variance elbow of
-Tenenbaum's original paper, Diffusion Maps and Laplacian Eigenmaps a spectral gap, MDS a
+Tenenbaum's original paper, Diffusion Maps and Laplacian Eigenmaps a spectral gap (for
+Diffusion Maps, replaced on day 15 by the share of diffusion distance retained), MDS a
 stress scree plot. t-SNE, UMAP and LLE have nothing canonical and fall back to the
 battery. Forcing all of them onto one generic Q would discard criteria that are standard
 in the field and free from an eigendecomposition already computed.
@@ -654,15 +662,28 @@ reductions keep their own criterion, as above.
 3. If the curve is flat -- its best score at most a *flatness threshold* above its score
    at the smallest d -- choose the smallest d. Rescaling a flat curve would only magnify
    its noise into a false elbow. The flatness threshold is its own number, not tied to
-   delta below: delta compares two candidates, this compares one candidate across d. Its
-   default is set slightly above delta's 0.02 -- *proposed 0.03, to be confirmed*.
+   delta below: delta compares two candidates, this compares one candidate across d.
+   *Settled on day 15: 0.10*, an absolute difference on the curve's 0-1 scale, rather
+   than the 0.03 proposed here.
 4. Otherwise take the elbow by the Kneedle method, with log d on the horizontal axis:
    rescale both axes to [0, 1] and choose the *interior* grid point furthest above the
    straight line joining the curve's two ends. An end of the grid is never an elbow.
 5. If no interior point lies above that line, the curve has no point of diminishing
-   returns in the grid: choose the smallest d whose score is within 0.10 of the
-   candidate's best. When the curve is still rising at the last grid point, the choice
-   is reported as capped.
+   returns in the grid: choose the smallest d whose score is at least 90% of the
+   candidate's best -- a relative share, as settled on day 15, where the flatness test
+   above is an absolute difference. When the curve is still rising at the last grid
+   point, the choice is reported as capped.
+
+*Settled on day 15: the same procedure reads the methods' own criteria.* PCA's cumulative
+explained variance, kernel PCA's eigenvalues as a share of the centred kernel's trace,
+Isomap's 1 - residual variance, MDS's 1 - Kruskal stress-1, and Diffusion Maps' share of
+squared diffusion distance retained, sum over i <= d of lambda_i^2t over the sum over all
+i, are all curves on [0, 1] read by steps 2 to 5. Laplacian Eigenmaps alone keeps the
+eigengap, the largest drop between consecutive random-walk eigenvalues, ties to the
+smaller d. Its coordinates are not eigenvalue-weighted, so no sum of its eigenvalues
+measures anything retained. A method nested in d reads its criterion at every integer d,
+since one decomposition gives the whole curve. The grid is kept where each point costs a
+fit or a scoring: the battery curves, and MDS's stress.
 
 Log d because the elbow then moves much less with the range. Tested on day 10 on the
 digits data with the grid ending at 20, 30 and 50, using PCA and Isomap purely as test
@@ -1276,7 +1297,13 @@ also be given as an argument to `/analyze`.
 - *Ranking.* As sections 3.7 and 3.8 describe: d is priced, and the report names one
   winner and its close competitors.
 - *Chains.* At most two reductions, the first PCA (section 3.9).
-- *PCA's output dimension in a chain is tuned.* Call it k. It becomes a third block in
+- *PCA's output dimension in a chain is tuned.* *Replaced on day 15:* k is chosen by
+  PCA's own criterion, the shared elbow procedure on cumulative variance at every integer
+  k, exactly as a PCA's d is. This applies in every chain, whatever follows, and an
+  explicit k is refused. The trade-off accepted is that the elbow reads diminishing
+  returns in variance rather than what serves the second stage; what is gained is one
+  rule for every PCA output dimension and no coupled search. The text below is what was
+  replaced. Call it k. It becomes a third block in
   section 3.5's procedure: a short grid declared in the plan, starting from the spectrum
   suggestion, capped at 100. k carries no parsimony cost, because the k-dimensional output
   is not delivered and only the final output's score counts. PCA is nested in k, so one
@@ -1326,9 +1353,10 @@ also be given as an argument to `/analyze`.
   neighbour graph the next method builds, and PHATE is essentially that pipeline as one
   method. It would be reconsidered for trajectory data on which PHATE is unavailable, or
   once the budget allows `diffusion_maps -> umap` to be tested against PHATE directly.
-- *PCA's k is picked, not tuned.* It is the spectrum suggestion -- the elbow of the
-  cumulative-variance curve, raised toward the count reaching 90% of variance, capped at
-  100 -- and the agent may override it with a logged reason.
+- *PCA's k is picked, not tuned.* *Since day 15* by PCA's own criterion, as in a
+  representation run, and not overridable. It replaces the spectrum suggestion -- the
+  elbow of the cumulative-variance curve, raised toward the count reaching 90% of
+  variance, capped at 100 -- which `suggest-params` now previews with the same rule.
 - *Nomination* works exactly as in a representation run, over the larger eligible set, and
   section 3.4's three roles apply across it.
 - *Tuning.* Each candidate's fidelity hyperparameter is tuned by section 3.5 with d fixed.
@@ -3315,3 +3343,144 @@ first on the code about to change. No cut is planned for now; the rule above sta
   would suggest held-out validation, which this is not.
 
   655 tests, 84s.
+
+- **Day 15** — Choosing d and tuning: every candidate is tuned inside its Attempt, and
+  the fit that is ranked is the Refit at the chosen values.
+
+  The items sections 3.5 and 3.7 carried went in as written:
+  - the grid of d truncated at d_max = min(100, p - 1, n - 1) and at each method's
+    structural limit;
+  - at most 2,000 tuning rows, stratified by label;
+  - tuning rows and tuning fits on streams derived from the run's seed with
+    `SeedSequence`, keyed on purpose, with the run's own seed kept for the Refit;
+  - for methods nested in d, one fit per multiplier at the largest d, truncated;
+  - the elbow procedure: running maximum, flatness, Kneedle on log d, and a fallback
+    reported as capped when still rising;
+  - alternation from reconnaissance's d for the rest, at most two cycles, with the
+    neighbouring cells scored at the cap;
+  - cells infeasible at either the tuning rows or the Refit's skipped and recorded;
+  - every cell recorded, and provenance `tuned`.
+
+  Defect 1, a terminal `n_components` above 3 scored at full width, is absorbed: a
+  Reduction's d is chosen, never given. The plot that draws a d > 2 Embedding is day
+  17's. Eight items the notes named only as a requirement were settled in chat, one at
+  a time, as bounded work.
+
+  *One plan-level block, the rule for each candidate fixed by its method.* `tuning`
+  holds the d grid, the multipliers, the diffusion times, the flatness threshold, the
+  fallback share and the cycle cap. Its defaults are the rule, and anything else is
+  refused unless `tuning.departure` argues it from evidence. It is frozen at
+  registration, as the weighting is. The criterion that chooses a candidate's d is
+  declared in the method's capability record, not in the plan. Rejected: a grid and a
+  rule per candidate. Section 3.7 allows the rule to vary, but letting the agent choose
+  which rule each method gets is a choice it could make to favour a method, and each
+  rule already follows from the method.
+
+  *One Fidelity parameter per method, scaled by a multiplier.* The registry declares it
+  as `tuning.param`, and `base` says what the multiplier scales:
+  - the Suggestion, for perplexity and every `n_neighbors`;
+  - the executor's own rule, for kernel PCA's `gamma` and Diffusion Maps' `epsilon`,
+    passed as a new `width_multiplier` because the rule is computed inside the
+    executor.
+
+  Kernel PCA with the cosine kernel has no width, so its `applies` condition leaves it
+  untuned. PCA, sparse PCA and MDS tune d alone. Whole numbers are rounded, multipliers
+  that round to one value become one cell, and a cell that breaks a limit is skipped,
+  never scored as zero. Diffusion Maps' t is `tuning.swept`: every t in {1, 2, 4} is a
+  rescaling psi * lambda^t of one decomposition, so it is swept on every fit at no cost
+  and chosen by the battery jointly with the multiplier. Rejected: fixing t = 1 as a
+  modelling choice, which section 3.5 had listed as a fidelity parameter.
+
+  *Each method's own criterion, as a rule.* Asked first with the criteria read on the
+  grid and a spectral gap for both spectral methods, then revised at the user's
+  question, "why not find the elbow instead".
+  - PCA's cumulative variance, kernel PCA's eigenvalue share of the centred kernel's
+    trace, Isomap's 1 - residual variance and MDS's 1 - Kruskal stress-1 are read by
+    the shared elbow procedure. The trace of the centred kernel equals the sum of its
+    eigenvalues, checked, so the kernel curve is exact feature-space variance.
+  - Diffusion Maps moves from the spectral gap to the same procedure, on the share of
+    squared diffusion distance retained. That is the quantity Coifman and Lafon
+    truncate by, and it depends on t, so each t gets its own d.
+  - Laplacian Eigenmaps keeps the eigengap. Its coordinates carry no eigenvalue weight,
+    so no sum of eigenvalues measures what they retain, and the gap is the standard
+    rule for graph Laplacians.
+  - Every nested criterion reads every integer d, since one decomposition gives the
+    whole curve; the grid thins only where a point costs a fit or a scoring. Reading
+    only the grid had bought a tidier record at the price of an elbow at 7 reported as
+    6 or 8.
+
+  *The numbers.* Multipliers default to {0.5, 1, 2}, and a choice at either end is
+  recorded `at_grid_edge`; the same flag is kept for t, beyond what was agreed, since t
+  at 4 says the same thing. The flatness threshold is 0.10, the user's choice over the
+  0.03 section 3.7 proposed, and it is an *absolute* difference. The fallback's "within
+  0.10 of the best" is a *relative* 90% of the best. I first claimed the two tests
+  coincided under 0.10; the user pointed out they do not, and with best 0.50 and 0.42 at
+  d = 2 the curve is flat though 0.42 is below 90%. The trade-off accepted: within a
+  candidate up to 0.10 is given up for fewer dimensions, while between candidates day
+  16's margin is 0.02, so a candidate can settle at d = 2 and lose by less than it gave
+  up. Recorded here in case day 16 reopens it.
+
+  *What tuning runs on.* The Base preprocessing is fitted once on every row, as the
+  Reference is. The tuning rows are drawn from its output, and the candidate's own
+  stages run on them unchanged: a `subsample` of 2,000 or more keeps them all, and a
+  smaller one fits and projects as the Refit does, so what is tuned is what is ranked.
+  Each cell is scored by the battery on all its tuning rows at the run's k. The Refit
+  recomputes a Suggestion at the rows the method is fitted on. For a subsampled
+  candidate that is the subsample's size, not the dataset's, so a perplexity tuned as
+  2% of the rows stays 2% of the rows the method sees. The user needed that explained
+  twice before agreeing, because my first wording blurred the two computations: once
+  at the tuning rows, once at the Refit's.
+
+  *What a plan may set.* Registration refuses an explicit `n_components` on a Reduction
+  (`d_is_tuned`) and on a PCA pre-step (`k_is_chosen`), and refuses `width_multiplier`
+  and Diffusion Maps' `t` (`set_by_tuning`). A visualization method's d stays 2 by rule.
+  A tuned parameter left unset is recorded `tuned`, centred on its Suggestion. Given
+  away from the Suggestion, it is an Override needing its reason, and it centres the
+  grid instead. Day 12's rule that an unset parameter whose default differs from its
+  Suggestion is an Override now holds only for parameters tuning does not scale.
+  Rejected: refusing any explicit value of a tuned parameter, which throws away an
+  argued starting point.
+
+  *PCA's k in a chain, by the same criterion.* The user extended question 3 to the
+  pre-step, so k is chosen by PCA's own criterion in every chain rather than tuned on a
+  grid as section 3.11 had it. That removes the third block and the strongly coupled
+  search. `pca -> umap` costs three UMAP fits rather than nine, and `suggest-params`
+  now previews the same rule on the probe spectrum, so its suggestion and the choice
+  cannot disagree. The trade-off accepted is that the elbow reads diminishing returns
+  in variance, not what serves the second stage, which is why the old suggestion had
+  been raised toward 90%.
+
+  *Found on the way.*
+  - One battery scoring costs 1.5 s on 2,000 rows, most of it the Shepard
+    correlation's ranking of the Reference's distances. `BatteryScorer` computes the
+    Reference side once per tuning run and reproduces scikit-learn's trustworthiness
+    step for step. It matches `evaluate_embedding` to 1e-12 on every metric in 0.38 s,
+    and a test holds the two together.
+  - The Base output had to stay in its own storage. `run_pipeline` densifies its last
+    output, and a dense Reference would have turned the candidates' sparse PCA, an
+    uncentred TruncatedSVD, into a centred one, as well as costing the memory day 13
+    counted. So the Base runs with `densify=False`. The Reference that
+    `prepare-reference` writes is still dense, which is day 13's queued item.
+  - The memory estimate read every Reduction's output as 2 columns, because resolved
+    parameters always carry the registry default. It now takes the largest d tuning
+    could choose, min(100, p - 1).
+  - The battery-profile search skipped infeasible cells without recording them, found by
+    its own test.
+  - Registration naming Diffusion Maps directly tripped the extension-point test, hence
+    `tuning.swept`.
+  - About 135 tests set `n_components` on a Reduction and were refused. They were
+    migrated: incidental values removed; candidates that differed only by d made
+    distinct by PCA's `whiten`; the test needing a failing Attempt given an executor
+    that raises; day 12's Override tests moved to t-SNE's `n_iter`, a parameter tuning
+    does not scale.
+  - A 20,000-row Swiss roll ran end to end through the isolated worker. It tuned PCA,
+    Isomap, Diffusion Maps and Laplacian Eigenmaps in 0.3 to 8.2 s each, the whole run
+    took 51 s, and every candidate was scored under one digest.
+  - `runtime_s` reports the Refit alone; tuning's time is in the tuning record.
+
+  *The glossary.* `CONTEXT.md` gains Fidelity parameter, Tuning and Refit. Override is
+  qualified: an unset parameter is an Override only when tuning does not scale it, and
+  an Override of a Fidelity parameter moves its grid's centre. Rejected: "sweep" and
+  "grid search" for Tuning, which name the mechanism without the rule that reads it.
+
+  696 tests, 111s.
