@@ -123,8 +123,8 @@ def test_metrics_work_on_a_sparse_reference_without_densifying_it() -> None:
 # ---------------------------------------------------------------------- ranking
 
 
-def scored(**values):
-    return {"values": {**{k: None for k in METRIC_SPECS}, **values}}
+def scored(d=2, **values):
+    return {"d": d, "values": {**{k: None for k in METRIC_SPECS}, **values}}
 
 
 def test_weights_must_sum_to_one() -> None:
@@ -171,7 +171,7 @@ def test_a_metric_missing_for_every_candidate_is_redistributed_and_declared() ->
 
     assert "knn_label_preservation" in result["weights_dropped"]
     assert abs(sum(result["weights_applied"].values()) - 1.0) < 1e-9
-    assert any("redistributed" in note for note in result["notes"])
+    assert any(note["kind"] == "weights_dropped" for note in result["notes"])
 
 
 def test_a_metric_missing_for_only_some_candidates_is_dropped_for_all() -> None:
@@ -187,7 +187,7 @@ def test_a_metric_missing_for_only_some_candidates_is_dropped_for_all() -> None:
     assert "silhouette" in result["weights_dropped"]
 
 
-def test_a_near_tie_is_reported_as_a_tie() -> None:
+def test_a_near_tie_names_a_close_competitor() -> None:
     result = rank_candidates(
         {
             "a": scored(trustworthiness=0.800, continuity=0.800, shepard_correlation=0.80),
@@ -196,7 +196,8 @@ def test_a_near_tie_is_reported_as_a_tie() -> None:
         dict(BASE_WEIGHTS),
     )
 
-    assert any("treated as tied" in note for note in result["notes"])
+    assert [c["id"] for c in result["close_competitors"]] == ["b"]
+    assert any(note["kind"] == "close_competitors" for note in result["notes"])
 
 
 def test_failed_candidates_are_excluded_rather_than_scored_as_zero() -> None:
@@ -208,7 +209,7 @@ def test_failed_candidates_are_excluded_rather_than_scored_as_zero() -> None:
     )
 
     assert result["failed_candidates"] == ["isomap"]
-    assert any("not a judgement on the method" in note for note in result["notes"])
+    assert any(note["kind"] == "failed_candidates" for note in result["notes"])
 
 
 def test_ranking_nothing_is_an_error_not_an_empty_result() -> None:

@@ -1216,10 +1216,12 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         elif record_path.exists():
             failures[candidate.id] = jsonio.read(record_path).get("failure", {})
     _check_scored_on_the_same_rows(metrics_by_id)
+    _check_same_jackknife_groups(metrics_by_id)
 
     ranking = rank_candidates(
         metrics_by_id,
         plan.evaluation.weights,
+        margin=plan.evaluation.margin,
         justification=plan.evaluation.justification,
         failures=failures,
     )
@@ -1237,9 +1239,38 @@ def _cmd_rank(args: argparse.Namespace) -> dict[str, Any]:
         evidence=[f"metrics.{candidate}" for candidate in metrics_by_id],
         options_considered=sorted(metrics_by_id),
         weights_applied=ranking["weights_applied"],
+        # Section 3.8: the winner is qualified in the record itself, so an entry read
+        # alone never presents a choice the margin could not separate as unqualified.
+        leader=ranking["leader"],
+        margin=ranking["margin"],
+        close_competitors=[c["id"] for c in ranking["close_competitors"]],
+        discriminated=ranking["discriminated"],
         plan_digest=ranking["plan_digest"],
     )
     return ranking
+
+
+def _check_same_jackknife_groups(metrics_by_id: dict[str, Any]) -> None:
+    """Refuse to pair standard errors across candidates jackknifed on different groups.
+
+    The groups follow from the run's seed and the scored rows, so candidates scored on
+    the same rows have the same groups. A candidate with no groups recorded simply has
+    no standard error; two with different groups would pair replicates that left out
+    different rows, and the paired standard error would mean nothing.
+    """
+    groups = {
+        candidate_id: (record.get("jackknife") or {}).get("groups")
+        for candidate_id, record in metrics_by_id.items()
+    }
+    distinct = {value for value in groups.values() if value is not None}
+    if len(distinct) <= 1:
+        return
+    raise ContractError(
+        "these candidates were jackknifed on different groups of rows, so their "
+        f"standard errors cannot be paired: {groups}. The groups follow from the run's "
+        "seed and the scored rows, so this record was not written by this run's "
+        "`evaluate`. Run `drtools evaluate` again for each candidate."
+    )
 
 
 def _check_scored_on_the_same_rows(metrics_by_id: dict[str, Any]) -> None:
@@ -1351,6 +1382,8 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         base_departure=(
             registered.base_departure.model_dump() if registered.base_departure else None
         ),
+        margin=registered.evaluation.margin,
+        margin_state=report["margin"],
         memory={**memory, "peak_bytes": report["memory"]["peak_bytes"]},
         candidates=[c.id for c in registered.candidates],
         # Recorded even when nothing was declared, so that "claimed no restraint"
