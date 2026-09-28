@@ -1,4 +1,5 @@
 import json
+from plans import complete
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 # perplexity is kept well below n/3 = 20 for the 60-row dataset these tests profile;
@@ -19,7 +20,7 @@ def _prepared(cli, csv_dataset, tmp_path, weights):
     runs = tmp_path / "runs"
     cli("profile", "--data", csv_dataset(rows=60, cols=8),
         "--runs-root", runs, "--run-id", "r1")
-    (runs / "r1" / "plan.json").write_text(json.dumps(_plan(weights)), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(_plan(weights))), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     return runs / "r1"
 
@@ -53,7 +54,7 @@ def test_rank_refuses_a_plan_rewritten_after_the_fact(cli, csv_dataset, tmp_path
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("rank", "--run-dir", run)
 
@@ -101,7 +102,7 @@ def test_rereg_after_tampering_refuses(cli, csv_dataset, tmp_path):
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 
@@ -131,11 +132,11 @@ def test_rereg_with_different_base_preprocessing_refuses(cli, csv_dataset, tmp_p
         "candidates": [{"id": "a", "stages": PCA}],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "declared"},
     }
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
 
     plan["base_preprocessing"] = []
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     result = cli("validate-plan", "--run-dir", runs / "r1")
 
     assert result.code == 2
@@ -146,7 +147,7 @@ def test_rereg_dropping_a_candidate_refuses(cli, csv_dataset, tmp_path):
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})  # registers a, b
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"] = [c for c in plan["candidates"] if c["id"] != "b"]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 
@@ -167,7 +168,7 @@ def test_adding_a_new_candidate_to_the_registration_stays_legal(cli, csv_dataset
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["candidates"].append({"id": "c", "stages": PCA})
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 
@@ -195,7 +196,7 @@ def test_copying_the_live_plan_over_the_registration_does_not_launder_it(
 
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("rank", "--run-dir", run).code == 2
 
     # The bypass: make the registration agree with the edited plan.
@@ -219,7 +220,7 @@ def test_the_divergence_message_does_not_offer_overwriting_the_registration(
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["evaluation"]["weights"] = {"runtime_s": 1.0}
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("rank", "--run-dir", run)
 
@@ -256,7 +257,7 @@ def _prepared_with_ceiling(cli, csv_dataset, tmp_path, ceiling):
         "--runs-root", runs, "--run-id", "r1")
     plan = _plan({"trustworthiness": 1.0})  # candidates a and b
     plan["max_candidates"] = ceiling
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", runs / "r1").code == 0
     return runs / "r1"
 
@@ -305,7 +306,7 @@ def test_raising_a_declared_ceiling_after_registering_refuses(
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["max_candidates"] = 5
     plan["candidates"].append({"id": "c", "stages": PCA})
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 
@@ -321,7 +322,7 @@ def test_tightening_a_declared_ceiling_stays_legal(cli, csv_dataset, tmp_path):
     run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 5)
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["max_candidates"] = 3
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 
@@ -337,7 +338,7 @@ def test_declaring_a_ceiling_where_none_was_declared_stays_legal(
     run = _prepared(cli, csv_dataset, tmp_path, {"trustworthiness": 1.0})
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["max_candidates"] = 3
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
 
@@ -349,7 +350,7 @@ def test_dropping_a_declared_ceiling_back_to_the_budgets_refuses(
     run = _prepared_with_ceiling(cli, csv_dataset, tmp_path, 2)
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     del plan["max_candidates"]
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 

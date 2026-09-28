@@ -6,6 +6,9 @@ k=15 over 400 — and `rank` put them in one table with no caveat, the subsample
 winning on a trustworthiness measured over a few dozen points. k is now fixed once, when
 the reference is, and a candidate whose rows cannot carry it is refused rather than
 quietly rescored at a smaller one.
+
+Since day 12 a subsample registers only in front of a method whose limit the data
+exceeds, so the reproduction subsamples Isomap on a dataset above its 5,000 rows.
 """
 
 import json
@@ -13,20 +16,22 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from plans import complete
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 SUBSAMPLED = [
     {"op": "subsample", "params": {"n_samples": 30}},
-    {"op": "pca", "params": {"n_components": 2}},
+    {"op": "isomap", "params": {"n_components": 2}},
 ]
+ROWS = 6000
 
 
 @pytest.fixture
 def wide_csv(tmp_path):
-    """400 rows, enough that the rule saturates at k=15 and a subsample cannot carry it."""
+    """Enough rows that the rule saturates at k=15 and Isomap's limit is exceeded."""
     rng = np.random.default_rng(0)
     frame = pd.DataFrame(
-        rng.normal(size=(400, 8)), columns=[f"f{i}" for i in range(8)]
+        rng.normal(size=(ROWS, 8)), columns=[f"f{i}" for i in range(8)]
     )
     path = tmp_path / "wide.csv"
     frame.to_csv(path, index=False)
@@ -37,7 +42,7 @@ def wide_csv(tmp_path):
 def run_with_two_candidates(cli, wide_csv, tmp_path):
     runs = tmp_path / "runs"
     cli("profile", "--data", wide_csv, "--runs-root", runs, "--run-id", "r1")
-    plan = {
+    plan = complete({
         "dataset": "d",
         "candidates": [
             {"id": "full", "stages": PCA},
@@ -47,7 +52,7 @@ def run_with_two_candidates(cli, wide_csv, tmp_path):
             "weights": {"trustworthiness": 1.0},
             "justification": "declared up front",
         },
-    }
+    })
     (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", runs / "r1").code == 0
     return runs / "r1"
@@ -70,7 +75,7 @@ def test_candidates_that_subsample_differently_cannot_be_ranked_together(
     # The one that subsampled is refused, and the refusal names the subsample and the
     # way out rather than leaving the agent to infer either.
     assert small.code == 2
-    assert "subsampled to 30 of the reference's 400 rows" in small.stderr
+    assert "subsampled to 30 of the reference's 6000 rows" in small.stderr
     assert "k=15" in small.stderr
     assert "new run" in small.stderr
 

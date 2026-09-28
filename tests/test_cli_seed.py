@@ -1,4 +1,5 @@
 import json
+from plans import complete
 
 
 def _seed(run_dir):
@@ -53,7 +54,7 @@ def test_evaluating_without_seed_is_still_reproducible(cli, csv_dataset, tmp_pat
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
     }
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     cli("embed", "--run-dir", runs / "r1", "--id", "c1", "--in-process")
 
@@ -80,7 +81,7 @@ def test_evaluating_with_a_conflicting_seed_is_refused(cli, csv_dataset, tmp_pat
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "pinned"},
     }
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     cli("embed", "--run-dir", runs / "r1", "--id", "c1", "--in-process")
 

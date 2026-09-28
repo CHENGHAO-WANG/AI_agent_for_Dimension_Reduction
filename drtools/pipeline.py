@@ -148,6 +148,7 @@ def validate_stages(
     if not stages:
         raise PipelineError("a candidate needs at least one stage")
 
+    methods: list[str] = []
     for position, stage in enumerate(stages):
         op = stage["op"]
         try:
@@ -155,6 +156,26 @@ def validate_stages(
             resolved, _ = registry.resolve_params(op, stage["params"])
         except RegistryError as error:
             raise PipelineError(f"stage {position} ({op}): {error}") from None
+
+        # Section 3.9: one pre-step, then one method. A PCA of a PCA is the smaller PCA
+        # taken directly, and a third method has no useful occupant.
+        if spec.is_reduction or spec.is_visualization:
+            if op in methods:
+                raise PipelineError(
+                    f"stage {position} ({op}) repeats a method this candidate already "
+                    "runs, and a candidate's second method must differ from its "
+                    "first: a PCA of a PCA is the smaller PCA taken directly, so the "
+                    "extra stage spends a place in the chain and changes nothing. "
+                    "Drop the repeated stage."
+                )
+            if len(methods) == 2:
+                raise PipelineError(
+                    f"stage {position} ({op}) is this candidate's third reduction or "
+                    "visualization method, and a candidate holds at most two: one "
+                    f"pre-step, then one method ({' -> '.join(methods)} already). "
+                    "Drop the surplus stage."
+                )
+            methods.append(op)
 
         is_last = position == len(stages) - 1
         if not is_last and not spec.can_be_intermediate():

@@ -1,4 +1,5 @@
 import json
+from plans import complete
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -12,7 +13,7 @@ def _prepared(cli, csv_dataset, tmp_path):
         "candidates": [{"id": "a", "stages": PCA}],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     cli("validate-plan", "--run-dir", runs / "r1")
     return runs / "r1"
 

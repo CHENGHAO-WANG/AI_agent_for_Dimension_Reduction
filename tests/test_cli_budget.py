@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 from drtools.isolation import budget_timeout
+from plans import complete
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -39,7 +40,7 @@ def _registered(cli, csv_dataset, tmp_path, budget="standard"):
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }
-    (runs / "r1" / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (runs / "r1" / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", runs / "r1").code == 0
     return runs / "r1"
 
@@ -110,7 +111,7 @@ def test_the_budget_cannot_move_once_registered(cli, csv_dataset, tmp_path):
     run = _registered(cli, csv_dataset, tmp_path, budget="fast")
     plan = json.loads((run / "plan.json").read_text(encoding="utf-8"))
     plan["budget"] = "thorough"
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     result = cli("validate-plan", "--run-dir", run)
 

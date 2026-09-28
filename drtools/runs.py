@@ -93,6 +93,15 @@ class RunDir:
         return self.path / "plan.json"
 
     @property
+    def suggestions_dir(self) -> Path:
+        """Every suggestion `suggest-params` and `suggest-base` returned, one file each.
+
+        Persisted so that provenance can say whether a registered value followed the
+        suggestion or overrode it; returned only to the agent, it could not.
+        """
+        return self.path / "suggestions"
+
+    @property
     def manifest_path(self) -> Path:
         return self.path / "run.json"
 
@@ -223,6 +232,36 @@ def resolve_evidence(paths: list[str], artifacts: dict[str, Any]) -> dict[str, A
                 break
         resolved[path] = node
     return resolved
+
+
+def unresolved_message(unresolved: list[str], artifacts: dict[str, Any]) -> str:
+    """Name the broken key and the keys that do exist beside it.
+
+    An agent told only that something failed will guess again; told what is there, it
+    corrects.
+    """
+    lines = []
+    for key in unresolved:
+        parent, _, _ = key.rpartition(".")
+        if parent:
+            neighbour = resolve_evidence([parent], artifacts)[parent]
+        else:
+            neighbour = artifacts
+        if isinstance(neighbour, dict) and neighbour:
+            available = ", ".join(sorted(str(k) for k in neighbour))
+            # ASCII only. A console on a legacy codepage renders U+2014 as a literal
+            # "?", and this message exists to be read and acted on by the agent.
+            lines.append(f"  {key} -- {parent or 'the run'} holds: {available}")
+        else:
+            roots = ", ".join(sorted(artifacts)) or "nothing yet"
+            lines.append(f"  {key} -- no such path. This run holds: {roots}")
+    return (
+        "these evidence keys do not resolve against this run's artefacts:\n"
+        + "\n".join(lines)
+        + "\nCite a key that exists, or drop it. An empty evidence list is allowed and "
+        "renders as unsupported, but a citation pointing at nothing is a broken "
+        "rationale rather than a missing measurement."
+    )
 
 
 def _git_commit() -> str | None:

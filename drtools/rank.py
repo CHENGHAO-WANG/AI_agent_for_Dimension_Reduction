@@ -7,20 +7,57 @@ the whole point. Choosing a weighting after seeing the results would let the age
 whichever emphasis crowned the candidate that happened to win, and the rationale would
 read exactly the same in the report as an honest one.
 
-Runtime is the one metric with no absolute scale — two seconds is fast or slow only
-relative to the alternatives — so it is scaled within the cohort, and that difference is
-recorded rather than glossed.
+Runtime is measured and reported but never weighted (section 2.4): scaled within the
+cohort it let a candidate that could not win reverse the order of two that could, and by
+the time ranking happens its cost is already paid. So every weighted metric is on an
+absolute scale.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 
 from drtools.metrics import METRIC_SPECS
 
 WEIGHT_TOLERANCE = 1e-6
+
+#: Section 2.4's two defaults. A plan whose weights match one needs no evidence for the
+#: emphasis, unless the data has labels: then which default applies says whether the
+#: labels are trusted, and that is a decision. Anything else is a departure and must
+#: cite evidence. The focus weightings join on day 17, with the question that sets them.
+DEFAULT_WEIGHTINGS: dict[str, dict[str, float]] = {
+    "default": {
+        "trustworthiness": 0.25,
+        "continuity": 0.25,
+        "shepard_correlation": 0.5,
+    },
+    # Seventy per cent stays on unsupervised fidelity in its own 1 : 1 : 2 proportions;
+    # the labels are an outside check on the representation, not its goal.
+    "default_trusted_labels": {
+        "trustworthiness": 0.175,
+        "continuity": 0.175,
+        "shepard_correlation": 0.35,
+        "knn_label_preservation": 0.20,
+        "silhouette": 0.10,
+    },
+}
+
+
+def matching_default(weights: dict[str, float]) -> str | None:
+    """The default these weights are, to within rounding, or None for a departure.
+
+    Matched rather than declared: a field naming the default would restate the weights
+    and could disagree with them. A zero weight is the same as an absent one.
+    """
+    given = {name: value for name, value in weights.items() if value != 0}
+    for name, default in DEFAULT_WEIGHTINGS.items():
+        if set(given) == set(default) and all(
+            abs(given[metric] - value) <= WEIGHT_TOLERANCE
+            for metric, value in default.items()
+        ):
+            return name
+    return None
 
 
 class RankingError(ValueError):
@@ -44,19 +81,13 @@ def rank_candidates(
     available = _available_metrics(metrics_by_id)
     effective, dropped = _effective_weights(weights, available)
 
-    runtime_scale = _runtime_scale(metrics_by_id)
-
     scored = []
     for candidate_id, metrics in metrics_by_id.items():
         contributions: dict[str, dict[str, Any]] = {}
         total = 0.0
         for metric, weight in effective.items():
             raw = metrics["values"].get(metric)
-            normalised = (
-                _normalise_runtime(raw, runtime_scale)
-                if metric == "runtime_s"
-                else METRIC_SPECS[metric].normalise(raw)
-            )
+            normalised = METRIC_SPECS[metric].normalise(raw)
             if normalised is None:
                 continue
             total += weight * normalised
@@ -86,7 +117,7 @@ def rank_candidates(
         "weights_dropped": dropped,
         "justification": justification,
         "failed_candidates": sorted(failures or {}),
-        "notes": _notes(scored, dropped, runtime_scale, failures or {}),
+        "notes": _notes(scored, dropped, failures or {}),
     }
 
 
@@ -99,6 +130,14 @@ def _check_weights(weights: dict[str, float]) -> None:
         raise RankingError(
             f"unknown metric(s) in the weighting: {unknown}. The battery is "
             f"{', '.join(sorted(METRIC_SPECS))}."
+        )
+    unweightable = sorted(name for name in weights if not METRIC_SPECS[name].weightable)
+    if unweightable:
+        raise RankingError(
+            f"{unweightable} cannot carry weight. Runtime is measured and reported for "
+            "every candidate, never weighted: by the time ranking happens the cost is "
+            "already paid, it varies on replay, and it rewards a candidate for looking "
+            "at less data. Put its weight on the fidelity metrics."
         )
     negative = sorted(name for name, value in weights.items() if value < 0)
     if negative:
@@ -143,29 +182,9 @@ def _effective_weights(
     return {name: value / total for name, value in usable.items()}, dropped
 
 
-def _runtime_scale(metrics_by_id: dict[str, dict[str, Any]]) -> tuple[float, float]:
-    times = [
-        metrics["values"].get("runtime_s")
-        for metrics in metrics_by_id.values()
-        if metrics["values"].get("runtime_s") is not None
-    ]
-    return (min(times), max(times)) if times else (0.0, 0.0)
-
-
-def _normalise_runtime(value: float | None, scale: tuple[float, float]) -> float | None:
-    """Fastest candidate scores 1, slowest 0. Cohort-relative by necessity."""
-    if value is None:
-        return None
-    fastest, slowest = scale
-    if slowest <= fastest:
-        return 1.0
-    return float(np.clip(1.0 - (value - fastest) / (slowest - fastest), 0.0, 1.0))
-
-
 def _notes(
     scored: list[dict[str, Any]],
     dropped: dict[str, float],
-    runtime_scale: tuple[float, float],
     failures: dict[str, dict[str, Any]],
 ) -> list[str]:
     notes: list[str] = []
@@ -188,14 +207,6 @@ def _notes(
                 "is inside the noise of stochastic methods and repeated subsampling. "
                 "They should be treated as tied rather than ranked."
             )
-
-    fastest, slowest = runtime_scale
-    if slowest > 0 and slowest / max(fastest, 1e-9) > 10:
-        notes.append(
-            f"runtimes span {fastest:.2f}s to {slowest:.2f}s, so any weight on runtime "
-            "dominates the comparison between the extremes; it is scaled within this "
-            "cohort because runtime has no absolute best value."
-        )
 
     if failures:
         notes.append(

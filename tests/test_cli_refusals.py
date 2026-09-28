@@ -7,6 +7,7 @@ to be one of those.
 """
 
 import json
+from plans import complete
 
 PCA = [{"op": "pca", "params": {"n_components": 2}}]
 
@@ -41,7 +42,7 @@ def test_re_profiling_after_registering_leaves_embed_working(cli, csv_dataset, t
     `embed` in the run stayed wedged until `validate-plan` was run again.
     """
     run, data = _profiled(cli, csv_dataset, tmp_path)
-    (run / "plan.json").write_text(json.dumps(_plan()), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(_plan())), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", run).code == 0
 
     reprofile = cli("profile", "--data", data, "--run-dir", run)
@@ -63,7 +64,7 @@ def test_re_profiling_preserves_the_registered_digest_on_the_manifest(
     cli, csv_dataset, tmp_path
 ):
     run, data = _profiled(cli, csv_dataset, tmp_path)
-    (run / "plan.json").write_text(json.dumps(_plan()), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(_plan())), encoding="utf-8")
     cli("validate-plan", "--run-dir", run)
     before = json.loads((run / "run.json").read_text(encoding="utf-8"))["plan_digest"]
 
@@ -132,8 +133,8 @@ def test_evaluating_a_candidate_that_was_never_embedded_names_the_missing_step(
 ):
     run, _ = _profiled(cli, csv_dataset, tmp_path)
     (run / "plan.json").write_text(
-        json.dumps(_plan(candidates=[{"id": "a", "stages": PCA},
-                                     {"id": "b", "stages": PCA}])),
+        json.dumps(complete(_plan(candidates=[{"id": "a", "stages": PCA},
+                                              {"id": "b", "stages": PCA}]))),
         encoding="utf-8",
     )
     cli("validate-plan", "--run-dir", run)

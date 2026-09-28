@@ -47,7 +47,7 @@ from drtools.report import (
 )
 from drtools.rank import RankingError, rank_candidates
 from drtools.registry import RegistryError, load_registry
-from drtools.runs import MISSING, RunDir, resolve_evidence
+from drtools.runs import MISSING, RunDir, resolve_evidence, unresolved_message
 from drtools.status import (
     MAX_ATTEMPTS,
     attempts as candidate_attempts,
@@ -246,6 +246,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(suggest)
     suggest.add_argument("--op", required=True, help="the op to suggest parameters for")
+    suggest.add_argument(
+        "--params",
+        help="JSON object of the stage's other settings, for a suggestion that depends "
+        "on them -- LLE's neighbour minimum grows with method and n_components",
+    )
     suggest.set_defaults(handler=_cmd_suggest_params)
 
     suggest_base_parser = subparsers.add_parser(
@@ -431,7 +436,7 @@ def _cmd_log_decision(args: argparse.Namespace) -> dict[str, Any]:
     resolved = resolve_evidence(evidence, artifacts)
     unresolved = [key for key, value in resolved.items() if value is MISSING]
     if unresolved:
-        raise ContractError(_unresolved_message(unresolved, artifacts))
+        raise ContractError(unresolved_message(unresolved, artifacts))
 
     extra = {
         key: value
@@ -478,6 +483,14 @@ def _artifacts_for_evidence(run: RunDir) -> dict[str, Any]:
         plan["registered"] = jsonio.read(registered)
         artifacts["plan"] = plan
 
+    if run.suggestions_dir.exists():
+        suggestions = {
+            path.stem: jsonio.read(path)
+            for path in sorted(run.suggestions_dir.glob("*.json"))
+        }
+        if suggestions:
+            artifacts["suggestions"] = suggestions
+
     metrics_dir = run.path / "metrics"
     if metrics_dir.exists():
         metrics = {
@@ -486,36 +499,6 @@ def _artifacts_for_evidence(run: RunDir) -> dict[str, Any]:
         if metrics:
             artifacts["metrics"] = metrics
     return artifacts
-
-
-def _unresolved_message(unresolved: list[str], artifacts: dict[str, Any]) -> str:
-    """Name the broken key and the keys that do exist beside it.
-
-    An agent told only that something failed will guess again; told what is there, it
-    corrects.
-    """
-    lines = []
-    for key in unresolved:
-        parent, _, _ = key.rpartition(".")
-        if parent:
-            neighbour = resolve_evidence([parent], artifacts)[parent]
-        else:
-            neighbour = artifacts
-        if isinstance(neighbour, dict) and neighbour:
-            available = ", ".join(sorted(str(k) for k in neighbour))
-            # ASCII only. A console on a legacy codepage renders U+2014 as a literal
-            # "?", and this message exists to be read and acted on by the agent.
-            lines.append(f"  {key} -- {parent or 'the run'} holds: {available}")
-        else:
-            roots = ", ".join(sorted(artifacts)) or "nothing yet"
-            lines.append(f"  {key} — no such path. This run holds: {roots}")
-    return (
-        "these evidence keys do not resolve against this run's artefacts:\n"
-        + "\n".join(lines)
-        + "\nCite a key that exists, or drop it. An empty evidence list is allowed and "
-        "renders as unsupported, but a citation pointing at nothing is a broken "
-        "rationale rather than a missing measurement."
-    )
 
 
 def _cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
@@ -688,6 +671,9 @@ def _cmd_embed(args: argparse.Namespace) -> dict[str, Any]:
         outcome = {"id": args.id, "status": "ok", **result.as_dict()}
         jsonio.write(embeddings / f"{args.id}.json", outcome)
 
+    stages_recorded = _apply_registered_provenance(run, args.id)
+    if stages_recorded is not None and "stages" in outcome:
+        outcome["stages"] = stages_recorded
     _log_embed_outcome(run, args.id, candidate, plan, outcome)
     return outcome
 
@@ -837,6 +823,18 @@ def _check_reregistration(run: RunDir, existing: Plan, proposed: Plan) -> None:
             "implement yet, so a changed weighting means starting a new run."
         )
 
+    # The argument for the weighting is frozen with it. Otherwise a re-registration
+    # after results exist could keep the weights and swap in evidence citing them, and
+    # the weighting would read as justified by numbers it was registered before.
+    if proposed.evaluation != existing.evaluation:
+        raise ContractError(
+            "this run already registered a plan, and the plan just submitted changes "
+            "the evaluation's justification or evidence. The whole evaluation block "
+            "is frozen at registration, not only its weights: the reasons for a "
+            "weighting are what registration fixed before any result existed. Restore "
+            "the registered evaluation, or start a new run."
+        )
+
     existing_base = [stage.model_dump() for stage in existing.base_preprocessing]
     proposed_base = [stage.model_dump() for stage in proposed.base_preprocessing]
     if proposed_base != existing_base:
@@ -937,7 +935,7 @@ def _cmd_prepare_reference(args: argparse.Namespace) -> dict[str, Any]:
     """
     run = _require_run(args)
     plan = _registered_plan(run)
-    stages = [stage.model_dump() for stage in plan.base_preprocessing]
+    stages = [stage.model_dump(exclude={"overrides"}) for stage in plan.base_preprocessing]
     X, labels, _ = read_cache(run)
     seed = run_seed(run, args.seed)
 
@@ -1199,19 +1197,22 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     # registered, which is the "refuse and write nothing" contract broken by the
     # command that exists to enforce contracts.
     registered_path = run.path / "plan.registered.json"
+    frozen: dict[str, Any] = {}
     if registered_path.exists():
-        _check_reregistration(
-            run,
-            _plan_from(jsonio.read(registered_path), "plan.registered.json"),
-            plan,
-        )
+        existing = _plan_from(jsonio.read(registered_path), "plan.registered.json")
+        _check_reregistration(run, existing, plan)
+        frozen = _frozen_provenance(run, existing, plan)
 
     profile = run.read_artifact("profile.json")
     recon = (
         run.read_artifact("recon.json") if run.recon_path.exists() else None
     )
 
-    report = validate_plan(plan, profile, recon)
+    report = validate_plan(
+        plan, profile, recon,
+        artifacts=_artifacts_for_evidence(run),
+        frozen_provenance=frozen,
+    )
     jsonio.write(run.path / "plan_validation.json", report)
 
     for finding in report["findings"]:
@@ -1249,6 +1250,9 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
         evidence=["profile.shape.n_samples"],
         plan_digest=digest,
         weights=dict(registered.evaluation.weights),
+        weighting=report["weighting"],
+        provenance=report["provenance"],
+        base_matches_suggestion=report["base_matches_suggestion"],
         candidates=[c.id for c in registered.candidates],
         # Recorded even when nothing was declared, so that "claimed no restraint"
         # and "this record predates the field" stay distinguishable.
@@ -1258,11 +1262,79 @@ def _cmd_validate_plan(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def _frozen_provenance(run: RunDir, existing: Plan, proposed: Plan) -> dict[str, Any]:
+    """Provenance the last registration recorded, for candidates it registered unchanged.
+
+    Recomputing it would compare their values against whatever the suggestion files
+    hold now, so a suggestion requested after registration could relabel a value or
+    refuse a candidate that registered cleanly.
+    """
+    registrations = [
+        record for record in run.decisions() if record.get("stage") == "register_plan"
+    ]
+    recorded = (registrations[-1].get("provenance") if registrations else None) or {}
+    before = {candidate.id: candidate.stages for candidate in existing.candidates}
+    return {
+        candidate.id: recorded[candidate.id]
+        for candidate in proposed.candidates
+        if candidate.id in recorded and before.get(candidate.id) == candidate.stages
+    }
+
+
+def _apply_registered_provenance(run: RunDir, candidate_id: str) -> list[Any] | None:
+    """Replace the pipeline's two-state provenance with the one registration froze.
+
+    The pipeline knows only whether a value was given; registration knows whether it
+    followed a persisted suggestion or overrode it, and why.
+    """
+    registrations = [
+        record for record in run.decisions() if record.get("stage") == "register_plan"
+    ]
+    frozen = ((registrations[-1].get("provenance") if registrations else None) or {}).get(
+        candidate_id
+    )
+    path = run.path / "embeddings" / f"{candidate_id}.json"
+    if not frozen or not path.exists():
+        return None  # a run registered before day 12 keeps what the pipeline recorded
+    record = jsonio.read(path)
+    stages = record.get("stages") or []
+    if [stage.get("op") for stage in stages] != [stage["op"] for stage in frozen]:
+        return None
+    for stage, registered in zip(stages, frozen):
+        stage["param_provenance"] = {
+            name: entry["state"] for name, entry in registered["params"].items()
+        }
+        overrides = {
+            name: {"suggested": entry.get("suggested"), "reason": entry.get("reason")}
+            for name, entry in registered["params"].items()
+            if entry["state"] == "overridden"
+        }
+        if overrides:
+            stage["param_overrides"] = overrides
+    jsonio.write(path, record)
+    return stages
+
+
 def _cmd_suggest_params(args: argparse.Namespace) -> dict[str, Any]:
+    """Suggest, and persist the suggestion so registration can tell an override.
+
+    A repeated call replaces the file: what registration compares against is the
+    suggestion on disk when the plan registers, which the registration record freezes.
+    """
     run = _require_run(args)
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
-    return {"op": args.op, "suggested": suggest(args.op, profile, recon)}
+    settings = _read_json_argument(args.params, flag="--params") if args.params else {}
+    if not isinstance(settings, dict):
+        raise ContractError("--params must be a JSON object of parameter names to values")
+    document = {
+        "op": args.op,
+        "for_params": settings,
+        "suggested": suggest(args.op, profile, recon, params=settings),
+    }
+    run.suggestions_dir.mkdir(exist_ok=True)
+    jsonio.write(run.suggestions_dir / f"{args.op}.json", document)
+    return document
 
 
 def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
@@ -1270,7 +1342,10 @@ def _cmd_suggest_base(args: argparse.Namespace) -> dict[str, Any]:
     run = _require_run(args)
     profile = run.read_artifact("profile.json")
     recon = run.read_artifact("recon.json") if run.recon_path.exists() else None
-    return suggest_base(profile, recon)
+    document = suggest_base(profile, recon)
+    run.suggestions_dir.mkdir(exist_ok=True)
+    jsonio.write(run.suggestions_dir / "base.json", document)
+    return document
 
 
 def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:

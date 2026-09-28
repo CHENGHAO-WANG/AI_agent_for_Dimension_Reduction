@@ -14,6 +14,7 @@ not a prose copy in the planning skill that drifts from it.
 from __future__ import annotations
 
 import json
+from plans import complete
 
 
 def _run(cli, tmp_path, data, run_id="r1"):
@@ -108,7 +109,7 @@ def test_a_suggested_plan_registers(cli, tmp_path):
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
 
     assert cli("validate-plan", "--run-dir", run).code == 0
     assert cli("prepare-reference", "--run-dir", run).code == 0

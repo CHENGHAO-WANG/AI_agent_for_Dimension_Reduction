@@ -185,7 +185,7 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
         ],
         "evaluation": {"weights": {"trustworthiness": 1.0}, "justification": "up front"},
     }
-    (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (run / "plan.json").write_text(json.dumps(complete(plan)), encoding="utf-8")
     assert cli("validate-plan", "--run-dir", run).code == 0
     cli("prepare-reference", "--run-dir", run)
     cli("embed", "--run-dir", run, "--id", "b", "--in-process")
@@ -221,6 +221,7 @@ def test_giving_up_on_a_candidate_goes_through_the_toolbox(cli, csv_dataset, tmp
 
 
 import pytest
+from plans import complete
 
 
 @pytest.mark.parametrize(
