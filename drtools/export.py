@@ -85,12 +85,22 @@ def write_export(run: RunDir) -> dict[str, Any]:
         for position in range(len(stages))
         if f"{position}.mean" in arrays
     ]
-    loadings_key = f"{len(stages) - 1}.components"
+    last_position = len(stages) - 1
+    loadings_key = f"{last_position}.components"
     if loadings_key in arrays:
+        components = arrays[loadings_key]
+        features_key = f"{last_position}.features"
+        # After an earlier reduction the method acts on that reduction's components,
+        # which are named for it: `pca_1` and on.
+        index = (
+            names[arrays[features_key]]
+            if features_key in arrays
+            else [f"{stages[last_position - 1]['op']}_{j + 1}" for j in range(components.shape[1])]
+        )
         loadings = pd.DataFrame(
-            arrays[loadings_key].T,
-            index=names[arrays[f"{len(stages) - 1}.features"]],
-            columns=[f"dim_{j + 1}" for j in range(arrays[loadings_key].shape[0])],
+            components.T,
+            index=index,
+            columns=[f"dim_{j + 1}" for j in range(components.shape[0])],
         )
         loadings.index.name = "feature"
         loadings.to_csv(data / f"{candidate}.loadings.csv")

@@ -4113,3 +4113,27 @@ first on the code about to change. No cut is planned for now; the rule above sta
   turns rather than correctness; the graded runs need an allowlist written for them.
 
   791 tests, 292s.
+
+  *An external review of days 18 to 20, and the two defects it found.* A Codex review
+  over `b1e6f6f...HEAD` -- 36 files, some 1,750 inserted lines. Two findings, both
+  reproduced before anything was changed, both from day 19's export. No false positives,
+  as on days 9, 11 and 17.
+  - *A method after a reduction had its loadings labelled with the original features.*
+    The pipeline recorded, beside each stage's fitted arrays, the cached columns that
+    entered it, and kept doing so after a reduction, when what enters is components.
+    For `pca -> sparse_pca`, which registration accepts, sparse PCA's 2-by-4 loadings
+    met 20 feature names and the export raised, so `report` would have failed on such a
+    winner. A stage after a reduction now records no `features`, and the export names
+    its inputs for the reduction before it: `pca_1` and on. The review also called
+    `features_kept` misleading for such pipelines; it is not, since selection only ever
+    precedes the first reduction, so it names the features the pipeline consumed.
+  - *A refused refresh replaced the export anyway.* `report --refresh` wrote the export
+    before `_refresh_report` refused a hand-edited block, so after an adoption changed,
+    the unchanged report sat beside an export of a different candidate. The export is
+    now written inside the refresh, after its refusals and before the blocks that
+    describe it.
+
+  Each fix has a test that fails without it, checked by setting the fix aside.
+
+
+  793 tests, 303s.
