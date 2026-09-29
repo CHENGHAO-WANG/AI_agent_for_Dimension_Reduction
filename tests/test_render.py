@@ -87,3 +87,17 @@ def test_render_refuses_when_there_is_no_report(cli, finished_run):
 
     assert result.code == 2
     assert "drtools report" in result.stderr
+
+
+def test_a_rendered_run_is_done_until_something_it_describes_changes(cli, finished_run):
+    """Found on day 21: `next` stayed `report` on a finished run, so `/analyze` would
+    resume a finished run and write its report again."""
+    cli("report", "--run-dir", finished_run.path)
+    assert cli("render", "--run-dir", finished_run.path).code == 0
+    assert cli("status", "--run-dir", finished_run.path).payload["next"] == "done"
+
+    assert cli("rank", "--run-dir", finished_run.path).code == 0
+    assert cli("status", "--run-dir", finished_run.path).payload["next"] == "report"
+
+    assert cli("render", "--run-dir", finished_run.path).code == 0
+    assert cli("status", "--run-dir", finished_run.path).payload["next"] == "done"

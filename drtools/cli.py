@@ -432,7 +432,7 @@ RESERVED_DECISION_FIELDS = frozenset(
 
 LIFECYCLE_STAGES = frozenset(
     {"recon", "embed", "rank", "validate_plan", "register_plan", "checkpoint", "compare",
-     "recommend", "adopt"}
+     "recommend", "adopt", "render"}
 )
 """Stages only the toolbox may write.
 
@@ -1951,7 +1951,14 @@ def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:
             "diagnostic figures for that purpose. Say in section 8 what distinguishes "
             "each from the winner, naming it by its id, and render again."
         )
-    return render_pdf(source, run.results_dir / "report.pdf")
+    rendered = render_pdf(source, run.results_dir / "report.pdf")
+    run.log_decision(
+        stage="render",
+        question="Is the report rendered for the run as it stands?",
+        chosen="report.pdf",
+        rationale="every generated block matched the run when the PDF was produced",
+    )
+    return rendered
 
 
 def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
@@ -2023,7 +2030,7 @@ def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
         return _refresh_report(run, path)
 
     stage = run_status(run)["next"]
-    if stage != "report":
+    if stage not in ("report", "done"):
         raise ContractError(
             f"this run's next stage is {stage}, not report, so a report written now "
             "would describe an analysis that has not finished. Run `drtools status "

@@ -50,7 +50,8 @@ drtools status --run-dir runs/<id>
 
 `next` names the stage to enter: `profile`, `recon` or `checkpoint` (all
 **profile-dataset**), `plan`, `execute`, `evaluate` or `report`. Enter that stage's
-skill.
+skill. `done` means the report is rendered for the Run as it stands: go to **Finish**.
+A Run is unfinished until `status` says `done`.
 
 From there the two are the same. Re-read `status` after each stage rather than
 assuming the next one — a Candidate that failed changes what comes next.
