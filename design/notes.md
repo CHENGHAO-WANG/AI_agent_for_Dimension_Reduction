@@ -60,7 +60,7 @@ When no built-in loader recognises the input, the agent may write a small adapte
 which the toolbox contract-checks (shape, dtype, finiteness, label alignment) before
 anything else runs. A narrow, verified escape hatch.
 
-Recorded as ADR-0001.
+Recorded in the day 1 log; the ADR-0001 once planned for it was dropped on day 22.
 
 ### 2.2 The run directory is the only state
 
@@ -1810,7 +1810,7 @@ script and installs separately, so `/analyze` checks for it before anything else
 what is missing rather than letting the agent meet a shell error and improvise.
 
 Project-local `.venv` with a curated pinned `requirements.txt`.
-Docs kept lean: `README.md`, `CONTEXT.md`, this file, and one ADR. No prose `docs/`
+Docs kept lean: `README.md`, `CONTEXT.md` and this file. No prose `docs/`
 tree: an architecture page would be a third copy of what the README, the four-page
 report and these notes already carry between them.
 
@@ -1845,7 +1845,7 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 20 | First end-to-end run on dataset 1 under the new design; fix what it breaks |
 | 21 | End-to-end on dataset 2 (large) |
 | 22 | ~~Rules-planner hedge + ablation run~~ -- dropped, as the cut order named it |
-| 23 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
+| 23 | Agent-behaviour tests, README polish, CONTEXT.md review |
 | 24 | Final graded runs, reports, submit |
 
 Synthetic fixtures land on day 1 and become the daily smoke test: every day ends with
@@ -4271,9 +4271,8 @@ first on the code about to change. No cut is planned for now; the rule above sta
 - **Day 22** -- The rules-planner hedge is dropped, by the user, before any of it was
   built. It was the next item on the cut order, and the cut order exists for this.
 
-  *What it costs*, since section 6 named four things it would buy:
-  - A grader without Claude Code has no working system. The toolbox still runs command
-    by command, but nothing writes a Plan without the agent.
+  *What it costs*, of the four things section 6 said it would buy. A working system
+  for a grader without Claude Code is not one: the deliverable is the plugin.
   - There is no ablation. The report cannot show where the agent's judgment beat a set
     of rules on the same data, only what the agent chose and why.
   - A Plan stays reproducible only conditional on itself (section 2.2): no nominating
@@ -4284,3 +4283,8 @@ first on the code about to change. No cut is planned for now; the rule above sta
   *Changed with it.* The README advertised `drtools run --planner=rules`, which never
   existed; the line is gone. Section 7 lists the rules planner as future work, and the
   cut order is now empty: a further slip has nothing left to cut but scope inside a day.
+
+  *ADR-0001 is dropped as well*, by the user, as having no practical use: no code, skill
+  or test reads it, and the decision it would restate, the locked core and open adapter,
+  is already recorded in section 2.1 and the day 1 log. `docs/` is never created, and
+  the README no longer lists it.

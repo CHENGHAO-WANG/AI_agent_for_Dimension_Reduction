@@ -76,7 +76,6 @@ pip install --no-deps trimap==1.2.0
 | `runs/` | Run directories (git-ignored) |
 | `tests/` | Pipeline and agent-behaviour tests over synthetic fixtures |
 | `design/notes.md` | Design decisions and their rationale |
-| `docs/adr/` | Architecture decision records |
 
 ## License
 
