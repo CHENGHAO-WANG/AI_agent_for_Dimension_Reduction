@@ -38,7 +38,10 @@ If a `--run-id` was given and that Run exists, or if `runs/` holds an unfinished
 this dataset, this is a resumption. Otherwise it is a new Run. The two open
 differently, because `status` reads a Run and cannot create one.
 
-**A new Run.** Enter **profile-dataset** and start at its first step.
+**A new Run.** Enter **profile-dataset** and start at its first step. Plan it from its
+own Profile and Reconnaissance alone, and leave other Runs under `runs/` unread: a
+choice carried over from one rests on nothing this Run can cite, and a replay of this
+Run cannot reproduce it.
 `drtools profile` is what creates the Run directory, and until it has run there is
 no position to read: every other command refuses a path that does not exist.
 
@@ -59,10 +62,13 @@ assuming the next one — a Candidate that failed changes what comes next.
 Write the JSON you pass to a command as `@file` into `runs/<id>/inputs/`, so the Run
 keeps what it was given and the user's working directory stays as it was.
 
-Run each `drtools` command in the foreground, with the longest timeout your tool allows,
-and read what it returns before the next step. A Run under `--auto` is often started as
-`claude -p`, and that session ends when your turn does: a command still running in the
-background ends with it, and the Run stops half-done.
+Run each `drtools` command as a call of its own, in the foreground, with the longest
+timeout your tool allows, and read what it returns before the next step. A Run under
+`--auto` is often started as `claude -p`, and that session ends when your turn does: a
+command still running in the background ends with it, and the Run stops half-done. A
+call that outlasts its timeout is moved to the background for you, and on a large
+dataset one `embed` or `evaluate` can take minutes, so several chained into one call
+end the Run the same way.
 
 Nothing about the Run lives in this conversation. If context is lost, `status` restores
 the position completely.
