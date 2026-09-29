@@ -41,7 +41,12 @@ Two pieces: the plugin carries the agent's skills and the `/analyze` command, an
 
 ```bash
 pip install dr-agent            # the toolbox
+pip install --no-deps trimap==1.2.0
 ```
+
+TriMap installs on its own line: its package declares `annoy`, which has no Windows
+wheel for Python 3.12, and the class the toolbox uses does not need it. Without it,
+TriMap refuses to run and every other method works.
 
 Then install the plugin from this repository in Claude Code, and run:
 
@@ -56,6 +61,7 @@ git clone <repo-url> && cd dr-agent
 python -m venv .venv
 .venv/Scripts/activate          # Windows;  source .venv/bin/activate elsewhere
 pip install -r requirements.txt
+pip install --no-deps trimap==1.2.0
 ```
 
 The toolbox is also usable on its own, with a rule-based planner and no LLM:

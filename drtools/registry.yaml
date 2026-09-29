@@ -751,3 +751,163 @@ ops:
         choices: [euclidean, cosine, correlation, manhattan]
     fails_when:
       - n_neighbors at or above n_samples
+
+  # PHATE, PaCMAP and TriMap, added on day 18 (section 7). Each was imported and fitted
+  # on synthetic data before its record was written. scales_to is the row count at which
+  # one fit on 50 features takes about 200 s, a third of the standard budget, never set
+  # beyond twice the largest count measured: at 107,000 rows PHATE took 54 s, PaCMAP
+  # 66 s and TriMap 193 s. Settings not listed under params run at the library's default
+  # and are recorded in the executor's notes.
+  phate:
+    kind: visualization
+    family: diffusion/potential
+    roles: [terminal]
+    summary: >
+      Potential of heat-diffusion for affinity-based transition embedding (Moon et al.,
+      2019).
+    preserves: >
+      Progressions and branches as well as clusters. Distances between diffusion
+      potentials are embedded by MDS, so how far apart two groups sit carries some
+      information about how many diffusion steps separate them.
+    assumes: >
+      That the data lie on a connected, locally smooth structure along which diffusion is
+      meaningful, such as cells moving through a developmental trajectory.
+    distorts: >
+      Fine local detail, which the diffusion smooths away, and it can draw continuous
+      paths through data that are really separate clusters. Density is flattened by the
+      adaptive kernel. It still runs on a disconnected neighbour graph, but the library
+      warns that relations between the components may then be misrepresented.
+    reading:
+      distances: >
+        Distances along a branch roughly follow progression through the data; distances
+        between separate groups are kept better than by t-SNE but are not to scale.
+      gaps: >
+        A gap means diffusion rarely crosses between the groups. Its width is not a
+        measure of how different they are.
+      sizes: >
+        The adaptive kernel evens out density, so a group's size says little about its
+        spread or its number of points.
+    handles_sparse: true
+    complexity: >
+      nearest-neighbour graph on every row, then diffusion and MDS on 2,000 landmarks
+    scales_to: 200000
+    stochastic: true
+    euclidean: true
+    nested_in_d: false
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: fixed
+    requires_connected_graph: false
+    emphasis: balanced
+    # The library's transform warns against its own use on new rows, and places them at
+    # the kernel-weighted mean of the fitted coordinates, which section 3.12 rejected.
+    new_rows: none
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 5
+        min: 2
+        describes: >
+          PHATE's `knn`: the neighbourhood that sets each point's kernel bandwidth. Larger
+          values connect the graph more and smooth more local detail away
+    fails_when:
+      - n_neighbors at or above n_samples
+
+  pacmap:
+    kind: visualization
+    family: neighbour_embedding
+    roles: [terminal]
+    summary: >
+      Pairwise controlled manifold approximation (Wang, Huang, Rudin and Shaposhnik,
+      2021).
+    preserves: >
+      Local neighbourhoods and the arrangement of groups together. It is fitted on three
+      kinds of pair -- near pairs, mid-near pairs and further pairs -- weighted in phases
+      so the global layout is set before the local detail.
+    assumes: >
+      That Euclidean nearest neighbours, found after an internal PCA to 100 dimensions
+      when the input is wider, describe the data's local structure.
+    distorts: >
+      Distances within and between groups, which are not to scale. Density is not kept.
+    reading:
+      distances: >
+        The relative placement of groups is kept better than by t-SNE or UMAP, but
+        distances are not to scale.
+      gaps: >
+        A gap separates groups, but its width does not measure how different they are.
+      sizes: >
+        Density is not preserved, so a group's size says little about its spread.
+    handles_sparse: false
+    complexity: approximate nearest neighbours, then O(n) optimisation over sampled pairs
+    scales_to: 200000
+    stochastic: true
+    euclidean: true
+    nested_in_d: false
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: fixed
+    requires_connected_graph: false
+    emphasis: balanced
+    new_rows: transform
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 10
+        min: 2
+        describes: >
+          the number of near pairs per point; mid-near and further pairs are set from it
+          by the library's ratios of 0.5 and 2
+    fails_when:
+      - n_neighbors at or above n_samples
+
+  trimap:
+    kind: visualization
+    family: neighbour_embedding
+    roles: [terminal]
+    summary: >
+      Dimensionality reduction with triplet constraints (Amid and Warmuth, 2019).
+    preserves: >
+      Global structure: the embedding is fitted so that, within sampled triplets of
+      points, the point nearer the anchor in the data stays nearer in the picture.
+    assumes: >
+      That Euclidean nearest neighbours, found after an internal PCA to 100 dimensions
+      when the input is wider, and random triplets together describe the data.
+    distorts: >
+      Local neighbourhoods, which are kept less faithfully than by t-SNE or UMAP, and
+      density.
+    reading:
+      distances: >
+        The relative placement of groups is the part to read; distances are still not to
+        scale.
+      gaps: >
+        A gap separates groups, but its width does not measure how different they are.
+      sizes: >
+        Density is not preserved, so a group's size says little about its spread.
+    handles_sparse: false
+    complexity: exact nearest neighbours, then O(n) optimisation over sampled triplets
+    scales_to: 110000
+    stochastic: true
+    euclidean: true
+    nested_in_d: false
+    tuning:
+      param: n_neighbors
+      base: suggestion
+      criterion: fixed
+    requires_connected_graph: false
+    emphasis: global
+    new_rows: none
+    params:
+      n_components: {type: int, default: 2, min: 1}
+      n_neighbors:
+        type: int
+        default: 12
+        min: 2
+        describes: >
+          TriMap's `n_inliers`: the nearest neighbours each point takes its triplets
+          from. Four outliers are sampled per inlier, and three random triplets per point
+    fails_when:
+      - n_neighbors at or above n_samples - 1

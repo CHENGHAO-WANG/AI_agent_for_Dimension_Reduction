@@ -28,7 +28,8 @@ drtools datasets
 
 If that is not found, stop and say so: the skills are installed but the toolbox is not.
 It installs with `pip install dr-agent`, or from a clone of the repository with
-`pip install -r requirements.txt`. Do not improvise around a missing `drtools` — every
+`pip install -r requirements.txt`; TriMap then takes `pip install --no-deps
+trimap==1.2.0`, and without it only TriMap is unavailable. Do not improvise around a missing `drtools` — every
 number in the report has to come from it.
 
 ## Start or resume

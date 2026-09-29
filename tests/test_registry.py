@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import numpy as np
 import openTSNE
+import pacmap
 import pytest
 import umap
+from trimap import TorchTRIMAP
 from sklearn.decomposition import PCA, KernelPCA, MiniBatchSparsePCA, TruncatedSVD
 from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
 
@@ -162,6 +164,7 @@ TRANSFORM_CLASSES = {
     "lle": (LocallyLinearEmbedding,),
     "tsne": (openTSNE.TSNEEmbedding,),
     "umap": (umap.UMAP,),
+    "pacmap": (pacmap.PaCMAP,),
 }
 
 
@@ -174,12 +177,19 @@ def test_every_method_declaring_a_transform_has_one_in_its_library(registry) -> 
 
 
 def test_the_methods_declared_without_a_transform_really_lack_one(registry) -> None:
-    """Diffusion Maps is written in the toolbox and has none; its Nystrom extension is day 14's."""
+    """Diffusion Maps is written in the toolbox and has none; its Nystrom extension is day 14's.
+
+    PHATE has one, but it warns against its own use on new rows (section 3.12 via the
+    registry), so it is declared without; TriMap has none at all.
+    """
     assert registry["laplacian_eigenmaps"].raw["new_rows"] == "nystrom"
     assert registry["diffusion_maps"].raw["new_rows"] == "nystrom"
     assert registry["mds"].raw["new_rows"] == "none"
     assert not hasattr(SpectralEmbedding, "transform")
     assert not hasattr(MDS, "transform")
+    assert registry["phate"].raw["new_rows"] == "none"
+    assert registry["trimap"].raw["new_rows"] == "none"
+    assert not hasattr(TorchTRIMAP, "transform")
 
 
 def _default_rule_cases():

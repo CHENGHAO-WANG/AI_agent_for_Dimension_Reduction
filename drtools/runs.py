@@ -30,13 +30,17 @@ TRACKED_PACKAGES = (
     "sklearn",
     "umap",
     "openTSNE",
+    "phate",
+    "pacmap",
+    "trimap",
+    "faiss",
     "torch",
     "scanpy",
     "matplotlib",
 )
 
 # Import name -> distribution name, where the two differ.
-DISTRIBUTION_NAMES = {"sklearn": "scikit-learn", "umap": "umap-learn"}
+DISTRIBUTION_NAMES = {"sklearn": "scikit-learn", "umap": "umap-learn", "faiss": "faiss-cpu"}
 
 
 def _timestamp() -> str:

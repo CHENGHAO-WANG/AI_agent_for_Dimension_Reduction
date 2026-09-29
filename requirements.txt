@@ -11,7 +11,10 @@ scikit-learn==1.9.1
 # Dimension reduction beyond scikit-learn
 umap-learn==0.5.12
 openTSNE==1.0.4          # substantially faster than sklearn's t-SNE at n > 10k
-torch==2.14.0            # MAP-GPLVM only; CPU build is sufficient at n <= 5000
+phate==2.0.0
+pacmap==0.9.1
+faiss-cpu==1.15.1        # exact nearest neighbours for TriMap; PaCMAP's index
+torch==2.14.0            # TriMap's TorchTRIMAP; the CPU build is sufficient
 
 # Single-cell handling and reference clustering
 scanpy==1.12.4
@@ -35,3 +38,8 @@ pytest==9.1.1
 # `sklearn.utils._message_with_time`, removed in modern scikit-learn, so it fails
 # at import against 1.9.1. Diffusion Maps is implemented directly in
 # drtools/executors instead — see design/notes.md.
+
+# Installed separately: trimap. Version 1.2.0 declares annoy, which publishes no
+# Windows wheel for Python 3.12 and needs a C++ compiler to build. Only its legacy
+# TRIMAP class imports annoy; the TorchTRIMAP class the executor uses does not. So:
+#     pip install --no-deps trimap==1.2.0

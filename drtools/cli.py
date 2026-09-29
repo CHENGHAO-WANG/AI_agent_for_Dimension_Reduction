@@ -13,6 +13,7 @@ should tell it what to fix.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gc
 import hashlib
 import json
@@ -94,7 +95,11 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE_ERROR
 
     try:
-        payload = args.handler(args)
+        # Standard output carries the JSON payload and nothing else. A library that
+        # prints -- PHATE logs MDS convergence there even at verbose=0 -- is sent to
+        # standard error instead, where the agent reads diagnostics.
+        with contextlib.redirect_stdout(sys.stderr):
+            payload = args.handler(args)
     except ContractError as error:
         print(f"contract error: {error}", file=sys.stderr)
         return EXIT_CONTRACT_ERROR

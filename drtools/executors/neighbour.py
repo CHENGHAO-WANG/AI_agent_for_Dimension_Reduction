@@ -1,4 +1,4 @@
-"""Neighbour embeddings: t-SNE and UMAP.
+"""Visualization methods: t-SNE and UMAP, and PHATE, PaCMAP and TriMap since day 18.
 
 These are the methods most likely to be over-read. Both produce pictures that look like
 maps and are not: cluster sizes and inter-cluster distances are artefacts of the
@@ -141,4 +141,120 @@ def umap(
         "caveat": "inter-cluster distances carry more information than t-SNE's but are "
         "still not metric, and min_dist is a display choice that changes how tightly "
         "points pack without changing what the data is like",
+    }
+
+
+def _neighbours_below(n_neighbors: int, n_samples: int, op: str, *, margin: int = 0) -> None:
+    if n_neighbors >= n_samples - margin:
+        raise ExecutionError(
+            f"{op}: n_neighbors={n_neighbors} is not below the {n_samples - margin} "
+            "allowed by the samples available"
+        )
+
+
+@executor("phate")
+def phate(
+    X: Matrix, ctx: Context, *, n_components: int = 2, n_neighbors: int = 5, **_: Any
+) -> tuple[np.ndarray, dict[str, Any]]:
+    import phate as phate_module
+
+    _neighbours_below(n_neighbors, X.shape[0], "phate")
+    model = phate_module.PHATE(
+        n_components=n_components,
+        knn=n_neighbors,
+        random_state=ctx.seed,
+        verbose=0,
+    )
+    embedding = np.asarray(model.fit_transform(X))
+    # No projection: new_rows is none (see the registry), so a subsample is refused.
+    return embedding, {
+        "n_neighbors": int(n_neighbors),
+        "library_parameter": "knn",
+        "t": int(model.optimal_t) if getattr(model, "optimal_t", None) else model.t,
+        "t_source": "von Neumann entropy knee (library default t='auto')",
+        "decay": model.decay,
+        "n_landmark": model.n_landmark,
+        "n_pca": model.n_pca,
+        "metric": "euclidean",
+        "caveat": "a continuous path in the picture may join groups that are separate "
+        "in the data, since diffusion smooths across gaps; distances are not to scale",
+    }
+
+
+@executor("pacmap")
+def pacmap(
+    X: Matrix, ctx: Context, *, n_components: int = 2, n_neighbors: int = 10, **_: Any
+) -> tuple[np.ndarray, dict[str, Any]]:
+    import pacmap as pacmap_module
+
+    dense = require_dense(X, "pacmap").astype(np.float32)
+    _neighbours_below(n_neighbors, dense.shape[0], "pacmap")
+    # A fixed random_state makes PaCMAP reproducible, and save_tree keeps the
+    # neighbour index so new rows can be placed without refitting it.
+    model = pacmap_module.PaCMAP(
+        n_components=n_components,
+        n_neighbors=n_neighbors,
+        random_state=ctx.seed,
+        save_tree=True,
+        verbose=False,
+    )
+    embedding = np.asarray(model.fit_transform(dense), dtype=np.float64)
+    # New rows are optimised against the fixed embedding, paired only with fitted rows,
+    # so they do not act on one another and chunking does not move them.
+    ctx.project_with(
+        lambda Z: np.asarray(
+            model.transform(require_dense(Z, "pacmap").astype(np.float32)), dtype=np.float64
+        ),
+        "transform",
+    )
+    return embedding, {
+        "n_neighbors": int(n_neighbors),
+        "MN_ratio": model.MN_ratio,
+        "FP_ratio": model.FP_ratio,
+        "num_iters": list(model.num_iters),
+        "apply_pca": model.apply_pca,
+        "metric": "euclidean",
+        "caveat": "the arrangement of groups is kept better than by t-SNE or UMAP, but "
+        "distances and group sizes are not to scale",
+    }
+
+
+@executor("trimap")
+def trimap(
+    X: Matrix, ctx: Context, *, n_components: int = 2, n_neighbors: int = 12, **_: Any
+) -> tuple[np.ndarray, dict[str, Any]]:
+    try:
+        from trimap import TorchTRIMAP
+    except ImportError as error:
+        raise ExecutionError(
+            "trimap is not installed. Its package declares annoy, which has no Windows "
+            "wheel for Python 3.12, and the TorchTRIMAP class used here does not need "
+            "it: install with `pip install --no-deps trimap==1.2.0`"
+        ) from error
+
+    dense = require_dense(X, "trimap").astype(np.float32)
+    _neighbours_below(n_neighbors, dense.shape[0], "trimap", margin=1)
+    # Exact neighbours: the library's automatic choice switches to an approximate index
+    # at 50,000 rows, which would make the result depend on the row count's side of it.
+    model = TorchTRIMAP(
+        n_dims=n_components,
+        n_inliers=n_neighbors,
+        random_state=ctx.seed,
+        device="cpu",
+        knn_backend="faiss-flat",
+    )
+    embedding = np.asarray(model.fit_transform(dense).cpu(), dtype=np.float64)
+    # No projection: TriMap has no transform, so new_rows is none.
+    return embedding, {
+        "n_neighbors": int(n_neighbors),
+        "library_parameter": "n_inliers",
+        "n_outliers": model.n_outliers,
+        "n_random": model.n_random,
+        "n_iters": model.n_iters,
+        "apply_pca": model.apply_pca,
+        "knn_backend": "faiss-flat (exact)",
+        "implementation": "TorchTRIMAP, CPU",
+        "metric": "euclidean",
+        "caveat": "global arrangement is the part to read; local neighbourhoods are kept "
+        "less faithfully than by t-SNE or UMAP, and distances are not to scale",
     }
