@@ -142,3 +142,44 @@ def test_a_moved_run_keeps_its_figures(finished_run, tmp_path, monkeypatch):
 
     assert "drawn outside this Run" not in body
     assert "](figures/comparison.png)" in body
+
+
+def test_a_method_after_a_reduction_exports_loadings_on_its_components(finished_run, tmp_path):
+    """Found by the day 18-20 review: after an intermediate PCA, a sparse PCA's loadings
+    were labelled with the original features, and the export raised."""
+    from drtools.cache import read_cache
+    from drtools.export import write_export
+    from drtools.pipeline import run_pipeline, save_embedding
+
+    run = RunDir(tmp_path / "r1")
+    shutil.copytree(finished_run.path, run.path, dirs_exist_ok=True)
+    X, labels, _ = read_cache(run)
+    stages = [{"op": "pca", "params": {"n_components": 4}},
+              {"op": "sparse_pca", "params": {"n_components": 2}}]
+    result = run_pipeline(X, labels, stages)
+    save_embedding(run.path / "embeddings", "pspca", result)
+    jsonio.write(run.path / "embeddings" / "pspca.json",
+                 {"id": "pspca", "status": "ok", **result.as_dict()})
+    ranking = jsonio.read(run.path / "ranking.json")
+    jsonio.write(run.path / "ranking.json", {**ranking, "winner": "pspca"})
+
+    assert "1.features" not in result.arrays and "0.features" in result.arrays
+    write_export(run)
+    loadings = pd.read_csv(run.results_dir / "data" / "pspca.loadings.csv")
+    assert list(loadings["feature"]) == ["pca_1", "pca_2", "pca_3", "pca_4"]
+
+
+def test_a_refused_refresh_leaves_the_export_alone(cli, contested):
+    """Found by the day 18-20 review: the export was replaced before the refusal."""
+    cli("report", "--run-dir", contested.path)
+    text = contested.report_path.read_text(encoding="utf-8")
+    contested.report_path.write_text(
+        text.replace("Measured at k=", "Edited by hand. Measured at k=", 1), encoding="utf-8"
+    )
+    sentinel = contested.results_dir / "data" / "sentinel"
+    sentinel.write_text("left by the earlier export")
+
+    refused = cli("report", "--refresh", "--run-dir", contested.path)
+
+    assert refused.code == 2 and "edited by hand" in refused.stderr
+    assert sentinel.exists()

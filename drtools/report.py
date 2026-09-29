@@ -905,8 +905,8 @@ def _block_export(run: RunDir) -> str:
     ]
     if files.get("loadings"):
         lines.append(
-            f"- `data/{files['loadings']}`: the loadings, one row per feature entering "
-            "the method, with the feature names."
+            f"- `data/{files['loadings']}`: the loadings, one row per input the method "
+            "acted on, by name: a feature, or a component of the reduction before it."
         )
     lines.append(
         "- New samples: "

@@ -1983,6 +1983,10 @@ def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
             "through."
         )
 
+    # The export only once the refresh is known to go through: replaced before a refusal,
+    # it would describe a candidate the unchanged report does not (found by the day 18-20
+    # review). Before the blocks, since section 10 describes it.
+    exported = write_export(run)
     bodies = build_blocks(run)
     refreshed, unchanged = [], []
     for block_id in BLOCK_IDS:
@@ -2000,6 +2004,7 @@ def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
         "refreshed": refreshed,
         "unchanged": unchanged,
         "missing": [block_id for block_id in BLOCK_IDS if block_id not in blocks],
+        "export": exported,
     }
 
 
@@ -2015,8 +2020,7 @@ def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
     path = run.report_path
 
     if args.refresh:
-        exported = write_export(run)
-        return {**_refresh_report(run, path), "export": exported}
+        return _refresh_report(run, path)
 
     stage = run_status(run)["next"]
     if stage != "report":

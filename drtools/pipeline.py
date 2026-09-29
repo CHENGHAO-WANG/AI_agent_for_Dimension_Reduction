@@ -318,6 +318,10 @@ def run_pipeline(
     split: tuple[Matrix, np.ndarray] | None = None
     projections: list[Projection] = []
     arrays: dict[str, np.ndarray] = {}
+    # Once a reduction has run, later stages receive its components, not cached columns,
+    # so their fitted arrays carry no `features` (found by the day 18-20 review: a
+    # sparse PCA after a PCA had its loadings labelled with the original features).
+    reduced = False
 
     def columns() -> np.ndarray:
         index = context.feature_index
@@ -389,8 +393,11 @@ def run_pipeline(
         if context.arrays:
             position = len(records) - 1
             arrays.update({f"{position}.{k}": v for k, v in context.arrays.items()})
-            arrays[f"{position}.features"] = features_in
+            if not reduced:
+                arrays[f"{position}.features"] = features_in
             context.arrays = {}
+        spec = registry.ops[op]
+        reduced = reduced or spec.is_reduction or spec.is_visualization
 
     arrays["features_kept"] = columns()
 
