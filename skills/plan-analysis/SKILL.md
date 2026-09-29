@@ -71,6 +71,12 @@ directly before that method. Otherwise it carries neither, and the Linear baseli
 never does. Registration refuses a Candidate that departs from this, and any other
 `n_features`.
 
+**The Selected baseline.** When any Candidate selects, the Plan also holds one whose
+Stages are exactly `select_variable_features(n_features=2000)`, `standardise`, then one
+`pca`. It needs no `evidence`, since the rule puts it there, and it comes on top of the
+three to five. Without it a Candidate's lead over the Linear baseline could be the
+selection's or the method's, and registration refuses the Plan.
+
 **Memory.** Registration estimates each Candidate's peak memory — the loaded data, plus
 its heaviest Stage's input, output and PCA's centred copy — and holds it to half this
 machine's memory. Over the limit, a Candidate with a method that can place new rows

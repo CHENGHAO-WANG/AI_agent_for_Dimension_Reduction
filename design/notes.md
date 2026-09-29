@@ -1281,6 +1281,12 @@ is selected, since their variances are comparable and meaningful. After selectio
 z-scored. This is by design. One consequence is accepted with it: a selecting PCA
 candidate and the linear baseline differ in two factors at once, selection and scaling, so
 the pair measures the combined effect and cannot isolate either.
+*Revised on day 21:* no longer accepted between the baseline and every other candidate.
+A plan in which any candidate selects also holds the **Selected baseline** --
+`select_variable_features(n_features=2000)`, `standardise`, one `pca` -- and
+registration refuses it otherwise. A selecting candidate's difference from it measures
+the method, and its difference from the linear baseline the selection and z-score. The
+day 21 log has why.
 
 **Enforced, not advised.** These rules are invariants, so `validate-plan` refuses a
 candidate that departs from them:
@@ -4137,3 +4143,122 @@ first on the code about to change. No cut is planned for now; the rule above sta
 
 
   793 tests, 303s.
+
+- **Day 21** — End-to-end on PathMNIST, 89,996 images by 2,352 pixels: two Runs, each
+  of which the harness stopped partway and the agent resumed from `status`, and seven
+  defects, one of them day 13's accepted confound, which the user chose to reopen.
+
+  *How it was run.* As on day 20, with two changes to the launch. Git Bash rewrote the
+  prompt `/analyze` into a Windows path; `MSYS_NO_PATHCONV=1` stops that, and then
+  `--plugin-dir` must be given as `D:/...`, since the same setting stops converting
+  `/d/...` for the native `claude.exe` and the plugin silently failed to load. And the
+  command is `/dr-agent:analyze`: plugin commands are namespaced. PathMNIST was
+  downloaded beforehand, so a network failure could not be mistaken for the agent's.
+
+  *The two Runs.* `day21-pathmnist` registered five Candidates on its first submission
+  and stopped at 30 turns, below. Resumed, it ran the rest in 62 turns, 26 minutes and
+  $2.01, and `pca` won at d = 38 with 0.804. `day21-pathmnist-b`, on the fixed code,
+  registered six on its first submission, the Selected baseline among them; it stopped
+  twice more, once in evaluation and once at the render, and finished in 102 turns and
+  $2.86 over three sessions, `done`. The ranking: `pca` 0.804 at d = 38; `selected-pca`
+  0.8035, a Close competitor, 0.0005 behind with a paired standard error of 0.0006;
+  Isomap 0.710 at d = 2; Kernel PCA 0.698 at d = 3; Diffusion Maps 0.693 at d = 2;
+  Laplacian Eigenmaps 0.664 at d = 6. The path of winners hands it to Isomap once a
+  dimension is worth more than 0.0026. Every claim checked in section 8 matched the
+  Run, and its reading is the right one: 38 linear dimensions beat 2 nonlinear ones,
+  which is not the claim that PCA beats Isomap at equal d.
+
+  *A headless session ends with the turn, and the Run with it -- twice.*
+  - The agent put the Laplacian embed in the background, "it may run for a while", and
+    ended its turn to wait. A `claude -p` session ends when the turn does, and the
+    embed with it. The embed took 55 s. `/analyze` now says to run each `drtools`
+    command in the foreground and read what it returns, and execute-plan's step ends
+    when `embed` has returned its record. A killed embed records no attempt, so the
+    Run resumed cleanly.
+  - The confirmation Run then chained three `evaluate` calls into one, which outlasted
+    the tool's 600 s timeout, and the harness moved the call to the background itself.
+    `/analyze` now says one command per call. An `evaluate` takes 15 s at d = 2 and
+    about four minutes above it, all of it plot B, below.
+
+  *Diffusion Maps passed a kernel that had fallen into pieces.* At the rule's epsilon of
+  47 on 4,995 fitted rows, the leading three eigenvalues were 1 to 2e-15, the
+  embedding's standard deviation was 0.007 against a largest value of 0.52, and it
+  scored 0.516. 23 samples had every kernel entry below 1e-16, so the kernel was
+  numerically disconnected though connected in exact arithmetic. A repeated eigenvalue
+  leaves its eigenvectors an arbitrary rotation, and support is not rotation-invariant:
+  the fit counted 4 localised coordinates of 20, a recomputation 2, the same kernel at
+  twice the width 20, so day 20's quarter threshold passed the rule's width and the
+  floor never doubled. A blob with three far outliers reproduces it in miniature: both
+  coordinates live on the outliers and 5 of 20 read as localised, which passes.
+  - *Decided:* a leading eigenvalue repeated to within 1e-10 counts as isolating
+    samples, in the one test the floor and the refusal share. Machine noise here is
+    1e-15 and a resolved Swiss roll's slow diffusion 1e-4, five orders either side.
+    It is also the connected-graph condition Laplacian Eigenmaps already declares.
+  - On PathMNIST the floor now doubles six times, to 3,032, where the eigenvalues are
+    0.65 and 0.41 and one coordinate of 20 is localised; tuning then chose twice that,
+    and the Candidate scores 0.693. Its embed takes 106 s, where the old fit alone took
+    27, for the spectra the floor searches.
+  - The agent saw it first: "An eigenvalue of 1 that appears more than once means the
+    Markov kernel ... splits into disconnected pieces." It kept the Embedding and
+    flagged it, because the freeze does not revise a Candidate that succeeded. That is
+    the right reading of the rules, and the reason the refusal belongs in the toolbox.
+
+  *A finished Run never said so.* `next` stayed `report` after the PDF was rendered, so
+  `/analyze` would have resumed a finished Run and written its report again. `render`
+  now writes a lifecycle record, and `status` says `done` while no record that changes
+  what the report describes -- a registration, an embed, a ranking, a comparison, a
+  recommendation or an adoption -- follows it. `report` accepts a `done` Run, where its
+  existing refusal of an existing report still holds.
+
+  *The Selected baseline -- day 13 reopened by the user.* Section 3.10 accepted that a
+  selecting candidate and the Linear baseline differ in selection and scaling at once.
+  Both reports then had to say that a lead over PCA might be the preprocessing's, and
+  on day 20 the agent named "the same preprocessing followed by PCA alone" as the next
+  experiment. Offered three options, the user chose to require it:
+  - A Plan in which any Candidate selects also holds `select_variable_features
+    (n_features=2000)`, `standardise`, one `pca`, which needs no Evidence, like the
+    Linear baseline, and registration refuses the Plan without it. A selecting
+    Candidate's difference from it measures the method; its difference from the Linear
+    baseline the selection and z-score. It costs one slot of the Ceiling.
+  - Rejected: advising it in the plan skill, since the agent had skipped it twice; and
+    keeping day 13's rule with the confound as a stated limitation.
+  - On PathMNIST it answered the question at once: the two baselines tie, so the
+    nonlinear Candidates' deficit is their methods' and their d's, none of it the
+    preprocessing's.
+
+  *The report called the selection unexplained.* It said the Decision log "gives no
+  reason for the feature selection or the standardisation", which is true: the reason is
+  a registration rule, and nothing in the Run named it. The preprocessing block now
+  states the rule, and what each difference from the two baselines measures.
+
+  *Rendering.* pdflatex refused a minus sign, U+2212, in the agent's prose, and pandoc's
+  error, written in UTF-8, was decoded as GBK, failed, and crashed `render` without its
+  reason. The agent stopped rather than edit the toolbox, as on day 20, and named the
+  decoding fix. xelatex and lualatex now come first, since both read Unicode, and
+  pandoc's streams are read as UTF-8.
+
+  *Reading another Run.* Planning the confirmation Run, the agent read the first Run's
+  Plan "as a useful point of comparison". Section 7 left out a cross-run store as hidden
+  state that breaks reproducibility, and this is the same state arriving by the file
+  system. Nothing from it could be cited, since Evidence resolves inside the Run, but it
+  could shape a choice. `/analyze` now plans a new Run from its own Profile and
+  Reconnaissance and leaves other Runs unread; the graded Runs start in a clean
+  directory as well.
+
+  *Seen and left.*
+  - Plot B fits UMAP on every row. At d > 2 on PathMNIST its spectral initialisation
+    spends about 150 s in ARPACK, so one `evaluate` takes four minutes, inside the cap
+    with room. Fit plot B on a subsample if a dataset larger than PathMNIST comes near
+    the cap; the figure code pairs plot B with every row's label, which is why that is
+    not the smaller change.
+  - Every nonlinear Candidate's scale parameter ended at the grid's edge, twice the
+    base. Both reports say so, as section 3.5 has them do.
+  - The permission refusals -- a heredoc, a `for` loop, a redirect, `python -c`, a
+    compound command, a shell variable -- again cost turns and not correctness. Day 24's
+    allowlist is written from these.
+  - Two `log-decision` refusals, a missing `stage` and the reserved `embed`, each
+    corrected on the next try by the refusal's own message.
+
+  Each fix has a test that fails without it, checked by setting the fix aside.
+
+  798 tests, 315s.

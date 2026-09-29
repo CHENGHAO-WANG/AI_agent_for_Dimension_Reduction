@@ -149,11 +149,16 @@ def diffusion_maps(
         squared_distances, epsilon, alpha
     )
     support = _support(eigenvectors)
-    if _isolates(support):
+    if _isolates(eigenvalues, support):
+        found = (
+            f"its leading eigenvalue repeats to within {SPLIT_GAP:g}, so the kernel "
+            "falls apart into separate pieces"
+            if _splits(eigenvalues)
+            else f"{int((support < LOCALISED_SUPPORT).sum())} of its {support.size} "
+            f"leading coordinates live on fewer than {LOCALISED_SUPPORT} samples"
+        )
         raise ExecutionError(
-            f"diffusion_maps at epsilon = {epsilon:.4g}: "
-            f"{int((support < LOCALISED_SUPPORT).sum())} of its {support.size} leading "
-            f"coordinates live on fewer than {LOCALISED_SUPPORT} samples, so the kernel "
+            f"diffusion_maps at epsilon = {epsilon:.4g}: {found}, so the kernel "
             "isolates individual samples and each takes a coordinate of its own. The bandwidth is too narrow "
             "for this data: widen it (a larger width_multiplier or epsilon), or leave "
             "epsilon unset so the connectivity floor sets it."
@@ -375,6 +380,13 @@ def _bandwidth_by_kernel_scaling(
 LOCALISED_SUPPORT = 5
 LOCALISED_SHARE = 0.25
 SUPPORT_CHECKED = 20
+#: A leading eigenvalue repeated to within this splits the kernel into numerically
+#: separate pieces, each owning an eigenvalue of 1, and leaves the eigenvectors of that
+#: eigenspace an arbitrary rotation, so support cannot be read there at all. Found on day
+#: 21: on PathMNIST 23 samples had every kernel entry below 1e-16, the gap was 2e-15,
+#: and the fit counted 4 localised coordinates where the same kernel reads 2 or 20. A
+#: resolved Swiss roll's slow diffusion gaps near 1e-4.
+SPLIT_GAP = 1e-10
 MAX_FLOOR_DOUBLINGS = 12
 #: Up to this many rows the floor searches with the full solver the fit uses. Near-equal
 #: eigenvalues leave their eigenvectors defined only up to a rotation, and support is
@@ -425,8 +437,14 @@ def _support(eigenvectors: np.ndarray) -> np.ndarray:
     return 1.0 / np.sum(leading**4, axis=0)
 
 
-def _isolates(support: np.ndarray) -> bool:
-    return bool((support < LOCALISED_SUPPORT).sum() > LOCALISED_SHARE * support.size)
+def _splits(eigenvalues: np.ndarray) -> bool:
+    return bool(eigenvalues[0] - eigenvalues[1] < SPLIT_GAP)
+
+
+def _isolates(eigenvalues: np.ndarray, support: np.ndarray) -> bool:
+    return _splits(eigenvalues) or bool(
+        (support < LOCALISED_SUPPORT).sum() > LOCALISED_SHARE * support.size
+    )
 
 
 def _connectivity_floor(
@@ -447,8 +465,10 @@ def _connectivity_floor(
     leading = None if squared_distances.shape[0] <= FULL_SOLVE_LIMIT else SUPPORT_CHECKED + 1
     for doublings in range(MAX_FLOOR_DOUBLINGS + 1):
         width = epsilon * 2.0**doublings
-        _, vectors, _, _ = _diffusion_spectrum(squared_distances, width, alpha, leading=leading)
-        if not _isolates(_support(vectors)):
+        values, vectors, _, _ = _diffusion_spectrum(
+            squared_distances, width, alpha, leading=leading
+        )
+        if not _isolates(values, _support(vectors)):
             return width, doublings
     raise ExecutionError(
         f"diffusion_maps: no bandwidth up to {2**MAX_FLOOR_DOUBLINGS} times the rule's "

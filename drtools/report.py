@@ -22,6 +22,7 @@ from typing import Any
 
 from drtools import jsonio
 from drtools.export import exported_candidate
+from drtools.plan import CandidateSpec, is_selected_baseline
 from drtools.plots import PLOT_B_METHOD
 from drtools.registry import load_registry
 from drtools.runs import RunDir
@@ -292,6 +293,31 @@ def _block_preprocessing(run: RunDir) -> str:
     else:
         parts.append(
             "No base preprocessing: Candidates were scored against the cached matrix."
+        )
+
+    # Found on day 21: without this the report read the selection as unexplained.
+    candidates = [CandidateSpec.model_validate(c) for c in plan.get("candidates") or []]
+    selecting = [
+        c.id for c in candidates
+        if not is_selected_baseline(c)
+        and any(stage.op == "select_variable_features" for stage in c.stages)
+    ]
+    if selecting:
+        twins = [c.id for c in candidates if is_selected_baseline(c)]
+        parts.append(
+            "By rule, the 2,000 most variable features are kept and z-scored before the "
+            f"method in {', '.join(f'`{i}`' for i in selecting)}: with more than "
+            "2,000 features of one type, a method working through Euclidean distances "
+            "selects by variance. The Linear baseline never selects"
+            + (
+                f"; the Selected baseline, {', '.join(f'`{i}`' for i in twins)}, is the "
+                "same PCA behind the same selection. A selecting Candidate's difference "
+                "from the Selected baseline measures its method, and the Selected "
+                "baseline's difference from the Linear baseline measures the selection "
+                "and z-score."
+                if twins
+                else "."
+            )
         )
 
     records = (_read(run, "data", "reference.json") or {}).get("stage_records") or []

@@ -86,10 +86,32 @@ def run_status(run: RunDir) -> dict[str, Any]:
         "ranked": _ranked(run, decisions),
         "recommended": _recommended(run, decisions),
         "replan_round_spent": replan_round_spent(decisions),
+        "rendered": _rendered(decisions),
         "candidates": candidates,
     }
     state["next"] = _next_stage(state)
     return state
+
+
+#: Records after which a rendered report may no longer describe the run.
+_REPORTED_STAGES = frozenset(
+    {"register_plan", "embed", "rank", "compare", "recommend", "adopt"}
+)
+
+
+def _rendered(decisions: list[dict[str, Any]]) -> bool:
+    """Whether a render is recorded after everything the report describes.
+
+    Found on day 21: without it `next` stayed `report` on a finished run, and `/analyze`
+    would resume a finished run and write its report again. `render` refuses a stale
+    report, so its record is the toolbox's word that the PDF matched the run then; any
+    later record that changes what the report describes undoes that.
+    """
+    stages = [record.get("stage") for record in decisions]
+    if "render" not in stages:
+        return False
+    last_render = len(stages) - 1 - stages[::-1].index("render")
+    return not any(stage in _REPORTED_STAGES for stage in stages[last_render + 1 :])
 
 
 def _registered_candidate_ids(
@@ -305,7 +327,7 @@ def _next_stage(state: dict[str, Any]) -> str:
         # candidates that can run under this budget — and once it is spent, a run
         # where every candidate failed is a finding the report should carry rather
         # than an error to loop on.
-        return "plan" if not state["replan_round_spent"] else "report"
+        return "plan" if not state["replan_round_spent"] else _report_or_done(state)
 
     scorable = [
         candidate_id
@@ -317,4 +339,8 @@ def _next_stage(state: dict[str, Any]) -> str:
     judged = state["recommended"] if state["purpose"] == "visualization" else state["ranked"]
     if scorable or not judged:
         return "evaluate"
-    return "report"
+    return _report_or_done(state)
+
+
+def _report_or_done(state: dict[str, Any]) -> str:
+    return "done" if state["rendered"] else "report"

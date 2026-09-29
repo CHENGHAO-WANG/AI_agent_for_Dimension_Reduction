@@ -380,7 +380,7 @@ def test_a_euclidean_first_method_on_many_features_of_one_type_must_select() -> 
 
 
 def test_the_required_selection_and_z_score_are_accepted() -> None:
-    report = _validate(_plan([PCA2, [*SELECT, _stage("pca"), UMAP]]), WIDE)
+    report = _validate(_plan([PCA2, [*SELECT, _stage("pca")], [*SELECT, _stage("pca"), UMAP]]), WIDE)
     assert report["valid"], report["findings"]
 
 
@@ -389,6 +389,17 @@ def test_the_linear_baseline_never_selects() -> None:
     assert "selection_required" not in _codes(report)
     report = _validate(_plan([PCA2, [*SELECT, _stage("pca")]]), WIDE)
     assert report["valid"], report["findings"]  # that one is not the baseline
+
+
+def test_a_selecting_candidate_needs_the_selected_baseline_beside_it() -> None:
+    """Found on day 21: with only the Linear baseline, a lead over it could come from the
+    selection and z-score or from the method, and the report could not say which."""
+    selecting = [*SELECT, _stage("pca"), UMAP]
+    refused = _validate(_plan([PCA2, selecting]), WIDE)
+    assert "no_selected_baseline" in _codes(refused)
+
+    accepted = _validate(_plan([PCA2, [*SELECT, _stage("pca")], selecting]), WIDE)
+    assert "no_selected_baseline" not in _codes(accepted)
 
 
 def test_selection_alone_without_the_z_score_is_refused() -> None:

@@ -27,7 +27,9 @@ derived from the append-only Decision log, not from what you recall running.
    before any scoring, and the neighbourhood size the Battery uses is fixed from it.
 
 2. **`drtools embed --run-dir runs/<id> --id <candidate>`** for each Candidate. Stages
-   come from the registered Plan; you name the Candidate, not the pipeline.
+   come from the registered Plan; you name the Candidate, not the pipeline. A
+   Candidate's step is done when `embed` has returned its record and you have read the
+   Outcome.
 
 The wall-clock cap comes from the Run's registered Budget. `--timeout` may lower it and
 will be refused if it raises it, because every Candidate was planned and rejected under
