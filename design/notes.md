@@ -85,7 +85,8 @@ judgment are on record -- profile, reconnaissance, their observations, the capab
 records -- and so are its outputs and every refusal on the way; the step between them is
 not, beyond the rationale and rejections the agent writes. That is why rejections must cite
 evidence that resolves, and why section 6's rules planner matters beyond the ablation: it
-is the one way to nominate that is itself reproducible.
+is the one way to nominate that is itself reproducible. It was dropped on day 22,
+so the conditioning stands and the report says so.
 
 ### 2.3 Grounded report generation
 
@@ -1735,6 +1736,9 @@ same data and show where Claude's judgment beat the rules.
 
 Scheduled late (section 9 has the day), so slipping costs only the ablation.
 
+*Dropped on day 22*, by the user, as the cut order named it. Nothing of it was built.
+The day 22 log has what that costs.
+
 ---
 
 ## 7. Scope boundaries
@@ -1781,7 +1785,7 @@ which see the day 8 decision below; a minimal MAP-GPLVM in torch, which
 was first on the cut order and is what day 7's contract work spent; ensemble/consensus
 embeddings; a cross-run experience store (with two datasets the prior would be n=2,
 worse than no prior, and it would introduce hidden state that breaks reproducibility);
-CI.
+CI; the rules planner of section 6, dropped on day 22.
 
 **Deliberately deferred** — to be decided when reached, mostly *by the agent*:
 PathMNIST subsampling policy, whether PBMC3k gets derived Leiden reference labels,
@@ -1840,7 +1844,7 @@ Submitted: source, `generated_report_1`, `generated_report_2`, and a manually wr
 | 19 | Results and report: the `results/` folder and the winner's export; report blocks for the d curves, the path of winners, standard errors, plots A and B, close competitors' diagnostics, coverage and run times; whether section 8 must name each close competitor; the reproducibility line in the limitations (2.2, 3.8, 5) |
 | 20 | First end-to-end run on dataset 1 under the new design; fix what it breaks |
 | 21 | End-to-end on dataset 2 (large) |
-| 22 | Rules-planner hedge + ablation run |
+| 22 | ~~Rules-planner hedge + ablation run~~ -- dropped, as the cut order named it |
 | 23 | Agent-behaviour tests, ADR-0001, README polish, CONTEXT.md review |
 | 24 | Final graded runs, reports, submit |
 
@@ -1851,7 +1855,8 @@ The cut order was GPLVM first, then the hedge. GPLVM is spent, on day 7's contra
 work. Day 8 then overran too, and took a fifteenth day rather than the hedge: the
 calendar had the room, and the hedge is worth more than a day — it is both the
 ablation and the working system for a grader without Claude Code. The hedge is still
-what a further slip costs. Never the tests, never the last day.
+what a further slip costs. Never the tests, never the last day. *Day 22:* the hedge is
+cut, and nothing is left on the cut order.
 
 *Re-planned on day 10*, after the question pass, from fifteen days to twenty-four. The
 order follows the dependencies: what the registry and the loader contract declare comes
@@ -4262,3 +4267,20 @@ first on the code about to change. No cut is planned for now; the rule above sta
   Each fix has a test that fails without it, checked by setting the fix aside.
 
   798 tests, 315s.
+
+- **Day 22** -- The rules-planner hedge is dropped, by the user, before any of it was
+  built. It was the next item on the cut order, and the cut order exists for this.
+
+  *What it costs*, since section 6 named four things it would buy:
+  - A grader without Claude Code has no working system. The toolbox still runs command
+    by command, but nothing writes a Plan without the agent.
+  - There is no ablation. The report cannot show where the agent's judgment beat a set
+    of rules on the same data, only what the agent chose and why.
+  - A Plan stays reproducible only conditional on itself (section 2.2): no nominating
+    route exists that is reproducible in its own right.
+  - The clean tool interface it was to force is already there: the test suite drives
+    every command with no model in the loop.
+
+  *Changed with it.* The README advertised `drtools run --planner=rules`, which never
+  existed; the line is gone. Section 7 lists the rules planner as future work, and the
+  cut order is now empty: a further slip has nothing left to cut but scope inside a day.

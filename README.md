@@ -64,12 +64,6 @@ pip install -r requirements.txt
 pip install --no-deps trimap==1.2.0
 ```
 
-The toolbox is also usable on its own, with a rule-based planner and no LLM:
-
-```bash
-drtools run --planner=rules --data pbmc3k --out runs/
-```
-
 ## Repository layout
 
 | Path | Contents |

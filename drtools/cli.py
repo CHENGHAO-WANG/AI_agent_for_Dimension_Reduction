@@ -2,8 +2,8 @@
 
 Every stage is a subcommand that reads artefacts from a run directory, writes its own
 artefact back, and prints that artefact as JSON on stdout. The agent works exclusively
-through this interface, which is also what lets the rule-based planner and the test
-suite drive the identical pipeline with no model in the loop.
+through this interface, which is also what lets the test suite drive the identical
+pipeline with no model in the loop.
 
 Failures are written to stderr as plain sentences rather than tracebacks, because the
 agent is expected to read them and act — a contract violation from an adapter it wrote
