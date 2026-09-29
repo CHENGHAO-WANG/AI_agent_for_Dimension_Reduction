@@ -15,8 +15,12 @@ from typing import Any
 
 from drtools.contract import ContractError
 
-PDF_ENGINES = ("pdflatex", "xelatex", "lualatex", "tectonic", "typst", "weasyprint")
-"""Engines pandoc can drive, in the order this toolbox prefers them."""
+PDF_ENGINES = ("xelatex", "lualatex", "pdflatex", "tectonic", "typst", "weasyprint")
+"""Engines pandoc can drive, in the order this toolbox prefers them.
+
+The two that read Unicode come first. Found on day 21: pdflatex refused a minus sign,
+U+2212, in the agent's prose, which xelatex renders without a warning.
+"""
 
 
 def render_pdf(source: Path, destination: Path) -> dict[str, Any]:
@@ -42,7 +46,10 @@ def render_pdf(source: Path, destination: Path) -> dict[str, Any]:
     completed = subprocess.run(
         ["pandoc", str(source), "-o", str(destination), f"--pdf-engine={engine}"],
         capture_output=True,
-        text=True,
+        # pandoc writes UTF-8 whatever the console's code page. Read as GBK on day 21,
+        # its error message failed to decode and the refusal lost its reason.
+        encoding="utf-8",
+        errors="replace",
         # Images are referenced relative to the results folder, which is where the
         # Markdown lives, so that is where pandoc has to resolve them from.
         cwd=str(source.parent),

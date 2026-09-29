@@ -101,3 +101,15 @@ def test_a_rendered_run_is_done_until_something_it_describes_changes(cli, finish
 
     assert cli("render", "--run-dir", finished_run.path).code == 0
     assert cli("status", "--run-dir", finished_run.path).payload["next"] == "done"
+
+
+def test_a_report_with_a_unicode_minus_renders(cli, finished_run):
+    """Found on day 21: pdflatex refused U+2212 in the agent's prose."""
+    cli("report", "--run-dir", finished_run.path)
+    path = finished_run.report_path
+    path.write_text(path.read_text(encoding="utf-8") + "\nA difference of −0.094.\n",
+                    encoding="utf-8")
+
+    result = cli("render", "--run-dir", finished_run.path)
+
+    assert result.code == 0, result.stderr
