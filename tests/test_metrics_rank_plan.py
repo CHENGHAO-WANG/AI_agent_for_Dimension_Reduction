@@ -285,6 +285,14 @@ def test_subsampling_first_makes_the_same_method_acceptable() -> None:
             candidates=[
                 {"id": "pca2", "stages": [{"op": "pca"}]},
                 {
+                    "id": "selected-pca",
+                    "stages": [
+                        {"op": "select_variable_features", "params": {"n_features": 2000}},
+                        {"op": "standardise"},
+                        {"op": "pca"},
+                    ],
+                },
+                {
                     "id": "iso",
                     "stages": [
                         {"op": "subsample", "params": {"n_samples": 3000}},

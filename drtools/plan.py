@@ -95,8 +95,8 @@ class CandidateSpec(BaseModel):
     stages: list[StageSpec]
     rationale: str = ""
     # Nomination is held to the standard rejection is: the keys that argue for running
-    # this candidate, resolved at registration. The linear baseline alone is exempt,
-    # since a rule rather than the data puts it in the portfolio.
+    # this candidate, resolved at registration. The two baselines alone are exempt,
+    # since a rule rather than the data puts them in the portfolio.
     evidence: list[str] = Field(default_factory=list)
 
     @field_validator("stages")
@@ -473,6 +473,26 @@ def _check_structure(plan: Plan, registry: Registry) -> list[Finding]:
                 fix="add a candidate whose stages are exactly one pca stage",
             )
         )
+    selecting = [
+        candidate.id
+        for candidate in plan.candidates
+        if not is_selected_baseline(candidate)
+        and any(stage.op == "select_variable_features" for stage in candidate.stages)
+    ]
+    if selecting and not any(is_selected_baseline(c) for c in plan.candidates):
+        findings.append(
+            Finding(
+                code="no_selected_baseline",
+                severity="error",
+                candidate=selecting[0],
+                message=f"{', '.join(selecting)} select and z-score features, and the "
+                "Linear baseline never does, so a lead over it could come from the "
+                "preprocessing or from the method, and nothing in the Run could tell "
+                "which. Found on day 21: on both datasets the report had to say so.",
+                fix="add a candidate whose stages are exactly select_variable_features "
+                "(n_features=2000), standardise, then one pca",
+            )
+        )
     return findings
 
 
@@ -719,6 +739,18 @@ def is_linear_baseline(candidate: CandidateSpec) -> bool:
     return len(candidate.stages) == 1 and candidate.stages[0].op == "pca"
 
 
+def is_selected_baseline(candidate: CandidateSpec) -> bool:
+    """The Linear baseline behind the selection a selecting Candidate carries."""
+    stages = candidate.stages
+    return (
+        len(stages) == 3
+        and stages[0].op == "select_variable_features"
+        and stages[0].params.get("n_features") == SELECTED_FEATURES
+        and stages[1].op == "standardise"
+        and stages[2].op == "pca"
+    )
+
+
 def _check_weighting(
     plan: Plan, profile: dict[str, Any], focus: str = "balanced"
 ) -> tuple[list[Finding], str]:
@@ -824,7 +856,9 @@ def _check_rejections(plan: Plan) -> list[Finding]:
                 )
             )
     for candidate in plan.candidates:
-        if not candidate.evidence and not is_linear_baseline(candidate):
+        if not candidate.evidence and not (
+            is_linear_baseline(candidate) or is_selected_baseline(candidate)
+        ):
             findings.append(
                 Finding(
                     code="unevidenced_candidate",

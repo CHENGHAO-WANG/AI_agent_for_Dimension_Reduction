@@ -308,3 +308,25 @@ def test_an_unchanged_report_refreshes_nothing(cli, finished_run):
     assert result.code == 0, result.stderr
     assert result.payload["refreshed"] == []
     assert set(result.payload["unchanged"]) == set(BLOCK_IDS)
+
+
+def test_the_preprocessing_block_gives_the_selection_rule_and_the_selected_baseline(tmp_path):
+    """Found on day 21: the report called the selection and z-score unexplained, since
+    nothing in the Run named the rule that requires them."""
+    root = tmp_path / "runs"
+    assert main(["profile", "--data", "blobs", "--runs-root", str(root),
+                 "--run-id", "wide"]) == 0
+    select = [{"op": "select_variable_features", "params": {"n_features": 2000}},
+              {"op": "standardise", "params": {}}]
+    plan = {"dataset": "blobs", "base_preprocessing": [{"op": "drop_constant", "params": {}}],
+            "candidates": [
+                {"id": "pca", "stages": [{"op": "pca", "params": {}}]},
+                {"id": "sel-pca", "stages": [*select, {"op": "pca", "params": {}}]},
+                {"id": "sel-iso", "stages": [*select, {"op": "isomap", "params": {}}]},
+            ]}
+    (root / "wide" / "plan.registered.json").write_text(json.dumps(plan), encoding="utf-8")
+
+    block = build_blocks(RunDir(root / "wide"))["preprocessing"]
+
+    assert "are kept and z-scored before the method in `sel-iso`" in block
+    assert "the Selected baseline, `sel-pca`" in block

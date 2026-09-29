@@ -52,6 +52,13 @@ The Candidate that runs the Base preprocessing followed by a single PCA and noth
 Every Plan holds one, as the yardstick the other Candidates are measured against.
 _Avoid_: PCA baseline, control, reference candidate
 
+**Selected baseline**:
+The Linear baseline behind the variance selection and z-score that other Candidates
+carry. A Plan holds one whenever another Candidate selects features, so that a
+Candidate's difference from the Linear baseline can be split between its method and its
+preprocessing.
+_Avoid_: selected PCA, preprocessing control
+
 **Stage**:
 One Op together with the parameter values it will run with.
 _Avoid_: step, node, layer

@@ -92,6 +92,10 @@ what separates it from the Winner, or why nothing does. Section 5 carries its cl
 facet and Shepard diagram for exactly this. `render` refuses a section 8 that leaves a
 competitor with those figures unnamed.
 
+Where the Plan holds a Selected baseline, read each selecting Candidate's score against
+it as well as against the Linear baseline. Section 2 says what each difference
+measures, and section 8 says how much of a lead is the method's.
+
 ## What you may claim
 
 Citation integrity is what the Evidence mechanism buys: no rationale rests on a number

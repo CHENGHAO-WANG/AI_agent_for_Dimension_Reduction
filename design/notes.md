@@ -1281,6 +1281,12 @@ is selected, since their variances are comparable and meaningful. After selectio
 z-scored. This is by design. One consequence is accepted with it: a selecting PCA
 candidate and the linear baseline differ in two factors at once, selection and scaling, so
 the pair measures the combined effect and cannot isolate either.
+*Revised on day 21:* no longer accepted between the baseline and every other candidate.
+A plan in which any candidate selects also holds the **Selected baseline** --
+`select_variable_features(n_features=2000)`, `standardise`, one `pca` -- and
+registration refuses it otherwise. A selecting candidate's difference from it measures
+the method, and its difference from the linear baseline the selection and z-score. The
+day 21 log has why.
 
 **Enforced, not advised.** These rules are invariants, so `validate-plan` refuses a
 candidate that departs from them:
