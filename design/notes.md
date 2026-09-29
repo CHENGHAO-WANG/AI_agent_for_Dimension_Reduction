@@ -1544,7 +1544,9 @@ refused above its limit.**
   produced: the features selected, the z-score means and standard deviations, the PCA
   loadings, then the method's own `transform`. In scikit-learn that covers PCA, sparse
   PCA, kernel PCA, Isomap and LLE; UMAP and openTSNE have one too. Whether PHATE, TriMap
-  and PaCMAP do is checked when their capability records are written.
+  and PaCMAP do is checked when their capability records are written. *Settled on day
+  18:* PaCMAP does; TriMap does not; PHATE's is declined, for the reason in the day 18
+  log.
 - *Laplacian Eigenmaps and Diffusion Maps* get the Nyström extension, the standard way to
   place new points in a spectral embedding: a new row's coordinates are computed from its
   kernel similarities to the fitted rows and the fitted eigenvectors. Written in the
@@ -1760,6 +1762,11 @@ it means building `annoy` from source or finding another route. It also requires
 Resolving is not the same as working: `datafold` resolved too, and failed at import time
 against modern scikit-learn. Each method is therefore to be imported and fitted once on the
 synthetic data before its capability record is written.
+
+*Installed on day 18.* `phate` and `pacmap` install from `requirements.txt`, with
+`faiss-cpu` pinned beside them. `trimap` installs on its own line, `pip install --no-deps
+trimap==1.2.0`: version 1.2.0 made the torch implementation its default class, and only
+the legacy class imports `annoy`. The day 18 log has the rest.
 
 **Out, and named as future work in the report:** datasets with missing values, for
 which see the day 8 decision below; a minimal MAP-GPLVM in torch, which
@@ -3806,3 +3813,100 @@ first on the code about to change. No cut is planned for now; the rule above sta
     `status` already read the digest, so the run correctly returned to `evaluate`.
 
   766 tests, 261s.
+
+- **Day 18** — PHATE, PaCMAP and TriMap: three capability records, three executors, the
+  shared neighbourhood suggestion, and an installation route for TriMap that avoids
+  `annoy`.
+
+  Section 7 named the mechanism, so the day was bounded: each method imported and fitted
+  on synthetic data before its record was written, a size-aware suggestion for its
+  fidelity parameter, and a `scales_to` set by measurement. Five details it left open
+  were settled in the work.
+
+  *One name for the neighbourhood.* Section 7 names the fidelity parameter by each
+  library's own name: `knn` for PHATE, `n_inliers` for TriMap, `n_neighbors` for PaCMAP.
+  In the registry all three are `n_neighbors`, and the executor passes it on under the
+  library's name, which its `describes` and its notes record. Every check that reads a
+  neighbourhood count reads `n_neighbors`: the plan's refusal of a count at or above n,
+  tuning's feasibility check, and the shared size-aware suggestion. Under one name the
+  three are governed by all of them unedited, and none of them needed a new branch.
+  Rejected: the library names, which would each need that branch in three places.
+
+  *The suggestion is the shared one.* Each method takes the rule every neighbour-graph
+  method takes, starting from its own library default: 5 for PHATE, 10 for PaCMAP, 12
+  for TriMap. The heuristics module was written to offer it to a new method unedited.
+  Considered and not adopted: PaCMAP's own rule, which raises the count above 10,000
+  rows as 10 + 15(log10 n - 4), giving 25 at PathMNIST's 107,000. The multiplier grid
+  reaches 20 from 10, and one rule for all neighbour-graph methods is simpler to
+  explain. Revisit it if PaCMAP's tuning ends at the grid's upper edge on PathMNIST.
+
+  *New rows.* Section 3.12 left this to the records.
+  - PaCMAP has a `transform`: new rows are optimised against the fixed embedding and
+    paired only with fitted rows. Measured on blobs, fitted on 1,500 rows and projecting
+    500, it gives identical coordinates on a repeat and whether the 500 go in one chunk
+    or two. `new_rows: transform`.
+  - TriMap has none. `new_rows: none`.
+  - PHATE has a `transform`, and it is declined: `new_rows: none`. The library warns
+    against using it on new data, and what it computes is the new row's kernel
+    transitions to the fitted rows times the fitted coordinates. That is the
+    kernel-weighted mean of fitted coordinates which section 3.12 rejected, because
+    averaging shrinks the spread. It is also, admittedly, how PHATE itself places every
+    non-landmark row above 2,000 rows, so the case against it is weaker than against a
+    stand-in. It costs nothing here: PHATE's limit is 200,000 rows, and neither dataset
+    reaches it.
+
+  *`scales_to`, measured.* One fit at d = 2 on 50 features of five Gaussian blobs:
+
+  | rows | PHATE | PaCMAP | TriMap |
+  |---|---|---|---|
+  | 10,000 | 12.6 s | 4.4 s | 15.5 s |
+  | 30,000 | 19.7 s | 15.7 s | 48.9 s |
+  | 107,000 | 53.5 s | 65.8 s | 193.3 s |
+
+  The rule: the row count at which one fit takes about 200 s, a third of the standard
+  budget's 600 s, since the refit shares a candidate's budget with tuning and scoring;
+  and never more than twice the largest count measured. That gives PHATE 200,000,
+  PaCMAP 200,000 and TriMap 110,000. TriMap's limit sits just above PathMNIST's 107,180
+  rows, and TriMap cannot place new rows, so on PathMNIST it runs on every row or not at
+  all.
+
+  *Class, emphasis, metric.* All three are visualization methods, terminal-only as
+  stochastic, not nested in d, Euclidean at their default metric. Emphasis follows
+  section 7's descriptions: PaCMAP balanced, as section 3.11 already said; PHATE
+  balanced, since it aims at progressions as well as clusters; TriMap global. None
+  declares `requires_connected_graph`. PHATE warns on a disconnected graph that it may
+  misrepresent relations between the components, but it runs. The only check that
+  reads the property warns that the method "will most likely fail", which is not true
+  of PHATE. The library's warning goes in PHATE's `distorts` instead.
+
+  *Settings left at the library default*, and recorded in each executor's notes: PHATE's
+  `decay` of 40, its `t` chosen by the von Neumann entropy knee, 2,000 landmarks, and its
+  internal PCA to 100 components; PaCMAP's pair ratios of 0.5 and 2 and its three-phase
+  iteration schedule; TriMap's 4 outliers and 3 random triplets. PaCMAP and TriMap also
+  run an internal PCA to 100 dimensions when the input is wider. Each is a computational
+  setting or a modelling choice in section 3.5's sense, not a fidelity parameter.
+
+  *Installation.* `pip install trimap==1.2.0` fails building `annoy`, as section 7
+  predicted. Reading the package showed a way round it: `trimap/__init__.py` exports
+  `TorchTRIMAP` as its default class, and imports the legacy `TRIMAP` class, the only
+  one that needs `annoy`, on first access. So `--no-deps` installs a working TriMap, and
+  `torch` was already pinned. `faiss-cpu` is pinned because the executor names it
+  directly: TriMap runs exact neighbours through `faiss-flat`, since the library's
+  automatic choice switches to an approximate index at 50,000 rows, and the result
+  would otherwise change character at that row count. The README and `/analyze` give
+  the separate line. Without it only TriMap is unavailable, and its executor's refusal
+  names the command. Rejected: building `annoy` (no compiler on the path), and a module
+  standing in for `annoy`, which a later trimap release could turn into a wrong result.
+
+  *Found on the way.*
+  - PHATE logs "SGD-MDS may not have converged" through `tasklogger` to standard output
+    even at `verbose=0`. That corrupted the JSON that `drtools embed --in-process`
+    prints there. The handler now runs with standard output sent to standard error, so
+    no library's printing reaches the JSON, whichever library it is. A worker process
+    already captured its output apart, so an ordinary `embed` was never exposed; the
+    tests were.
+  - All three reproduce exactly under a fixed seed and differ under another.
+  - The run records the versions of `phate`, `pacmap`, `trimap` and `faiss-cpu`.
+
+
+  777 tests, 275s.

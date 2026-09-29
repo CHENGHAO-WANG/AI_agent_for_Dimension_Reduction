@@ -24,6 +24,9 @@ NAMED_ON_PURPOSE = {
     ("plan.py", "pca"): "section 3.4 names PCA as the linear baseline every plan includes",
     ("plan.py", "tsne"): "perplexity below n/3 is a check on t-SNE's own parameter",
     ("runs.py", "umap"): "the umap-learn library, whose version the run records; not the op",
+    ("runs.py", "phate"): "the phate library, whose version the run records; not the op",
+    ("runs.py", "pacmap"): "the pacmap library, whose version the run records; not the op",
+    ("runs.py", "trimap"): "the trimap library, whose version the run records; not the op",
     ("plots.py", "umap"): "plot B is UMAP by rule, fixed so every candidate's is comparable",
 }
 
