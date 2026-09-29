@@ -129,3 +129,16 @@ def test_the_fitted_arrays_are_mapped_to_the_cached_columns(finished_run):
     assert f"{last}.components" in keys and "features_kept" in keys
     assert np.array_equal(arrays[f"{last}.features"], arrays["features_kept"])
     assert json.dumps(sorted(keys))  # every key is a plain string
+
+
+def test_a_moved_run_keeps_its_figures(finished_run, tmp_path, monkeypatch):
+    """Found on day 20: figures were matched by the path recorded when drawn, so a run
+    given by a relative path, or moved, embedded none of them."""
+    moved = tmp_path / "elsewhere"
+    shutil.copytree(finished_run.path, moved)
+    monkeypatch.chdir(tmp_path)
+
+    body = build_blocks(RunDir("elsewhere"))["figures"]
+
+    assert "drawn outside this Run" not in body
+    assert "](figures/comparison.png)" in body

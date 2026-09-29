@@ -38,6 +38,7 @@ def render_pdf(source: Path, destination: Path) -> dict[str, Any]:
             "MiKTeX or TeX Live provides pdflatex."
         )
 
+    source, destination = source.resolve(), destination.resolve()
     completed = subprocess.run(
         ["pandoc", str(source), "-o", str(destination), f"--pdf-engine={engine}"],
         capture_output=True,

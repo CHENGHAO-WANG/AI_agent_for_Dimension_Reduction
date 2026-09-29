@@ -428,6 +428,10 @@ ops:
           kernel sum rises linearly with log bandwidth, where the kernel has just begun to
           resolve the manifold. The stage record's epsilon_source says so, and
           dimension_implied_by_bandwidth reports the intrinsic dimension the slope implies.
+          Where that bandwidth leaves the kernel isolating samples -- more than a quarter
+          of the leading 20 coordinates living on fewer than 5 samples -- it is doubled
+          until it does not, and connectivity_floor_doublings says how often. Any fit
+          whose kernel isolates samples is refused, a set epsilon included.
       alpha:
         type: float
         default: 1.0

@@ -44,12 +44,23 @@ def profile_dataset(
         "memory_mb": round(_memory_bytes(X) / 1e6, 2),
     }
 
-    n_zero = int(X.size - X.nnz) if is_sparse else int((values == 0).sum())
+    # A sparse matrix's `size` is its stored entries, not rows times columns, and its
+    # `data` holds only those: the implicit zeros count toward sparsity and the extremes.
+    n_cells = n_samples * n_features
+    n_stored_zero = int((values == 0).sum())
+    n_zero = n_cells - int(X.nnz) + n_stored_zero if is_sparse else n_stored_zero
+    implicit_zero = is_sparse and X.nnz < n_cells
+    low = min(float(values.min()), 0.0) if implicit_zero and values.size else (
+        float(values.min()) if values.size else 0.0
+    )
+    high = max(float(values.max()), 0.0) if implicit_zero and values.size else (
+        float(values.max()) if values.size else 0.0
+    )
     value_facts = {
-        "sparsity": float(n_zero / (n_samples * n_features)),
-        "min": float(values.min()) if values.size else 0.0,
-        "max": float(values.max()) if values.size else 0.0,
-        "is_nonnegative": bool(values.min() >= 0) if values.size else True,
+        "sparsity": float(n_zero / n_cells),
+        "min": low,
+        "max": high,
+        "is_nonnegative": bool(low >= 0),
         "is_integer_valued": bool(np.all(values == np.round(values))),
         "n_distinct_sampled": int(
             np.unique(_subsample_values(values, QUANTILE_SAMPLE)).size

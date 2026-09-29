@@ -174,3 +174,19 @@ def test_recon_is_deterministic_under_a_fixed_seed() -> None:
 
     assert first["intrinsic_dimension"] == second["intrinsic_dimension"]
     assert first["spectrum"]["probe"]["cumulative"] == second["spectrum"]["probe"]["cumulative"]
+
+
+def test_a_sparse_matrix_counts_its_implicit_zeros():
+    """`size` on a sparse matrix is its stored entries; the zeros it omits still count.
+
+    Found on day 20: PBMC3k, over 97% zeros, was profiled with sparsity 0 and minimum 1,
+    so the zero-inflation observation never fired.
+    """
+    import scipy.sparse as sp
+
+    X = sp.csr_matrix(np.array([[0.0, 3.0, 0.0, 0.0], [1.0, 0.0, 0.0, 5.0]]))
+
+    values = profile_dataset(X, None, {"name": "tiny"})["values"]
+
+    assert values["sparsity"] == pytest.approx(5 / 8)
+    assert values["min"] == 0.0 and values["max"] == 5.0

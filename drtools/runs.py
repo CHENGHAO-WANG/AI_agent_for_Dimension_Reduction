@@ -63,7 +63,10 @@ class RunDir:
         into it, so a command that only reports would quietly modify what it reported
         on.
         """
-        self.path = Path(path)
+        # Resolved, so every path the run records and compares has one form. Given
+        # relative, figures.json held relative paths the report then compared against an
+        # absolute results folder, and every figure read as drawn outside the run.
+        self.path = Path(path).resolve()
         if not create:
             return
         self.path.mkdir(parents=True, exist_ok=True)

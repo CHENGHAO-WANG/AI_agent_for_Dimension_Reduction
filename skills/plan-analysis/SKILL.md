@@ -164,7 +164,36 @@ from the data. It is frozen with the rest of the `evaluation` block.
 
 ## Register it
 
-Write `plan.json` into the Run, then:
+Write `plan.json` into the Run. Its whole shape, each part as the sections above
+describe it; the optional parts are marked, and every other field is refused:
+
+```json
+{
+  "dataset": "pbmc3k",
+  "budget": "standard",
+  "base_preprocessing": [{"op": "drop_constant", "params": {}}],
+  "base_departure": {"reason": "...", "evidence": ["..."]},
+  "candidates": [
+    {"id": "pca", "stages": [{"op": "pca", "params": {}}],
+     "rationale": "...", "evidence": ["profile.shape.n_samples"]},
+    {"id": "pca-umap", "stages": [
+       {"op": "pca", "params": {}},
+       {"op": "umap", "params": {"n_neighbors": 30},
+        "overrides": {"n_neighbors": {"reason": "...", "evidence": ["..."]}}}],
+     "rationale": "...", "evidence": ["..."]}
+  ],
+  "rejected": [{"method": "mds", "reason": "...", "evidence": ["profile.shape.n_samples"]}],
+  "evaluation": {"weights": {"trustworthiness": 0.25, "continuity": 0.25,
+                             "shepard_correlation": 0.5},
+                 "justification": "...", "evidence": ["..."],
+                 "margin": 0.02, "margin_departure": {"reason": "...", "evidence": ["..."]}},
+  "tuning": {"departure": {"reason": "...", "evidence": ["..."]}}
+}
+```
+
+Optional: `base_departure`, only when the base differs from the rule; `overrides`, only
+for a value that differs from its suggestion; `evaluation.evidence`, `margin` and
+`margin_departure`; and `tuning`, whose defaults are the rule. Then:
 
 ```
 drtools validate-plan --run-dir runs/<id>

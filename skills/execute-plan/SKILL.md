@@ -70,10 +70,11 @@ Mark giving up explicitly, or `status` will keep offering a retry nobody intends
 take:
 
 ```
-drtools log-decision --run-dir runs/<id> --json @decision.json
+drtools log-decision --run-dir runs/<id> --json @runs/<id>/inputs/abandon_<candidate>.json
 ```
 
-with `"candidate": "<id>"` and `"abandoned": true`, alongside the reason.
+with `"candidate": "<id>"` and `"abandoned": true` beside the `question`, `chosen` and
+`rationale` every decision carries.
 
 ## What not to reach for
 

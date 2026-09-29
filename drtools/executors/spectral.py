@@ -129,10 +129,12 @@ def diffusion_maps(
 
     epsilon_source = "specified"
     estimated_dimension = None
+    rule_epsilon, floor_doublings = None, 0
     if epsilon is None:
-        epsilon, estimated_dimension = _bandwidth_by_kernel_scaling(
+        rule_epsilon, estimated_dimension = _bandwidth_by_kernel_scaling(
             squared_distances, ctx.seed
         )
+        epsilon, floor_doublings = _connectivity_floor(squared_distances, rule_epsilon, alpha)
         epsilon_source = "kernel-sum scaling criterion (Coifman and Singer)"
     # Tuning scales the bandwidth, from the criterion or an explicit value alike, on the
     # rows this fit sees (section 3.5).
@@ -143,25 +145,19 @@ def diffusion_maps(
             "exact duplicates; deduplicate before embedding"
         )
 
-    kernel = np.exp(-squared_distances / epsilon)
-
-    # Density normalisation. alpha=1 divides out the sampling density and recovers the
-    # Laplace-Beltrami operator of the underlying manifold, so the result describes the
-    # manifold's geometry rather than how densely it happened to be sampled.
-    density = kernel.sum(axis=1)
-    if alpha:
-        scaling = np.power(density, -alpha)
-        kernel = kernel * np.outer(scaling, scaling)
-
-    degree = kernel.sum(axis=1)
-    inverse_sqrt_degree = 1.0 / np.sqrt(degree)
-    symmetric = kernel * np.outer(inverse_sqrt_degree, inverse_sqrt_degree)
-    symmetric = (symmetric + symmetric.T) / 2.0
-
-    eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
-    order = np.argsort(eigenvalues)[::-1]
-    eigenvalues = eigenvalues[order]
-    eigenvectors = eigenvectors[:, order]
+    eigenvalues, eigenvectors, inverse_sqrt_degree, density = _diffusion_spectrum(
+        squared_distances, epsilon, alpha
+    )
+    support = _support(eigenvectors)
+    if _isolates(support):
+        raise ExecutionError(
+            f"diffusion_maps at epsilon = {epsilon:.4g}: "
+            f"{int((support < LOCALISED_SUPPORT).sum())} of its {support.size} leading "
+            f"coordinates live on fewer than {LOCALISED_SUPPORT} samples, so the kernel "
+            "isolates individual samples and each takes a coordinate of its own. The bandwidth is too narrow "
+            "for this data: widen it (a larger width_multiplier or epsilon), or leave "
+            "epsilon unset so the connectivity floor sets it."
+        )
 
     # Back to the right eigenvectors of the Markov operator. The first is the constant
     # stationary vector and carries no information, so the coordinates start at one.
@@ -189,6 +185,9 @@ def diffusion_maps(
     return np.ascontiguousarray(embedding), {
         "epsilon": float(epsilon),
         "epsilon_source": epsilon_source,
+        "epsilon_from_rule": None if rule_epsilon is None else float(rule_epsilon),
+        "connectivity_floor_doublings": int(floor_doublings),
+        "localised_leading_coordinates": int((support < LOCALISED_SUPPORT).sum()),
         "dimension_implied_by_bandwidth": estimated_dimension,
         "alpha": float(alpha),
         "t": int(t),
@@ -366,6 +365,96 @@ def _bandwidth_by_kernel_scaling(
 
     in_regime = np.flatnonzero(slopes >= 0.5 * steepest)
     return float(grid[in_regime[0]]), float(2.0 * steepest)
+
+
+#: A coordinate living on fewer samples than this describes individual samples, not
+#: structure. The kernel isolates samples when more than a quarter of its leading
+#: coordinates are like that. Measured on day 20 among the leading 20: PBMC3k at the
+#: rule's bandwidth had 19, at eight times it 11, at 32 times 2; a Swiss roll of 400
+#: rows had 2 -- an isolated sample at a thin end -- and still unrolled.
+LOCALISED_SUPPORT = 5
+LOCALISED_SHARE = 0.25
+SUPPORT_CHECKED = 20
+MAX_FLOOR_DOUBLINGS = 12
+#: Up to this many rows the floor searches with the full solver the fit uses. Near-equal
+#: eigenvalues leave their eigenvectors defined only up to a rotation, and support is
+#: not rotation-invariant, so two solvers can disagree about the same kernel.
+FULL_SOLVE_LIMIT = 4000
+
+
+def _diffusion_spectrum(
+    squared_distances: np.ndarray, epsilon: float, alpha: float, leading: int | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Eigenvalues and eigenvectors of the symmetric conjugate of the diffusion operator.
+
+    Gaussian kernel; density normalisation by alpha, where alpha = 1 divides out the
+    sampling density and recovers the Laplace-Beltrami operator of the manifold; then
+    the symmetric conjugate of the row-normalised Markov matrix, in decreasing order.
+    `leading` computes only that many, for the floor's search.
+    """
+    kernel = np.exp(-squared_distances / epsilon)
+    density = kernel.sum(axis=1)
+    if alpha:
+        scaling = np.power(density, -alpha)
+        kernel = kernel * np.outer(scaling, scaling)
+    degree = kernel.sum(axis=1)
+    inverse_sqrt_degree = 1.0 / np.sqrt(degree)
+    symmetric = kernel * np.outer(inverse_sqrt_degree, inverse_sqrt_degree)
+    symmetric = (symmetric + symmetric.T) / 2.0
+    n = symmetric.shape[0]
+    if leading is not None and leading < n:
+        # A direct solver for the top few: an iterative one stalls on the cluster of
+        # eigenvalues near 1 that a narrow kernel produces, which is when this runs.
+        from scipy.linalg import eigh
+
+        eigenvalues, eigenvectors = eigh(symmetric, subset_by_index=[n - leading, n - 1])
+    else:
+        eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
+    order = np.argsort(eigenvalues)[::-1]
+    return eigenvalues[order], eigenvectors[:, order], inverse_sqrt_degree, density
+
+
+def _support(eigenvectors: np.ndarray) -> np.ndarray:
+    """How many samples each leading non-trivial coordinate effectively lives on.
+
+    The inverse participation ratio of a unit eigenvector: 1 for a coordinate on one
+    sample, n for one spread evenly over all of them. Read on the leading coordinates
+    whatever d the fit delivers, since it describes the kernel, not the embedding.
+    """
+    leading = eigenvectors[:, 1 : 1 + SUPPORT_CHECKED]
+    return 1.0 / np.sum(leading**4, axis=0)
+
+
+def _isolates(support: np.ndarray) -> bool:
+    return bool((support < LOCALISED_SUPPORT).sum() > LOCALISED_SHARE * support.size)
+
+
+def _connectivity_floor(
+    squared_distances: np.ndarray, epsilon: float, alpha: float
+) -> tuple[float, int]:
+    """The rule's bandwidth, doubled until the kernel stops isolating samples.
+
+    The rule reads the kernel sum, which in many noisy dimensions can settle below the
+    distance from a typical sample to its nearest neighbour: on PBMC3k's 83 principal
+    components it chose 58 against a median nearest squared distance of 232, and every
+    leading eigenvalue was 1. Searched on the fit's own rows: a subsample holds fewer of
+    the isolated samples, so it passes a bandwidth the whole fails -- on PBMC3k 16 times
+    the rule against 32.
+    """
+    # ponytail: above FULL_SOLVE_LIMIT the search uses a partial solver, which can pass a
+    # width the fit's full solver then refuses; the refusal still holds, at the cost of a
+    # failed Attempt. Search on the full solver there too if that is seen.
+    leading = None if squared_distances.shape[0] <= FULL_SOLVE_LIMIT else SUPPORT_CHECKED + 1
+    for doublings in range(MAX_FLOOR_DOUBLINGS + 1):
+        width = epsilon * 2.0**doublings
+        _, vectors, _, _ = _diffusion_spectrum(squared_distances, width, alpha, leading=leading)
+        if not _isolates(_support(vectors)):
+            return width, doublings
+    raise ExecutionError(
+        f"diffusion_maps: no bandwidth up to {2**MAX_FLOOR_DOUBLINGS} times the rule's "
+        f"{epsilon:.4g} stops the kernel isolating individual samples. The data may be "
+        "dominated by noise dimensions; reduce with PCA to fewer components first."
+    )
 
 
 def _graph_components(X: Matrix, n_neighbors: int) -> tuple[int, np.ndarray]:
