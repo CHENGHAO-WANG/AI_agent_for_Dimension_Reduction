@@ -12,9 +12,9 @@ before exploring the codebase: the notes carry the architecture, the decisions a
 reasoning behind them, while `CONTEXT.md` carries the vocabulary they are written in.
 Append to the notes' decision log as each work day closes, keyed by day index — what
 was decided, why, and what was rejected. That log is how this project records a
-decision, and it stands in for the ADR the global rule asks of bounded work.
-`docs/adr/` is created on **day 23** for ADR-0001, on the locked-core/open-adapter
-action space, and is the whole of `docs/` — there is no prose documentation tree.
+decision, and it stands in for the ADR the global rule asks of bounded work. There is
+no `docs/` tree and no ADR: ADR-0001 was dropped on day 22, since the log already
+records the decision it would have restated.
 
 `CONTEXT.md` is the glossary, and it governs rather than describes: the five skills are
 prose the agent reads at runtime, so they must name concepts in its terms.
