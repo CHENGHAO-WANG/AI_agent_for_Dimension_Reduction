@@ -968,7 +968,8 @@ document whose section 8 does not name each competitor id. That is a substring t
 literal id, not the free-prose number parser the report contract rejected when it turned
 down *write then verify*. It is gameable, since an id can be named and nothing said, but
 it turns a silent omission into a deliberate one. *Moved to day 19 on day 16*, with the
-rest of the report contract.
+rest of the report contract. *Settled on day 19, by the user: enforced at `render`.* The
+day 19 log has the rule.
 
 **Notes carry a kind, decided on day 16.** Each ranking note is a `kind` and a `text`:
 `weights_dropped`, `failed_candidates`, `close_competitors`, `not_discriminated`,
@@ -1702,7 +1703,8 @@ picture's 2D coordinates. Every Candidate's `.npy` stays in `embeddings/` regard
   another library version, so it would look reusable when it may not be; the manifest
   carries what is needed to refit.
 
-The report gains a section pointing to the export. Its prerequisite is defect 21 in the
+The report gains a section pointing to the export. *Built on day 19*; the day 19 log
+has what the build settled. Its prerequisite is defect 21 in the
 day 10 log: the loaders keep feature names but discard sample identifiers.
 
 **Interaction.** One checkpoint after profiling, at most 1–2 multiple-choice
@@ -3910,3 +3912,77 @@ first on the code about to change. No cut is planned for now; the rule above sta
 
 
   777 tests, 275s.
+
+- **Day 19** — Results and report: the `results/` folder, the Export, the report blocks
+  day 16 and day 17 left, the reproducibility line, and a section 8 that must name the
+  close competitors.
+
+  Sections 2.2, 3.8 and 5 named the mechanism for all but one item, so the day was
+  bounded. That item, whether section 8 is enforced, the notes left open, and the user
+  decided it. Six details were settled in the work.
+
+  *Section 8, enforced at `render`, by the user's choice.* `render` refuses while section
+  8 does not contain the id of each close competitor that received diagnostic figures,
+  the first three in rank order. It is the substring test section 3.8 described, so an
+  id can be named with nothing said; what it prevents is the silent omission.
+  `report --refresh` does not check, so drafting is never blocked, and a visualization
+  run is exempt, since it has no winner and no competitors. Rejected: refusing at
+  refresh as well, which would block the agent before it has written section 8; and
+  prose in `write-report` alone, the route this project keeps finding unenforced.
+
+  *The Export is written by `report`*, before the blocks, so section 10 describes what
+  is on disk, and again on every `--refresh`. It is a function of the run's artefacts,
+  so rewriting it is safe. Rejected: a separate `export` command, which would be one
+  more stage for `status` to track and for the agent to forget, with no decision in it.
+
+  *What the export needs, kept at fit time.* The stage records are JSON and carry no
+  feature names, z-score parameters or loadings, and the fitted objects die with the
+  worker process. So an executor hands the arrays to its context (`ctx.keep`): the
+  z-score's means and deviations, and PCA's and sparse PCA's components. The pipeline
+  tags each with its stage's position and the cached columns that entered the stage,
+  and `embed` saves them as `<id>.params.npz` beside the Embedding, for every candidate,
+  since the winner is not known yet. Tuning runs the Base and the candidate's own
+  stages as two pipelines, so it renumbers the second's positions and maps its columns
+  back through the Base's kept features. Loadings are written for whichever method's
+  last stage kept components, which reads a fact about the fit rather than a method's
+  name. Rejected: refitting the winner at export time, which relies on determinism the
+  export would then have to verify, and costs a second fit.
+
+  *A visualization run with no Adoption exports nothing*, and section 10 says so.
+  Section 5 names the adopted picture as the thing exported, and the Recommendation is
+  a set, so exporting it would pick one on the user's behalf.
+
+  *Where each block went.* Section 4: a line per candidate saying how tuning chose d and
+  the Fidelity parameter, and whether the choice sat at the grid's edge. Section 5: the
+  d curves, one panel per candidate on its own criterion's scale with the chosen d
+  ringed; captions for plots A and B; and the close competitors' class facet and Shepard
+  diagram, each captioned with why it was drawn. Section 6: rows fitted and projected,
+  how the rest were placed, and the tuning and fitting time. Section 7: SE and paired SE
+  columns, and the path of winners as a table with its sentences. Section 9: the
+  reproducibility line in section 2.2's words, in both purposes. Section 10, new:
+  "Exported results". Rejected: new block ids for each of these, which would each need a
+  heading in the fixed skeleton; the existing sections already hold their subjects.
+
+  *Each criterion's curve is stored so that higher is better*, which for Isomap means one
+  minus residual variance and for MDS one minus stress. The first drawing labelled
+  Isomap's axis "residual variance" over a rising curve; each criterion now has its
+  label, in `tuning.CURVE_LABELS`. The first drawing also used a logarithmic axis for d,
+  whose minor tick labels collided; the axis is linear.
+
+  *Found on the way.*
+  - On digits, 1,797 rows under the balanced default, with PCA, kernel PCA and Isomap:
+    PCA won at d = 18 with kernel PCA a close competitor at -0.0164 (paired SE 0.0008),
+    and the path of winners said Isomap, at d = 6, wins once a dimension is worth more
+    than 0.011. Kernel PCA got its facet and Shepard figures, and the export wrote PCA's
+    coordinates, a manifest naming the 61 features `drop_constant` kept, and loadings
+    over those 61.
+  - The tuning line first printed "0.5 times the rule of None" for kernel PCA, whose
+    width multiplies the executor's own rule, not a suggestion. It now says so.
+  - The report's figure links are relative to `results/`, and pandoc renders from there,
+    so the folder can be moved alone.
+
+
+  *The glossary.* `CONTEXT.md` gains Export. Rejected: "saved model", which the Export
+  deliberately is not, and "output", which every command has.
+
+  784 tests, 286s.

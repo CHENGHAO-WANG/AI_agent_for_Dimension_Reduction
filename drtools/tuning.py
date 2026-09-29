@@ -924,9 +924,9 @@ def tune_and_refit(
             X, labels, base_stages, seed=seed, registry=registry,
             require_terminal_reduction=False, densify=False,
         )
-        reference, base_records = base.embedding, base.stages
+        reference, base_records, base_arrays = base.embedding, base.stages, base.arrays
     else:
-        reference, base_records = X, []
+        reference, base_records, base_arrays = X, [], {}
 
     def suggester(op: str, n_rows: int, params: dict[str, Any]) -> dict[str, Any]:
         shape = {**profile.get("shape", {}), "n_samples": int(n_rows)}
@@ -948,5 +948,58 @@ def tune_and_refit(
         stages=[*base_records, *refit.stages],
         context=refit.context,
         coverage=refit.coverage,
+        arrays=_combined_arrays(base_arrays, refit.arrays, len(base_records), X.shape[1]),
     )
     return combined, record
+
+
+def _combined_arrays(
+    base: dict[str, np.ndarray], own: dict[str, np.ndarray], n_base: int, n_columns: int
+) -> dict[str, np.ndarray]:
+    """The refit's arrays renumbered after the Base's, its columns mapped to the cache's."""
+    kept = base.get("features_kept", np.arange(n_columns))
+    combined = {k: v for k, v in base.items() if k != "features_kept"}
+    for key, value in own.items():
+        if key == "features_kept":
+            combined[key] = kept[value]
+            continue
+        position, name = key.split(".", 1)
+        combined[f"{int(position) + n_base}.{name}"] = kept[value] if name == "features" else value
+    return combined
+
+
+def d_curve(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The curve that chose a candidate's d, at the multiplier chosen, for the report.
+
+    None for a candidate whose d was fixed -- a visualization run's -- or never tuned.
+    """
+    if not record or not record.get("criterion_choices") or "chosen" not in record:
+        return None
+    criterion = record["method"]["criterion"]
+    if criterion == "fixed":
+        return None
+    chosen = record["chosen"]
+    choices = record["criterion_choices"]
+    choice = next(
+        (c for c in choices
+         if c.get("multiplier") == chosen.get("multiplier") and c.get("t") == chosen.get("t")),
+        choices[0],
+    )
+    return {
+        "points": {int(d): float(v) for d, v in choice["curve"].items()},
+        "chosen": int(chosen["d"]),
+        "rule": choice.get("rule"),
+        "label": CURVE_LABELS.get(criterion, criterion.replace("_", " ")),
+    }
+
+
+#: What each criterion's stored curve holds. Each is stored so that higher is better,
+#: which for residual variance and stress means one minus the quantity.
+CURVE_LABELS = {
+    "explained_variance": "cumulative explained variance",
+    "kernel_variance": "cumulative kernel variance",
+    "residual_variance": "1 - residual variance",
+    "stress": "1 - Kruskal stress",
+    "diffusion_distance": "share of diffusion distance kept",
+    "battery": "weighted battery score",
+}

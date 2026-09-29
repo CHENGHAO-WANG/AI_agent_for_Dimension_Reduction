@@ -42,7 +42,7 @@ def render_pdf(source: Path, destination: Path) -> dict[str, Any]:
         ["pandoc", str(source), "-o", str(destination), f"--pdf-engine={engine}"],
         capture_output=True,
         text=True,
-        # Images are referenced relative to the run directory, which is where the
+        # Images are referenced relative to the results folder, which is where the
         # Markdown lives, so that is where pandoc has to resolve them from.
         cwd=str(source.parent),
     )

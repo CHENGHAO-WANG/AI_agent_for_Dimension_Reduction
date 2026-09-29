@@ -93,6 +93,7 @@ caught and revised is worth more in the report than one that happened to be righ
 ## Finish
 
 The Run directory is the deliverable: artefacts, figures, the Decision log, and the
-report. Tell the user where it is and what came out: in a Representation run what won,
-with the caveats the ranking's notes carry; in a Visualization run what you recommended,
-labelled as your judgment, and what the user adopted, if anything.
+report. Tell the user the report and the export are in `runs/<id>/results/`, and what
+came out: in a Representation run what won, with the caveats the ranking's notes carry;
+in a Visualization run what you recommended, labelled as your judgment, and what the
+user adopted, if anything.

@@ -64,6 +64,14 @@ class Context:
     #: `criterion`, measured on the rows it was fitted on (sections 3.5 and 3.7).
     measure_criterion: bool = False
     criterion: dict[str, Any] | None = None
+    #: Fitted arrays the export needs -- z-score means and standard deviations, loadings
+    #: -- which the stage records, being JSON, do not carry. The pipeline collects them
+    #: after each stage (section 5).
+    arrays: dict[str, np.ndarray] = field(default_factory=dict)
+
+    def keep(self, name: str, array: Any) -> None:
+        """Hand the pipeline a fitted array, saved beside the Embedding."""
+        self.arrays[name] = np.asarray(array)
 
     def project_with(self, function: Callable[[Matrix], Matrix], kind: str) -> None:
         """Record how rows this stage was not fitted on are to pass through it."""

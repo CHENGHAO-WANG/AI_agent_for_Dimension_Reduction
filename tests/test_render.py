@@ -18,7 +18,7 @@ def test_render_produces_a_pdf(cli, finished_run):
     result = cli("render", "--run-dir", finished_run.path)
 
     assert result.code == 0, result.stderr
-    pdf = finished_run.path / "report.pdf"
+    pdf = finished_run.results_dir / "report.pdf"
     assert pdf.exists() and pdf.stat().st_size > 1000
 
 
@@ -30,7 +30,7 @@ def test_render_refuses_a_document_the_run_has_moved_past(cli, finished_run):
     numbers the Run has moved past.
     """
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     path.write_text(
         replace_block(path.read_text(encoding="utf-8"), "ranking", "an older ranking"),
         encoding="utf-8",
@@ -41,12 +41,12 @@ def test_render_refuses_a_document_the_run_has_moved_past(cli, finished_run):
     assert result.code == 2
     assert "ranking" in result.stderr
     assert "--refresh" in result.stderr
-    assert not (finished_run.path / "report.pdf").exists()
+    assert not (finished_run.results_dir / "report.pdf").exists()
 
 
 def test_refreshing_makes_the_same_render_succeed(cli, finished_run):
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     path.write_text(
         replace_block(path.read_text(encoding="utf-8"), "ranking", "an older ranking"),
         encoding="utf-8",

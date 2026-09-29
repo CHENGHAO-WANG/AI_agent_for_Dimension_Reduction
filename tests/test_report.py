@@ -143,7 +143,7 @@ def test_the_methods_block_carries_the_rejections_with_their_reasons(finished_ru
     assert rejection["evidence"][0] in body
 
 
-def test_figure_paths_are_relative_to_the_run(finished_run):
+def test_figure_paths_are_relative_to_the_results_folder(finished_run):
     """figures.json stores absolute paths; a report holding one breaks when moved."""
     body = build_blocks(finished_run)["figures"]
 
@@ -171,7 +171,7 @@ def test_report_writes_the_nine_sections_with_their_blocks(cli, finished_run):
     result = cli("report", "--run-dir", finished_run.path)
 
     assert result.code == 0, result.stderr
-    document = (finished_run.path / "report.md").read_text(encoding="utf-8")
+    document = (finished_run.report_path).read_text(encoding="utf-8")
     for heading in ("## 1. Dataset profile", "## 8. Interpretation", "## 9. Limitations"):
         assert heading in document
     assert set(parse_blocks(document)) == set(BLOCK_IDS)
@@ -186,19 +186,19 @@ def test_report_refuses_a_run_that_is_not_ready(cli, tmp_path):
 
     assert result.code == 2
     assert "report" in result.stderr
-    assert not (root / "early" / "report.md").exists()
+    assert not (root / "early" / "results" / "report.md").exists()
 
 
 def test_report_refuses_to_overwrite_and_names_refresh(cli, finished_run):
     cli("report", "--run-dir", finished_run.path)
-    (finished_run.path / "report.md").write_text("the agent's prose\n", encoding="utf-8")
+    (finished_run.report_path).write_text("the agent's prose\n", encoding="utf-8")
 
     result = cli("report", "--run-dir", finished_run.path)
 
     assert result.code == 2
     assert "--refresh" in result.stderr
     assert (
-        finished_run.path / "report.md"
+        finished_run.report_path
     ).read_text(encoding="utf-8") == "the agent's prose\n"
 
 
@@ -207,7 +207,7 @@ def test_report_refuses_to_overwrite_and_names_refresh(cli, finished_run):
 
 def test_refresh_updates_a_block_and_leaves_the_prose_alone(cli, finished_run):
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     written = "The winner is clear on the neighbourhood metrics."
     path.write_text(
         path.read_text(encoding="utf-8").replace(
@@ -227,7 +227,7 @@ def test_refresh_updates_a_block_and_leaves_the_prose_alone(cli, finished_run):
 def test_refresh_rewrites_a_block_the_run_has_moved_past(cli, finished_run):
     """The case the whole mechanism exists for: a number changed under the document."""
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     current = parse_blocks(path.read_text(encoding="utf-8"))["ranking"].body
     path.write_text(
         replace_block(path.read_text(encoding="utf-8"), "ranking", "an older ranking"),
@@ -243,7 +243,7 @@ def test_refresh_rewrites_a_block_the_run_has_moved_past(cli, finished_run):
 
 def test_refresh_refuses_a_block_the_agent_edited(cli, finished_run):
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     document = path.read_text(encoding="utf-8")
     block = parse_blocks(document)["ranking"]
     tampered = (
@@ -263,7 +263,7 @@ def test_refresh_refuses_a_block_the_agent_edited(cli, finished_run):
 def test_refresh_reports_a_deleted_block_rather_than_reinserting_it(cli, finished_run):
     """The toolbox cannot know where in the prose a deleted fence belonged."""
     cli("report", "--run-dir", finished_run.path)
-    path = finished_run.path / "report.md"
+    path = finished_run.report_path
     document = path.read_text(encoding="utf-8")
     block = parse_blocks(document)["figures"]
     path.write_text(document[: block.start] + document[block.end :], encoding="utf-8")

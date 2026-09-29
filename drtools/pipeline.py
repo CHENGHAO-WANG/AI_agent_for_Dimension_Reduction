@@ -106,6 +106,10 @@ class PipelineResult:
     stages: list[StageRecord]
     context: Context
     coverage: Coverage
+    #: Fitted arrays by `<stage position>.<name>`, each stage's with the cached feature
+    #: columns that entered it as `<position>.features`, and `features_kept`: what the
+    #: export's manifest and loadings are built from (section 5).
+    arrays: dict[str, np.ndarray] = field(default_factory=dict)
 
     @property
     def total_duration_s(self) -> float:
@@ -137,6 +141,8 @@ def save_embedding(directory: Path, candidate_id: str, result: PipelineResult) -
         np.save(directory / f"{candidate_id}.labels.npy", result.labels)
     if result.coverage.fitted_index is not None:
         np.save(directory / f"{candidate_id}.fitted.npy", result.coverage.fitted_index)
+    if result.arrays:
+        np.savez(directory / f"{candidate_id}.params.npz", **result.arrays)
 
 
 def _tag_failure(
@@ -311,6 +317,11 @@ def run_pipeline(
     # From there on each stage is fitted on the kept rows and records its projection.
     split: tuple[Matrix, np.ndarray] | None = None
     projections: list[Projection] = []
+    arrays: dict[str, np.ndarray] = {}
+
+    def columns() -> np.ndarray:
+        index = context.feature_index
+        return np.arange(X.shape[1]) if index is None else np.asarray(index)
 
     for stage in stages:
         op = stage["op"]
@@ -327,6 +338,7 @@ def run_pipeline(
 
         input_shape = tuple(int(v) for v in current.shape)
         entering = current
+        features_in = columns()
         context.projection = None
         started = time.perf_counter()
         try:
@@ -374,12 +386,19 @@ def run_pipeline(
                 notes=notes,
             )
         )
+        if context.arrays:
+            position = len(records) - 1
+            arrays.update({f"{position}.{k}": v for k, v in context.arrays.items()})
+            arrays[f"{position}.features"] = features_in
+            context.arrays = {}
+
+    arrays["features_kept"] = columns()
 
     coverage = Coverage(n_rows=int(X.shape[0]))
     if not densify and split is None:
         return PipelineResult(
             embedding=current, labels=all_labels, stages=records, context=context,
-            coverage=coverage,
+            coverage=coverage, arrays=arrays,
         )
     fitted = np.asarray(
         current.todense() if sp.issparse(current) else current, dtype=np.float64
@@ -398,6 +417,7 @@ def run_pipeline(
         stages=records,
         context=context,
         coverage=coverage,
+        arrays=arrays,
     )
 
 

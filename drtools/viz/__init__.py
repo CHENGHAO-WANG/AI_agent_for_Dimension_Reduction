@@ -568,6 +568,49 @@ def figure_shepard(
     return {"path": str(_finish(fig, path))}
 
 
+def figure_d_curves(
+    curves: dict[str, dict[str, Any]],
+    path: Path,
+    *,
+    title: str = "How each candidate chose d",
+    theme_name: str = "light",
+) -> dict[str, Any]:
+    """One panel per candidate: its criterion over d, at the chosen multiplier.
+
+    Each curve is on its own criterion's scale -- cumulative variance, residual
+    variance, stress, the battery score -- so the panels share no y-axis. The marked
+    point is the chosen d, and the rest of the curve is what choosing it gave up or
+    saved (sections 3.5 and 3.7).
+    """
+    active = theme(theme_name)
+    apply_style(active)
+    columns = min(len(curves), 3)
+    rows = int(np.ceil(len(curves) / columns))
+    fig, axes = plt.subplots(rows, columns, figsize=(3.4 * columns, 2.6 * rows), squeeze=False)
+
+    for axis, (candidate, curve) in zip(axes.ravel(), curves.items()):
+        ds = sorted(curve["points"])
+        values = [curve["points"][d] for d in ds]
+        axis.plot(ds, values, color=active.categorical[0], linewidth=1.8, marker="o",
+                  markersize=3.5, zorder=2)
+        chosen = curve["chosen"]
+        if chosen in curve["points"]:
+            axis.plot([chosen], [curve["points"][chosen]], marker="o", markersize=8,
+                      markerfacecolor="none", markeredgecolor=active.categorical[1],
+                      markeredgewidth=2, zorder=3)
+        axis.set_title(f"{candidate}: d = {chosen}", loc="left", fontsize=9, pad=6)
+        axis.set_xlabel("d", fontsize=8)
+        axis.set_ylabel(curve["label"], fontsize=8)
+        axis.grid(zorder=0)
+        axis.set_axisbelow(True)
+    for axis in axes.ravel()[len(curves):]:
+        axis.set_visible(False)
+
+    fig.suptitle(title, x=0.008, ha="left", fontsize=11, color=active.primary_ink)
+    fig.tight_layout()
+    return {"candidates": list(curves), "path": str(_finish(fig, path))}
+
+
 def figure_scree(
     explained: Sequence[float],
     path: Path,
