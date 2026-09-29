@@ -58,6 +58,11 @@ assuming the next one — a Candidate that failed changes what comes next.
 Write the JSON you pass to a command as `@file` into `runs/<id>/inputs/`, so the Run
 keeps what it was given and the user's working directory stays as it was.
 
+Run each `drtools` command in the foreground, with the longest timeout your tool allows,
+and read what it returns before the next step. A Run under `--auto` is often started as
+`claude -p`, and that session ends when your turn does: a command still running in the
+background ends with it, and the Run stops half-done.
+
 Nothing about the Run lives in this conversation. If context is lost, `status` restores
 the position completely.
 

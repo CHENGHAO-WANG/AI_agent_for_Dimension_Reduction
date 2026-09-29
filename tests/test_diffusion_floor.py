@@ -47,11 +47,32 @@ def test_the_floor_widens_a_bandwidth_that_isolates_samples(roll):
     width, doublings = _connectivity_floor(distances, rule / 256, 1.0)
 
     assert doublings > 0
-    assert not _isolates(_support(_diffusion_spectrum(distances, width, 1.0)[1]))
-    assert _isolates(_support(_diffusion_spectrum(distances, width / 2, 1.0)[1]))
+    assert not _isolates(*_values_and_support(distances, width))
+    assert _isolates(*_values_and_support(distances, width / 2))
     # The fit agrees with the search: the same solver reads the same kernel.
     result = run_pipeline(X, None, [{"op": "diffusion_maps", "params": {"epsilon": width}}])
     assert result.stages[-1].notes["localised_leading_coordinates"] <= 5
+
+
+def _values_and_support(distances, width):
+    values, vectors, _, _ = _diffusion_spectrum(distances, width, 1.0)
+    return values, _support(vectors)
+
+
+def test_a_kernel_split_into_pieces_is_widened_until_it_joins():
+    """Found on day 21: three far outliers each owned an eigenvalue of exactly 1 and
+    both coordinates, yet only 5 of 20 leading coordinates read as localised."""
+    blob = np.random.default_rng(0).normal(size=(300, 3))
+    X = np.vstack([blob, np.eye(3) * 20])
+
+    result = run_pipeline(X, None, [{"op": "diffusion_maps", "params": {}}])
+    notes = result.stages[-1].notes
+    outliers_share = np.abs(result.embedding[-3:]).sum(0) / np.abs(result.embedding).sum(0)
+
+    assert notes["eigenvalues"][0] - notes["eigenvalues"][1] > 1e-10
+    assert outliers_share.max() < 0.5
+    with pytest.raises(ExecutionError, match="falls apart into separate pieces"):
+        run_pipeline(X, None, [{"op": "diffusion_maps", "params": {"epsilon": 0.36}}])
 
 
 def test_the_floor_leaves_a_resolved_manifold_alone(roll):
