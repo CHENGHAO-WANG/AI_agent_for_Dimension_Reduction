@@ -140,3 +140,20 @@ def test_frontmatter_is_present_and_addressed_to_a_reader_deciding_whether_to_re
         assert fields.get("description")
 
     assert len(fields["description"]) <= 1024
+
+
+def test_the_plan_skeleton_in_plan_analysis_is_a_plan_the_model_accepts():
+    """Found on day 20: with no whole shape to copy, the agent read the repository's tests."""
+    import json
+    import re
+
+    from drtools.plan import Plan
+
+    text = (Path(__file__).resolve().parents[1] / "skills" / "plan-analysis" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    skeleton = re.search(r'```json\n(\{\n  "dataset".*?)```', text, re.S).group(1)
+
+    plan = Plan(**json.loads(skeleton))
+
+    assert plan.candidates[1].stages[1].overrides["n_neighbors"].reason

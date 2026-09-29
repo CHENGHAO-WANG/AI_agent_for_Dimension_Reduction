@@ -451,13 +451,15 @@ def _block_figures(run: RunDir) -> str:
     for name, record in drawn.items():
         if not isinstance(record, dict) or "path" not in record:
             continue
-        try:
-            relative = Path(record["path"]).relative_to(run.results_dir).as_posix()
-        except ValueError:
+        # By file name within this run's figures folder, not by the path recorded when it
+        # was drawn: that path goes stale when the run is moved or copied (section 5).
+        drawn_file = run.figures_dir / Path(record["path"]).name
+        if not drawn_file.exists():
             # Drawn somewhere else entirely. Naming it beats embedding a path that will
             # not resolve from the report.
             parts.append(f"_{name} was drawn outside this Run and is not embedded._")
             continue
+        relative = drawn_file.relative_to(run.results_dir).as_posix()
         parts.append(f"**{name}**\n\n![{name}]({relative})")
         if record.get("caveat"):
             parts.append(f"_{record['caveat']}_")

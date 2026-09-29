@@ -57,7 +57,7 @@ as one.
    `global` one which keep distances — the Shepard correlation. Recommend the Candidates
    that serve it, as a set with no order, and say why, citing `comparison` keys:
    ```
-   drtools recommend --run-dir runs/<id> --json @recommendation.json
+   drtools recommend --run-dir runs/<id> --json @runs/<id>/inputs/recommendation.json
    ```
    ```json
    {"recommended": ["umap", "tsne"],

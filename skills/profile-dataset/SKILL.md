@@ -52,7 +52,7 @@ remember doing — the Run is the only state, and a resumed session remembers no
      states — raw counts when the profile suspects them, features mixed — as
      `decided_by: default`.
 
-4. **`drtools recon --run-dir runs/<id> --decision @decision.json`**
+4. **`drtools recon --run-dir runs/<id> --decision @runs/<id>/inputs/data_decision.json`**
    ```json
    {"values": "raw_counts", "features": "one_type", "decided_by": "agent",
     "rationale": "...", "evidence": ["profile.features.column_kinds"]}
@@ -104,7 +104,7 @@ and proceed on it if there is no answer.
 Record the answers, whoever gave them:
 
 ```
-drtools checkpoint --run-dir runs/<id> --answers @checkpoint.json
+drtools checkpoint --run-dir runs/<id> --answers @runs/<id>/inputs/checkpoint.json
 ```
 ```json
 {"purpose": "representation", "purpose_decided_by": "user",
@@ -122,7 +122,14 @@ Anything else you chose rather than read — the dataset spec, an adapter, a lab
 column — goes in the Decision log:
 
 ```
-drtools log-decision --run-dir runs/<id> --json @decision.json
+drtools log-decision --run-dir runs/<id> --json @runs/<id>/inputs/log_entry.json
+```
+
+A decision needs all four of these, and is refused without `question` or `chosen`:
+
+```json
+{"stage": "profile", "question": "Which column holds the labels?",
+ "chosen": "cell_type", "rationale": "...", "evidence": ["profile.labels.present"]}
 ```
 
 Cite Evidence keys from `profile` and `recon`; the command refuses a key that does not

@@ -1976,7 +1976,9 @@ first on the code about to change. No cut is planned for now; the rule above sta
 
   The lesson generalises past this one method: a default validated at a single sample
   size is not validated. The parametrised regression test now sweeps n rather than
-  fixing it.
+  fixing it. *Revisited on day 20:* validated on a low-dimensional manifold, it was
+  not validated on noisy high-dimensional data, where the lower edge fell below the
+  nearest-neighbour scale. The day 20 log has the connectivity floor that followed.
 
 - **Day 4** — The registry reaches eighteen ops and ten reductions. LLE is
   one op with a `method` parameter over its four variants rather than four ops: they
@@ -3986,3 +3988,128 @@ first on the code about to change. No cut is planned for now; the rule above sta
   deliberately is not, and "output", which every command has.
 
   784 tests, 286s.
+
+- **Day 20** — The first end-to-end run on PBMC3k: the agent ran the whole analysis
+  unaided and stopped rather than edit the toolbox; the run found six defects, one of
+  which chose the winner.
+
+  *How it was run.* `claude -p "/analyze pbmc3k --auto"` with the plugin loaded from
+  the clone, in a directory outside the repository so the build instructions in
+  `.claude/` did not reach it, with hooks and MCP servers off and permissions limited to
+  `drtools` and the file tools. The first attempt stalled because the agent reached for
+  PowerShell, which the allowlist did not cover; the second disallowed it. The agent
+  profiled, recorded the data decision and the checkpoint defaults, registered a plan of
+  four candidates on its second submission -- PCA, and HVG then PCA before Laplacian
+  Eigenmaps, Diffusion Maps and Isomap -- embedded, evaluated and ranked them, in 60
+  turns, 9.5 minutes and $1.87. At the report it met a crash in `drtools`, diagnosed it
+  to the line, and stopped: "I didn't want to do that during a graded `--auto` Run
+  without asking you." It had also found the sparsity defect below on its own, logged
+  the two values as unreliable, and cited neither. That is sections 2.1 and 2.3 holding
+  under a real run: the locked core stayed locked, and a number the agent doubted was
+  kept out of the record rather than used.
+
+  *Diffusion Maps won at d = 74 of 83, and the win was an artefact -- the user chose the
+  fix.* Every leading eigenvalue was 1, the spectral gap after the first coordinate
+  2e-5, and most coordinates lived on one cell each: a cell carried 8 to 9 per cent of a
+  coordinate's absolute mass where an even spread gives 0.04. The bandwidth rule chose
+  eps = 58 on the candidate's 83 components, against a median squared distance to the
+  nearest neighbour of 232, so nearly every cell was isolated and each took a
+  coordinate of its own; with every eigenvalue near 1 the share of diffusion distance
+  rose in a straight line and the d rule stopped at 74. The multipliers {0.5, 1, 2}
+  could not reach the working range, 32 to 64 times the rule. The user chose, from
+  three options, to refuse and then floor:
+  - *Refusal.* A kernel isolates samples when more than a quarter of its leading 20
+    coordinates each live on fewer than 5 samples, the support being the inverse
+    participation ratio of the unit eigenvector. Any fit whose kernel does is refused,
+    a set epsilon included, and tuning records the cell infeasible.
+  - *Floor.* A bandwidth left to the rule is doubled until its kernel does not isolate
+    samples, searched on the fit's own rows. `connectivity_floor_doublings` and
+    `epsilon_from_rule` record what it did. On PBMC3k it doubles five times, to 1,845,
+    where 2 of the leading 20 coordinates are localised and the eigenvalues decay
+    (0.10, 0.07, 0.04); half that is refused.
+  - Rejected: refusing alone, under which Diffusion Maps fails on any single-cell data
+    with outlying cells; and a wider multiplier grid, which hands the bandwidth to the
+    score -- the score that had just chosen the artefact.
+
+  Three corrections on the way to that rule, each found by measuring rather than
+  reasoning:
+  - An eigenvalue test was proposed first and is wrong: a Swiss roll at its working
+    bandwidth also has eigenvalues of 0.9999, since diffusion along a smooth manifold
+    is legitimately slow. Support separates the two cases, where eigenvalues do not.
+  - "No localised coordinate at all" was too strict. A Swiss roll of 400 rows has 2 --
+    an isolated sample at a thin end -- and under that test the floor doubled its
+    bandwidth to 8.5 and the roll collapsed, rho 0.21 against 0.98. The share
+    threshold passes it untouched at every n from 300 to 3,000.
+  - The floor first searched the rule's 800-row submatrix, on the argument that sparser
+    sampling needs a wider kernel. For this failure the argument runs backwards: a
+    subsample holds fewer of the isolated cells, so it passed a bandwidth the whole
+    refused. It searches the fit's rows, with the fit's own full solver up to 4,000
+    rows, since near-equal eigenvalues leave their eigenvectors defined only up to a
+    rotation, support is not rotation-invariant, and two solvers disagreed about one
+    kernel. An iterative solver was tried and stalled on exactly that cluster.
+
+  The lesson extends day 4's. A rule validated at one sample size was not validated; a
+  rule validated on low-dimensional manifolds was not validated on noisy
+  high-dimensional data. And the score did not catch it: the weighted battery ranked a
+  list of outlying cells first, because 74 dimensions of anything keep neighbourhoods
+  well. A property that decides the winner needs a check on the property itself.
+
+  *The other five.*
+  - `d_curve` read `curve` from every tuning record, and the eigengap criterion records
+    `gaps`: `figures` and `report` both crashed on any run with Laplacian Eigenmaps.
+    Day 19's; no test had an eigengap record.
+  - The profile computed sparsity as `X.size - X.nnz`, and a sparse matrix's `size` is
+    its stored entries, so PBMC3k, over 97 per cent zeros, was profiled at sparsity 0
+    with a minimum of 1, and the zero-inflation observation never fired. Present since
+    day 2.
+  - `drtools` wrote its streams in the console's code page, GBK on this machine, and the
+    harness read UTF-8: the refusal "not a valid plan — dataset" arrived as "��". Both
+    streams are now UTF-8.
+  - The plan skill described each field in prose and never the whole shape, so the agent
+    read the repository's `tests/plans.py` to learn it, and its first plan lacked
+    `dataset`. An installed plugin has no tests folder. The skill now carries one
+    skeleton, and a test parses it with the `Plan` model so the two cannot drift.
+  - The agent wrote the JSON it passed to commands into the user's working directory.
+    `/analyze` now puts it in `runs/<id>/inputs/`.
+
+  - The skills used `@decision.json` both for `recon`'s data decision and for a
+    `log-decision` entry, and showed no entry's fields. The agent wrote an entry without
+    `question` and `chosen` in both runs. Each input now has its own name under
+    `runs/<id>/inputs/`, and `profile-dataset` shows an entry's fields.
+
+  *The confirmation run*, on the fixed code: `day20-pbmc3k-b`, 69 turns, 10.4 minutes,
+  $1.90, the plan registered on its first submission, no crash in `figures` or
+  `report`, and its inputs in `runs/<id>/inputs/`. Diffusion Maps' floor doubled five
+  times, from 58 to 1,845, and it came third at d = 5 with 0.681. The winner is
+  HVG, z-score, PCA to 83, then Isomap at d = 7 with 0.736, best on all three metrics
+  (trustworthiness 0.774, continuity 0.848, Shepard 0.661), so no weighting of them
+  would have chosen otherwise; the path of winners hands it to the PCA baseline at
+  d = 4 once a dimension is worth more than 0.011. Every claim checked in its section 8
+  matched the run, including that Diffusion Maps ran at t = 1.
+
+  It found one more defect. `render` passed pandoc the report's path as given while
+  starting pandoc inside `results/`, so a relative run path could not be rendered --
+  day 10's, not day 19's. Working round it with an absolute path, the agent met a
+  second face of the same cause: `figures.json` holds paths as they were given, and
+  the report compared them with a results folder in the other form, so every figure
+  read as drawn outside the run. The fix is where every command passes: `RunDir`
+  resolves its path, `render` hands pandoc absolute paths, and the report links a figure
+  by its name inside the run's own `figures/`, so a run that is moved or copied keeps
+  its figures, as section 5 promises.
+
+  *A question the agent raised, left open for the user.* The PCA baseline is the base
+  preprocessing plus one `pca`, day 12's rule. On raw counts the base is drop_constant,
+  normalise and log1p, which stays sparse, so the baseline is an uncentred truncated SVD
+  of all 16,634 genes, while every other candidate selected 2,000 variable genes,
+  z-scored and centred them first. The agent's section 8 says so: part of Isomap's lead
+  over the baseline may be the preprocessing, not the geodesic distances, and the Run
+  holds no candidate that separates the two. It is a fair reading of day 12's rule, not
+  a defect in it, but it weakens what the baseline can show on count data.
+
+  *Seen and left.* `drtools methods` prints 40 KB and each `embed` about 20 KB, so the
+  harness saved several outputs to files the agent read back. Moderate, and handled;
+  to be watched on PathMNIST, where the tuning records are larger. The permission
+  refusals -- a heredoc, a shell loop, a pipe into Python -- are the harness's, and cost
+  turns rather than correctness; the graded runs need an allowlist written for them.
+
+  791 tests, 292s.

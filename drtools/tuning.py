@@ -985,8 +985,12 @@ def d_curve(record: dict[str, Any] | None) -> dict[str, Any] | None:
          if c.get("multiplier") == chosen.get("multiplier") and c.get("t") == chosen.get("t")),
         choices[0],
     )
+    # The eigengap criterion records its gaps; the others a curve.
+    curve = choice.get("curve") or choice.get("gaps")
+    if not curve:
+        return None
     return {
-        "points": {int(d): float(v) for d, v in choice["curve"].items()},
+        "points": {int(d): float(v) for d, v in curve.items()},
         "chosen": int(chosen["d"]),
         "rule": choice.get("rule"),
         "label": CURVE_LABELS.get(criterion, criterion.replace("_", " ")),
@@ -1001,5 +1005,6 @@ CURVE_LABELS = {
     "residual_variance": "1 - residual variance",
     "stress": "1 - Kruskal stress",
     "diffusion_distance": "share of diffusion distance kept",
+    "eigengap": "eigengap after d",
     "battery": "weighted battery score",
 }

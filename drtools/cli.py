@@ -81,6 +81,12 @@ EXIT_PLAN_ERROR = 5
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The agent reads both streams as UTF-8. Left to the console's code page -- GBK on a
+    # Chinese-locale Windows -- every em dash in a refusal arrived as two replacement
+    # characters (found on day 20).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)

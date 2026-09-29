@@ -55,6 +55,9 @@ skill.
 From there the two are the same. Re-read `status` after each stage rather than
 assuming the next one — a Candidate that failed changes what comes next.
 
+Write the JSON you pass to a command as `@file` into `runs/<id>/inputs/`, so the Run
+keeps what it was given and the user's working directory stays as it was.
+
 Nothing about the Run lives in this conversation. If context is lost, `status` restores
 the position completely.
 
