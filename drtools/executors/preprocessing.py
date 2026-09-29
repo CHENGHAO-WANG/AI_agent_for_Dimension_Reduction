@@ -146,6 +146,8 @@ def standardise(X: Matrix, ctx: Context, **_: Any) -> tuple[Matrix, dict[str, An
         return (z - mean.astype(dtype)) / std.astype(dtype)
 
     ctx.project_with(project, "fitted parameters")
+    ctx.keep("mean", mean)
+    ctx.keep("std", std)
     return out, {
         "n_constant_features_left_unscaled": n_constant,
         "densified": bool(sp.issparse(X)),

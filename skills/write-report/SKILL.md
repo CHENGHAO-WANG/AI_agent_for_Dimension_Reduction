@@ -19,7 +19,8 @@ runs/<id>/recommendation.json  a Visualization run: your recommendation, and ado
 runs/<id>/profile.json      what the data is
 runs/<id>/recon.json        what its structure looked like before planning
 runs/<id>/metrics/          per-Candidate scores
-runs/<id>/figures/          the drawn figures
+runs/<id>/results/figures/  the drawn figures
+runs/<id>/results/data/     the export: the Winner's, or the adopted picture's
 ```
 
 Read the Decision log first and let it drive the narrative. Every record carries what
@@ -40,6 +41,7 @@ Both generated reports use the same skeleton so they can be compared:
    recommendation
 8. Interpretation
 9. Limitations
+10. Exported results
 
 **Section 3 is the highest-value part of the document.** The Rejections are the most
 direct evidence that the agent selected rather than sprayed, and each one already
@@ -52,7 +54,8 @@ methods that ran.
 drtools report --run-dir runs/<id>
 ```
 
-writes `report.md`: the nine sections above, and inside fenced blocks, every number
+writes `results/report.md`, and the export beside it in `results/data/`: the ten
+sections above, and inside fenced blocks, every number
 this Run produced. **You never type a number into the report.** The blocks are the
 toolbox's; everything outside them is yours.
 
@@ -77,12 +80,17 @@ drtools render --run-dir runs/<id>
 It refuses a `report.md` whose blocks no longer match the Run, so the PDF can only be
 made from a document that still agrees with the analysis. Refresh, then render.
 
-Markdown in the Run directory is the source of truth; the PDF is a rendering of it.
+The Markdown in `results/` is the source of truth; the PDF is a rendering of it.
 
 **Section 8, Interpretation, has no block.** Nothing in the Run grounds an
 interpretation — it is yours alone, and it is the section the report exists for. In a
 Visualization run it is where the recommendation is argued: what each recommended
 picture shows that the others do not, read metric by metric against the focus.
+
+In a Representation run, name each Close competitor by its id in section 8 and say
+what separates it from the Winner, or why nothing does. Section 5 carries its class
+facet and Shepard diagram for exactly this. `render` refuses a section 8 that leaves a
+competitor with those figures unnamed.
 
 ## What you may claim
 

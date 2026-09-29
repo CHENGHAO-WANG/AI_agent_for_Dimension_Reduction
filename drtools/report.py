@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from drtools import jsonio
+from drtools.export import exported_candidate
 from drtools.plots import PLOT_B_METHOD
 from drtools.registry import load_registry
 from drtools.runs import RunDir
+from drtools.tuning import d_curve
 
 BLOCK_IDS = (
     "profile",
@@ -34,8 +36,9 @@ BLOCK_IDS = (
     "metrics",
     "ranking",
     "limitations",
+    "export",
 )
-"""The eight generated blocks, in section order.
+"""The nine generated blocks, in section order.
 
 Section 8, Interpretation, is absent deliberately: nothing in the run grounds it, and a
 generated block there would lend the appearance of derivation to the one section that
@@ -400,22 +403,56 @@ def _block_hyperparameters(run: RunDir) -> str:
             )
         else:
             sections.append(f"**{candidate_id}** — no parameters to record.")
+        tuned = _tuning_line(record.get("tuning"))
+        if tuned:
+            sections.append(tuned)
     return "\n\n".join(sections)
 
 
+def _tuning_line(record: dict[str, Any] | None) -> str | None:
+    """How tuning chose d and the fidelity parameter, from the tuning record."""
+    if not record or "chosen" not in record:
+        return None
+    chosen, method = record["chosen"], record["method"]
+    curve = d_curve(record)
+    parts = [f"Tuned: d = {chosen['d']}"]
+    if curve:
+        parts.append(f"chosen by the {curve['rule']} rule on its curve of {curve['label']}")
+    else:
+        parts.append("fixed, as a picture is drawn at d = 2")
+    line = ", ".join(parts)
+    base = method.get("base") or {}
+    if method.get("param") and base.get("source") == "rule":
+        line += (
+            f"; `{method['param']}` at {chosen['multiplier']:g} times the width the "
+            "executor's rule computes"
+        )
+    elif method.get("param") and chosen.get("value") is not None:
+        line += (
+            f"; `{method['param']}` = {chosen['value']}, {chosen['multiplier']:g} times "
+            f"the {base.get('source', 'suggestion')} of {base.get('value')}"
+        )
+        if base.get("at_rows"):
+            line += f" at {base['at_rows']:,} rows"
+    if chosen.get("at_grid_edge"):
+        line += ", at the edge of the multiplier grid, so a value beyond it might score higher"
+    return line + "."
+
+
 def _block_figures(run: RunDir) -> str:
-    drawn = _read(run, "figures", "figures.json")
+    drawn = _read(run, "results", "figures", "figures.json")
     if not drawn:
         return NOT_PRODUCED
 
     visualization = run.purpose() == "visualization"
     terminal = _terminal_ops(run)
+    competitors = [] if visualization else _shown_competitors(run)
     parts: list[str] = []
     for name, record in drawn.items():
         if not isinstance(record, dict) or "path" not in record:
             continue
         try:
-            relative = Path(record["path"]).relative_to(run.path).as_posix()
+            relative = Path(record["path"]).relative_to(run.results_dir).as_posix()
         except ValueError:
             # Drawn somewhere else entirely. Naming it beats embedding a path that will
             # not resolve from the report.
@@ -427,6 +464,9 @@ def _block_figures(run: RunDir) -> str:
         # Section 3.11: what the picture's distances, gaps and sizes mean comes from
         # the method that drew it -- the candidate's own in a visualization run, UMAP
         # under every plot B.
+        caption = _caption(run, name, visualization, competitors)
+        if caption:
+            parts.append(caption)
         if name.startswith("plot_b_"):
             parts.append(_reading_line(PLOT_B_METHOD))
         elif visualization and name.startswith("embedding_"):
@@ -437,6 +477,53 @@ def _block_figures(run: RunDir) -> str:
         if channel and channel != "labels":
             parts.append(f"_Identity is carried by {channel} in this figure._")
     return "\n\n".join(parts) if parts else NOT_PRODUCED
+
+
+def _caption(
+    run: RunDir, name: str, visualization: bool, competitors: list[str]
+) -> str | None:
+    """What a representation run's figure is, where its name alone does not say."""
+    if name == "d_curves":
+        return (
+            "_Each panel is on its own criterion's scale, so the panels are not compared "
+            "with one another. The ringed point is the chosen d; the rest of the curve "
+            "is what choosing it gave up or saved._"
+        )
+    if visualization:
+        return None
+    for prefix, kind in (("embedding_", "A"), ("plot_b_", "B")):
+        if name.startswith(prefix):
+            candidate = name.removeprefix(prefix)
+            plots = (_read(run, "metrics", f"{candidate}.json") or {}).get("plots") or {}
+            if kind == "A" and plots.get("A"):
+                return (
+                    f"_Plot A: the d = {plots['d']} representation on its first two "
+                    f"principal axes, which carry {plots['A']['variance_share']:.0%} of "
+                    "its variance. A rotation, so the distances within those two axes "
+                    "are the representation's own; the variance beyond them is not "
+                    "shown._"
+                )
+            if kind == "B" and plots.get("B"):
+                return (
+                    f"_Plot B: {PLOT_B_METHOD} of the representation at the same fixed "
+                    f"settings for every candidate (n_neighbors = "
+                    f"{plots['B']['n_neighbors']}, the run's seed). A picture of the "
+                    "representation, not the representation, and not scored._"
+                )
+    for prefix in ("class_facet_", "shepard_"):
+        if name.startswith(prefix) and name.removeprefix(prefix) in competitors:
+            return (
+                f"_Drawn for {name.removeprefix(prefix)} because it is a close "
+                "competitor: the margin could not separate it from the winner, so these "
+                "are the figures a reader separates them with._"
+            )
+    return None
+
+
+def _shown_competitors(run: RunDir) -> list[str]:
+    """The close competitors given diagnostic figures: the first three (section 3.8)."""
+    ranking = _read(run, "ranking.json") or {}
+    return [c["id"] for c in ranking.get("close_competitors") or []][:3]
 
 
 def _block_metrics(run: RunDir) -> str:
@@ -476,7 +563,41 @@ def _block_metrics(run: RunDir) -> str:
         f"\n\nMeasured at k={settings['k']}, capped at {settings['max_samples']} "
         f"samples, seed {settings['seed']}."
     )
-    return body
+    return body + "\n\n" + _coverage_table(run, list(scored))
+
+
+def _coverage_table(run: RunDir, candidates: list[str]) -> str:
+    """Rows fitted and projected, how the rest were placed, and what each cost."""
+    rows = []
+    for candidate_id in candidates:
+        record = _read(run, "embeddings", f"{candidate_id}.json") or {}
+        coverage = record.get("rows") or {}
+        placed = "—"
+        if coverage.get("n_projected"):
+            kinds = [
+                stage["projection"]["kind"]
+                for stage in record.get("stages", [])
+                if stage.get("projection")
+            ]
+            placed = kinds[-1] if kinds else "unrecorded"
+        tuning = (record.get("tuning") or {}).get("duration_s")
+        rows.append([
+            candidate_id,
+            f"{coverage.get('n_fitted', 0):,}",
+            f"{coverage.get('n_projected', 0):,}",
+            placed,
+            "—" if tuning is None else f"{tuning:.1f}",
+            f"{record.get('total_duration_s', 0):.1f}",
+        ])
+    return (
+        "Coverage and run time. Every candidate covers every row; tuning is the search, "
+        "and the last column is the fit and projection that produced the Embedding.\n\n"
+        + _table(
+            ["Candidate", "Rows fitted", "Rows projected", "New rows placed by",
+             "Tuning (s)", "Fit and projection (s)"],
+            rows,
+        )
+    )
 
 
 #: Which kinds of ranking note are limitations, and so repeat in section 9. Every kind
@@ -517,11 +638,11 @@ def _block_ranking(run: RunDir) -> str:
             standing = ""
         rows.append(
             [str(entry["rank"]), entry["id"], str(entry["d"]), f"{entry['score']:.4f}",
-             standing]
+             _se(entry.get("se")), _se(entry.get("se_difference")), standing]
             + contributions
         )
     body = _table(
-        ["Rank", "Candidate", "d", "Score", "Within the margin"]
+        ["Rank", "Candidate", "d", "Score", "SE", "Paired SE", "Within the margin"]
         + [f"`{name}`" for name in applied],
         rows,
     )
@@ -572,7 +693,32 @@ def _block_ranking(run: RunDir) -> str:
     # the scope of the standard errors -- and paraphrasing them here would be the
     # report making a claim the toolbox did not.
     lines += [""] + [f"- {note['text']}" for note in ranking.get("notes") or []]
+    lines += ["", _path_block(ranking)]
     return body + "\n" + "\n".join(lines)
+
+
+def _se(value: float | None) -> str:
+    return "—" if value is None else f"{value:.4f}"
+
+
+def _path_block(ranking: dict[str, Any]) -> str:
+    """The path of winners: who wins as a dimension is priced from nothing upwards."""
+    steps = ranking.get("path") or []
+    if not steps:
+        return ""
+    rows = [
+        [step["id"], str(step["d"]), f"{step['score']:.4f}",
+         f"{step['from_rate']:.4f}",
+         "no limit" if step["to_rate"] is None else f"{step['to_rate']:.4f}"]
+        for step in steps
+    ]
+    return (
+        "Path of winners: the candidate that wins when each dimension costs a given "
+        "amount of score, from nothing upwards.\n\n"
+        + _table(["Candidate", "d", "Score", "Wins from a price of", "to"], rows)
+        + "\n\n"
+        + "\n".join(f"- {sentence}" for sentence in ranking.get("path_sentences") or [])
+    )
 
 
 def _block_comparison(run: RunDir) -> str:
@@ -672,6 +818,7 @@ def _block_limitations(run: RunDir) -> str:
             lines.append(f"- {note['text']}")
 
     lines += _scored_rows_line(run)
+    lines.append(_reproducibility_line(run, "choose a different winner"))
 
     if ranking.get("failed_candidates"):
         lines.append(
@@ -708,6 +855,7 @@ def _visualization_limitations(run: RunDir) -> str:
         "it is not a measured ranking, and pre-registration does not protect it."
     ]
     lines += _scored_rows_line(run)
+    lines.append(_reproducibility_line(run, "recommend different pictures"))
     failed = [
         candidate_id
         for candidate_id in _candidate_ids(run)
@@ -718,6 +866,58 @@ def _visualization_limitations(run: RunDir) -> str:
             "- No Embedding was produced for " + ", ".join(failed)
             + ", so they carry no scores here."
         )
+    return "\n".join(lines)
+
+
+def _reproducibility_line(run: RunDir, outcome: str) -> str:
+    """Section 2.2's sentence: reproducible conditional on the registered plan, no more."""
+    manifest = _read(run, "run.json") or {}
+    return (
+        "- This report is reproducible conditional on its registered plan: replaying "
+        f"`plan.registered.json` on the same data under seed {manifest.get('seed')} "
+        "returns every number in it. The plan itself is not reproducible. Its "
+        "candidates were nominated by the agent's judgment, which no seed governs, so "
+        "running the analysis again may register a different portfolio and "
+        f"{outcome}."
+    )
+
+
+def _block_export(run: RunDir) -> str:
+    """Section 10: what `results/data/` holds, read from its manifest."""
+    manifest = _read(run, "results", "data", "manifest.json")
+    if manifest is None:
+        candidate, why = exported_candidate(run)
+        return f"_Nothing was exported: {why}._" if candidate is None else NOT_PRODUCED
+    rows = manifest.get("rows") or {}
+    files = manifest["files"]
+    lines = [
+        f"Exported: **{manifest['candidate']}**, {manifest['why_this_candidate']}, at "
+        f"d = {manifest['d']}.",
+        "",
+        f"- `data/{files['coordinates']}`: one row per sample -- `sample_id`, whether the "
+        f"method was `fitted` on the row or `projected` it ({rows.get('n_fitted', 0):,} "
+        f"and {rows.get('n_projected', 0):,}), then `dim_1` to `dim_{manifest['d']}`.",
+        "- `data/manifest.json`: the pipeline and its parameter values, the seed "
+        f"({manifest['seed']}), d, the features kept, the z-score means and standard "
+        "deviations, and the rows fitted and projected.",
+    ]
+    if files.get("loadings"):
+        lines.append(
+            f"- `data/{files['loadings']}`: the loadings, one row per feature entering "
+            "the method, with the feature names."
+        )
+    lines.append(
+        "- New samples: "
+        + (
+            f"the method can place them without refitting (`{manifest['new_rows']}`)."
+            if manifest["places_new_samples_without_refitting"]
+            else "the method cannot place them without refitting the whole pipeline."
+        )
+    )
+    lines.append(
+        "- No model objects are saved: a saved model often fails to load under another "
+        "library version. The manifest carries what a refit needs."
+    )
     return "\n".join(lines)
 
 
@@ -748,6 +948,7 @@ _BUILDERS = {
     "metrics": _block_metrics,
     "ranking": _block_ranking,
     "limitations": _block_limitations,
+    "export": _block_export,
 }
 
 
@@ -774,6 +975,7 @@ SECTIONS: tuple[tuple[str, str | None], ...] = (
     ("7. Ranking, with the weighting justification", "ranking"),
     ("8. Interpretation", None),
     ("9. Limitations", "limitations"),
+    ("10. Exported results", "export"),
 )
 """The skeleton, matching `skills/write-report/SKILL.md` heading for heading.
 
@@ -788,7 +990,7 @@ _PROMPT = "_Yours to write. Delete this line._"
 
 
 def assemble(run: RunDir) -> str:
-    """The whole document: the nine headings, the eight blocks, and room to write."""
+    """The whole document: the ten headings, the nine blocks, and room to write."""
     bodies = build_blocks(run)
     parts = [f"# Dimension reduction report — {run.id}", ""]
     for heading, block_id in SECTIONS:
@@ -815,3 +1017,18 @@ def stale_blocks(run: RunDir, document: str) -> list[str]:
         for block_id, block in present.items()
         if block_id in bodies and block.body != bodies[block_id]
     )
+
+
+def unnamed_competitors(run: RunDir, document: str) -> list[str]:
+    """The shown close competitors section 8 does not name, for `render` to refuse.
+
+    A substring test on each literal id (section 3.8). It is gameable -- an id can be
+    named and nothing said -- but it turns a silent omission into a deliberate one.
+    Applied at render and not at refresh, so drafting is never blocked.
+    """
+    if run.purpose() == "visualization":
+        return []
+    start = document.find("## 8. Interpretation")
+    end = document.find("## 9.", start)
+    section = document[start:end] if start != -1 else ""
+    return [c for c in _shown_competitors(run) if c not in section]

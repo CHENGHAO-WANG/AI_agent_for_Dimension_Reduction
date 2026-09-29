@@ -29,6 +29,7 @@ from drtools import jsonio
 from drtools.cache import ensure_cache, is_cached, read_cache
 from drtools.contract import ContractError
 from drtools.executors import ExecutionError
+from drtools.export import write_export
 from drtools.heuristics import suggest, suggest_base
 from drtools.isolation import BUDGET_MAX_CANDIDATES, budget_timeout, run_candidate
 from drtools.loaders import available, load
@@ -46,6 +47,7 @@ from drtools.report import (
     parse_blocks,
     replace_block,
     stale_blocks,
+    unnamed_competitors,
 )
 from drtools.compare import compare_candidates
 from drtools.plots import PLOT_B_METHOD, draw_plots
@@ -61,9 +63,11 @@ from drtools.status import (
     replan_round_spent,
     run_status,
 )
+from drtools.tuning import d_curve
 from drtools.viz import (
     figure_class_facet,
     figure_comparison,
+    figure_d_curves,
     figure_embedding,
     figure_metrics,
     figure_scree,
@@ -653,7 +657,7 @@ def _cmd_recon(args: argparse.Namespace) -> dict[str, Any]:
         seed=seed,
         max_samples=args.max_samples,
         k=args.k,
-        thumbnail_path=run.path / "figures" / "recon_thumbnail.png",
+        thumbnail_path=run.figures_dir / "recon_thumbnail.png",
     )
     recon["run_id"] = run.id
     run.write_artifact("recon.json", recon)
@@ -1917,7 +1921,7 @@ def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:
     rather than an instruction in a skill.
     """
     run = _require_run(args)
-    source = run.path / "report.md"
+    source = run.report_path
     if not source.exists():
         raise ContractError(
             f"there is no report at {source} to render. Run `drtools report --run-dir "
@@ -1932,7 +1936,16 @@ def _cmd_render(args: argparse.Namespace) -> dict[str, Any]:
             f"--run-dir {run.path}` and render again."
         )
 
-    return render_pdf(source, run.path / "report.pdf")
+    unnamed = unnamed_competitors(run, source.read_text(encoding="utf-8"))
+    if unnamed:
+        raise ContractError(
+            f"section 8, Interpretation, does not name {', '.join(unnamed)}. Each is a "
+            "close competitor: the margin could not separate it from the winner, so the "
+            "reader needs to be told in words what separates them, and it was given the "
+            "diagnostic figures for that purpose. Say in section 8 what distinguishes "
+            "each from the winner, naming it by its id, and render again."
+        )
+    return render_pdf(source, run.results_dir / "report.pdf")
 
 
 def _refresh_report(run: RunDir, path: Path) -> dict[str, Any]:
@@ -1993,10 +2006,11 @@ def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
     with nothing to tell the agent which of the two is right.
     """
     run = _require_run(args)
-    path = run.path / "report.md"
+    path = run.report_path
 
     if args.refresh:
-        return _refresh_report(run, path)
+        exported = write_export(run)
+        return {**_refresh_report(run, path), "export": exported}
 
     stage = run_status(run)["next"]
     if stage != "report":
@@ -2012,14 +2026,16 @@ def _cmd_report(args: argparse.Namespace) -> dict[str, Any]:
             "date and leave everything else alone."
         )
 
+    # The export first: section 10 describes what it wrote.
+    exported = write_export(run)
     path.write_text(assemble(run), encoding="utf-8")
-    return {"path": str(path), "blocks": list(BLOCK_IDS), "written": True}
+    return {"path": str(path), "blocks": list(BLOCK_IDS), "written": True, "export": exported}
 
 
 def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
     """Draw the standard set. The agent picks which of these to put in the report."""
     run = _require_run(args)
-    figures_dir = run.path / "figures"
+    figures_dir = run.figures_dir
     embeddings_dir = run.path / "embeddings"
     drawn: dict[str, Any] = {}
 
@@ -2095,15 +2111,20 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
                     theme_name=args.theme,
                 )
 
-    # The class facet and the Shepard diagram: the winner's in a representation run,
-    # every candidate's in a visualization run, which has no winner to reserve them for.
+    # The class facet and the Shepard diagram: every candidate's in a visualization run,
+    # which has no winner to reserve them for. In a representation run the winner's, and
+    # the first three close competitors': naming a candidate the margin could not
+    # separate hands the separating to the reader, and these are what a reader
+    # separates embeddings with (section 3.8).
     if visualization:
         diagnosed = list(views)
     else:
         winner = args.facet_candidate or _winner(run) or (next(iter(views)) if views else None)
-        diagnosed = [winner] if winner in views else []
+        ranking = jsonio.read(run.path / "ranking.json") if (run.path / "ranking.json").exists() else {}
+        competitors = [c["id"] for c in ranking.get("close_competitors") or []][:3]
+        diagnosed = [c for c in [winner, *competitors] if c in views]
     for candidate_id in diagnosed:
-        suffix = f"_{candidate_id}" if visualization else ""
+        suffix = "" if not visualization and candidate_id == diagnosed[0] else f"_{candidate_id}"
         if labels is not None:
             drawn[f"class_facet{suffix}"] = figure_class_facet(
                 views[candidate_id],
@@ -2116,6 +2137,16 @@ def _cmd_figures(args: argparse.Namespace) -> dict[str, Any]:
         drawn[f"shepard{suffix}"] = _draw_shepard(
             run, candidate_id, successful[candidate_id], metrics_by_id.get(candidate_id),
             args.theme, figures_dir / f"shepard{suffix}.png",
+        )
+    # How each candidate chose d. A visualization run fixes d = 2, so it has none.
+    curves = {
+        candidate_id: curve
+        for candidate_id in successful
+        if (curve := d_curve(jsonio.read(embeddings_dir / f"{candidate_id}.json").get("tuning")))
+    }
+    if curves:
+        drawn["d_curves"] = figure_d_curves(
+            curves, figures_dir / "d_curves.png", theme_name=args.theme
         )
     if metrics_by_id:
         first = next(iter(metrics_by_id.values()))

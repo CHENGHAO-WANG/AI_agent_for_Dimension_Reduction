@@ -59,7 +59,7 @@ class RunDir:
 
         Creating on construction is right for a command about to write one. It is
         wrong for a read-only command: pointing `status` at a directory that is not a
-        run would otherwise scatter empty `embeddings/`, `metrics/` and `figures/`
+        run would otherwise scatter empty `embeddings/`, `metrics/` and `results/`
         into it, so a command that only reports would quietly modify what it reported
         on.
         """
@@ -67,8 +67,9 @@ class RunDir:
         if not create:
             return
         self.path.mkdir(parents=True, exist_ok=True)
-        for child in ("embeddings", "metrics", "figures"):
+        for child in ("embeddings", "metrics"):
             (self.path / child).mkdir(exist_ok=True)
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def create(cls, root: Path, dataset: str, run_id: str | None = None) -> RunDir:
@@ -104,6 +105,23 @@ class RunDir:
         suggestion or overrode it; returned only to the agent, it could not.
         """
         return self.path / "suggestions"
+
+    @property
+    def results_dir(self) -> Path:
+        """What the user takes away: the report, its figures and the export (section 5).
+
+        Together so the folder can be copied or shared alone with every link intact;
+        the audit trail the report's evidence keys point at stays above it.
+        """
+        return self.path / "results"
+
+    @property
+    def figures_dir(self) -> Path:
+        return self.results_dir / "figures"
+
+    @property
+    def report_path(self) -> Path:
+        return self.results_dir / "report.md"
 
     @property
     def manifest_path(self) -> Path:

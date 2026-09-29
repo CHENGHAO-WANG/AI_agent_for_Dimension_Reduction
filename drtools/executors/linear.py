@@ -56,6 +56,7 @@ def pca(
         )
         embedding = model.fit_transform(X)
         ctx.project_with(model.transform, "transform")
+        ctx.keep("components", model.components_)
         notes = {
             "solver": "TruncatedSVD",
             "centred": False,
@@ -67,6 +68,7 @@ def pca(
         model = PCA(n_components=n_components, whiten=whiten, random_state=ctx.seed)
         embedding = model.fit_transform(np.asarray(X, dtype=np.float64))
         ctx.project_with(lambda Z: model.transform(_dense_float(Z)), "transform")
+        ctx.keep("components", model.components_)
         notes = {"solver": "PCA", "centred": True, "whitened": bool(whiten)}
 
     ratios = np.asarray(model.explained_variance_ratio_)
@@ -185,6 +187,7 @@ def sparse_pca(
     ctx.project_with(lambda Z: model.transform(_dense_float(Z)), "transform")
 
     loadings = np.asarray(model.components_)
+    ctx.keep("components", loadings)
     nonzero = int(np.count_nonzero(loadings))
     return embedding, {
         "alpha": float(alpha),

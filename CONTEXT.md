@@ -299,6 +299,13 @@ For each value one dimension might be given in weighted score, the Candidate who
 score net of its dimensions is highest.
 _Avoid_: trade-off curve, lambda path
 
+**Export**:
+What the user takes away from a Run beside the report: one Candidate's Embedding -- the
+Winner's, or in a Visualization run the Adoption's -- with each row's Sample identifier,
+whether it is a Fitted or a Projected row, and what a Refit of it needs. A Visualization
+run with no Adoption exports nothing.
+_Avoid_: output, saved model, download
+
 ### The agent's boundaries
 
 **Locked core**:

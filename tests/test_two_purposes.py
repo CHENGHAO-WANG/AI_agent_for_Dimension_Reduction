@@ -328,7 +328,7 @@ def test_the_report_carries_the_comparison_and_who_chose(cli, pictured):
     _recommend(cli, pictured)
     cli("figures", "--run-dir", pictured)
 
-    document = (pictured / "report.md")
+    document = (pictured / "results" / "report.md")
     assert cli("report", "--run-dir", pictured).code == 0
     text = document.read_text(encoding="utf-8")
 
@@ -433,6 +433,6 @@ def test_a_judgment_of_an_earlier_portfolio_is_not_shown_as_current(cli, picture
 
     assert _recommend(cli, pictured, recommended=["umap"]).code == 0
     cli("report", "--run-dir", pictured)
-    text = (pictured / "report.md").read_text(encoding="utf-8")
+    text = (pictured / "results" / "report.md").read_text(encoding="utf-8")
     assert "**umap**" in text
     assert "The user adopted" not in text and "The user did not choose" in text

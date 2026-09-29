@@ -147,4 +147,4 @@ def _clear_report(request):
     if "finished_run" in request.fixturenames:
         run = request.getfixturevalue("finished_run")
         for name in ("report.md", "report.pdf"):
-            (run.path / name).unlink(missing_ok=True)
+            (run.results_dir / name).unlink(missing_ok=True)
