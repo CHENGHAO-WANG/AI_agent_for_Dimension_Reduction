@@ -188,12 +188,20 @@ def sparse_counts(
     return counts.astype(np.float64), types, meta
 
 
+def wide_counts(seed: int = 0) -> Dataset:
+    """`sparse_counts` at 3,000 genes: wide enough that selection applies, so the
+    Selected baseline is required. The agent-behaviour pre-flight runs on it (day 23)."""
+    X, labels, meta = sparse_counts(n_cells=800, n_genes=3000, seed=seed)
+    return X, labels, {**meta, "name": "wide_counts"}
+
+
 GENERATORS: dict[str, Callable[..., Dataset]] = {
     "swiss_roll": swiss_roll,
     "s_curve": s_curve,
     "blobs": blobs,
     "linear_subspace": linear_subspace,
     "sparse_counts": sparse_counts,
+    "wide_counts": wide_counts,
 }
 
 

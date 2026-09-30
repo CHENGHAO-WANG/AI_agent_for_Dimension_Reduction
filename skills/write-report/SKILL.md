@@ -15,7 +15,7 @@ actually holds it.
 runs/<id>/decisions.jsonl   every choice, its reasoning, its Evidence keys
 runs/<id>/ranking.json      a Representation run: scores, weights, the qualifying notes
 runs/<id>/comparison.json   a Visualization run: each metric on its own
-runs/<id>/recommendation.json  a Visualization run: your recommendation, and adopted.json the user's pick
+runs/<id>/recommendation.json  a Visualization run: your Recommendation, and adopted.json the user's Adoption
 runs/<id>/profile.json      what the data is
 runs/<id>/recon.json        what its structure looked like before planning
 runs/<id>/metrics/          per-Candidate scores

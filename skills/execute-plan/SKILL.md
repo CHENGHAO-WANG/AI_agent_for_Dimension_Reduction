@@ -63,9 +63,9 @@ both halves — the diagnosis and the repair.
 
 **When the allowance is spent**, record a permanent failure and move on to the
 remaining Candidates. You may instead register a differently-shaped Candidate under a
-new id and abandon the old one, but that spends from the Run's ceiling on how many
-Candidates it may ever register, and the ceiling is what makes this terminate. When
-`embed` refuses, it says how much room is left. A Run that reaches its ceiling has
+new id and abandon the old one, but that spends from the Run's Ceiling, the most
+Candidates it may ever register, and the Ceiling is what makes this terminate. When
+`embed` refuses, it says how much room is left. A Run that reaches its Ceiling has
 spent its scope of work: score what succeeded and report it.
 
 Mark giving up explicitly, or `status` will keep offering a retry nobody intends to
