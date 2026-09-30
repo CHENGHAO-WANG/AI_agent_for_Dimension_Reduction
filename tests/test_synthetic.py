@@ -76,3 +76,14 @@ def test_low_rank_fixture_has_the_advertised_spectrum() -> None:
 def test_unknown_dataset_names_are_rejected_helpfully() -> None:
     with pytest.raises(KeyError, match="unknown synthetic dataset"):
         generate("not_a_dataset")
+
+
+def test_wide_counts_is_wide_enough_for_selection_and_is_counts():
+    """Day 23's pre-flight fixture: more than 2,000 features of one type, so the
+    Selected baseline is required, and integer counts, so the counts path runs."""
+    from drtools.loaders import load
+
+    X, _, _ = load("wide_counts")
+    dense = X.toarray() if hasattr(X, "toarray") else X
+    assert dense.shape == (800, 3000)
+    assert (dense >= 0).all() and (dense == dense.round()).all()
