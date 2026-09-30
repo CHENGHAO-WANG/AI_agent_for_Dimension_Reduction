@@ -1,0 +1,83 @@
+"""The conduct checks, validated against runs that really broke each rule.
+
+A check that stays green on the failure it exists for checks nothing. So each has a
+recorded transcript from days 20 and 21 it must fail on, and one it must pass on. These
+run in the default suite: they read fixtures and call no agent.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from preflight.checks import background, chained_slow, foreign_reads, stray_writes
+from preflight.transcript import Transcript, Call, read
+
+FIXTURES = Path(__file__).parent / "fixtures" / "transcripts"
+REPO = Path(__file__).resolve().parents[1]
+RUN_IDS = {"day20": "day20-pbmc3k", "day20b": "day20-pbmc3k-b", "day21": "day21-pathmnist",
+           "day21b": "day21-pathmnist-b", "day21b2": "day21-pathmnist-b"}
+
+
+def _t(name: str) -> Transcript:
+    return read(FIXTURES / f"{name}.jsonl")
+
+
+def test_background_fails_on_the_run_that_backgrounded_an_embed():
+    assert background(_t("day21"))
+    assert not background(_t("day21b2"))
+
+
+def test_chained_slow_fails_on_the_run_that_chained_three_evaluates():
+    assert chained_slow(_t("day21b"))
+    assert not chained_slow(_t("day21b2"))
+
+
+def test_foreign_reads_fails_on_the_run_that_read_the_earlier_plan():
+    assert foreign_reads(_t("day21b"), RUN_IDS["day21b"], REPO)
+    assert not foreign_reads(_t("day21b2"), RUN_IDS["day21b2"], REPO)
+
+
+def test_stray_writes_fails_on_the_run_that_wrote_into_the_working_directory():
+    assert stray_writes(_t("day20"), RUN_IDS["day20"])
+    assert not stray_writes(_t("day20b"), RUN_IDS["day20b"])
+
+
+def test_a_truncated_transcript_still_yields_its_calls(tmp_path):
+    good = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "drtools status"}}]}}
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps(good) + "\n" + '{"type": "assist', encoding="utf-8")
+    assert [c.name for c in read(path).calls] == ["Bash"]
+
+
+def _with(*calls: Call) -> Transcript:
+    return Transcript(calls=list(calls))
+
+
+@pytest.mark.parametrize("path", [
+    "D:\\PythonProject\\AI_agent_for_Dimension_Reduction\\tests\\plans.py",
+    "d:/pythonproject/ai_agent_for_dimension_reduction/drtools/cli.py",
+    "/d/PythonProject/AI_agent_for_Dimension_Reduction/design/notes.md",
+])
+def test_a_read_of_the_repository_is_caught_in_every_path_form(path):
+    assert foreign_reads(_with(Call("Read", {"file_path": path})), "r1", REPO)
+
+
+def test_the_own_run_is_not_mistaken_for_another_it_extends():
+    own = _with(Call("Read", {"file_path": "D:\\e2e\\runs\\day21-pathmnist-b\\plan.json"}))
+    assert not foreign_reads(own, "day21-pathmnist-b", REPO)
+    other = _with(Call("Read", {"file_path": "D:\\e2e\\runs\\day21-pathmnist\\plan.json"}))
+    assert foreign_reads(other, "day21-pathmnist-b", REPO)
+
+
+def test_listing_runs_to_find_one_to_resume_is_allowed():
+    assert not foreign_reads(_with(Call("Bash", {"command": "ls runs/ 2>/dev/null"})), "r1", REPO)
+
+
+def test_a_loop_over_a_slow_command_counts_as_chaining():
+    loop = Call("Bash", {"command": "for c in a b; do drtools evaluate --id $c; done"})
+    assert chained_slow(_with(loop))
+    assert not chained_slow(_with(Call("Bash", {"command": "drtools checkpoint && drtools status"})))

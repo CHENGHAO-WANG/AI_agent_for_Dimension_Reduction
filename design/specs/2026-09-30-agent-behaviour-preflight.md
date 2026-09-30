@@ -84,7 +84,8 @@ A reader turns a transcript into its tool calls, each with its input and its res
    plugin's repository -- the skills arrive through the Skill tool -- or any Run other than
    its own.
 4. *It wrote only its inputs and its prose.* Every Write and Edit lands in
-   `runs/<id>/inputs/` or is `runs/<id>/results/report.md`.
+   `runs/<id>/inputs/`, or is `runs/<id>/plan.json` -- which `validate-plan` reads -- or
+   `runs/<id>/results/report.md`.
 5. *The Run is finished.* `drtools status` reports `done`, and `results/report.pdf`
    exists.
 
