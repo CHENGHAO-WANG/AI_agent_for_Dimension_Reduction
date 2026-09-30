@@ -4288,3 +4288,67 @@ first on the code about to change. No cut is planned for now; the rule above sta
   or test reads it, and the decision it would restate, the locked core and open adapter,
   is already recorded in section 2.1 and the day 1 log. `docs/` is never created, and
   the README no longer lists it.
+
+- **Day 23** -- The agent-behaviour pre-flight: a check, run by hand before the graded
+  Runs, of what the agent does rather than what it finds. Designed in a spec
+  (`design/specs/2026-09-30-agent-behaviour-preflight.md`), since the notes carried only
+  the requirement, and built to its plan.
+
+  *What it is.* `preflight/launch.py` runs `/dr-agent:analyze` with `claude -p`, in a new
+  folder outside the repository, with the configuration the graded Runs use: hooks off,
+  no MCP servers, PowerShell disallowed, and the allowlist `drtools`, `ls`, `cat` and the
+  file tools, written there and nowhere else. It calls `claude` with an argument list, so
+  no shell rewrites the prompt or the plugin path, and day 21's two Git Bash traps are
+  gone rather than remembered. It stops, naming the cause, when the plugin did not load,
+  which it reads from the transcript's first event. `tests/test_preflight.py` then
+  checks the transcript and the Run.
+  - Decided with the user: a pre-flight, not evidence for the report and not a replay of
+    recorded runs only; three scenarios on a new `wide_counts` fixture, `sparse_counts`
+    at 3,000 genes, so the counts path runs and the Selected baseline is required; and
+    the launch split from the checks.
+  - Rejected: one pytest file that launches and asserts, under which every change to a
+    check costs a new agent run; and a standalone script outside the test suite.
+
+  *The checks, and why they were validated first.* On every scenario: nothing ran in the
+  background; no two slow commands -- `embed`, `evaluate`, `prepare-reference`,
+  `recon`, `render` -- shared a call; the agent read nothing in the plugin's repository
+  and no other Run; it wrote only its inputs, `plan.json` and its report; and `status`
+  reached `done` with a PDF. Then per scenario: the counts decision and statement, both
+  baselines and a ranking; one registration, no successful Candidate run twice, and
+  `status` read before any stage; no ranking, a recommendation, nothing adopted.
+  - Each conduct check has a test in the default suite that must fail on a trimmed
+    day 20 or 21 transcript that broke its rule and pass on one that did not. A check
+    that stays green on the failure it exists for checks nothing.
+  - The recordings changed one check before it was written. "One `drtools` command per
+    call", as `/analyze` puts it, fired 4 to 10 times on every transcript, for harmless
+    pairs such as `checkpoint && status`; what ended day 21's Run was slow commands
+    chained, so that is what is checked. A loop over a slow command counts.
+  - They also widened the allowed writes. The agent writes `plan.json` for
+    `validate-plan` to read, which the spec had missed; it now reads so.
+  - And they showed a violation nobody had counted: diagnosing the render crash on day
+    20, the agent grepped the repository for `pandoc`.
+
+  *The three scenarios*, run once on the finished code; every check passed, and nothing
+  needed fixing.
+
+  | Scenario | Turns | Minutes | Dollars |
+  |---|---|---|---|
+  | representation | 71 | 7.3 | 1.90 |
+  | resume | 26 + 42 | 2.7 + 5.4 | 1.03 + 1.03 |
+  | visualization | 72 | 7.6 | 2.06 |
+
+  `resume`'s first launch stopped at 25 turns with `status` at `execute`: the Plan
+  registered and three of its five Candidates embedded. The second read `status`,
+  embedded the other two, ran none of the first three again, and reached `done`. Registration refused two Evidence keys in
+  `representation` and the agent repaired them, the refusal route working as section 2.2
+  intends. Each Run met four or five permission refusals of the kinds days 20 and 21
+  recorded, which cost turns and not correctness; the allowlist stays as narrow as it is.
+
+  *The rest of the day.* The README describes the launch, `/dr-agent:analyze` by its
+  namespaced name, the pre-flight, and the two baselines. The glossary review read the
+  five skills and `/analyze` against every term and its avoided words: most hits were
+  the avoided word in another sense -- a numbered step, the tool's timeout, the dataset
+  spec -- and two were a term's concept in other words, the Ceiling in execute-plan and
+  the Adoption in write-report, now named. No concept lacked a term.
+
+  819 tests and 3 skipped, 322s.
