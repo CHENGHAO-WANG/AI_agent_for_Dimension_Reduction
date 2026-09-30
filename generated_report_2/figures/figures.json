@@ -1,0 +1,165 @@
+{
+  "comparison": {
+    "panels": {
+      "pca": {
+        "render_mode": "density",
+        "n_points": 89996,
+        "n_classes": 9,
+        "identity_channel": "labels",
+        "points_outside_view": 315
+      },
+      "selected-pca": {
+        "render_mode": "density",
+        "n_points": 89996,
+        "n_classes": 9,
+        "identity_channel": "labels",
+        "points_outside_view": 763
+      },
+      "pca-kernel-pca": {
+        "render_mode": "density",
+        "n_points": 89996,
+        "n_classes": 9,
+        "identity_channel": "labels",
+        "points_outside_view": 0
+      },
+      "pca-diffusion": {
+        "render_mode": "density",
+        "n_points": 89996,
+        "n_classes": 9,
+        "identity_channel": "labels",
+        "points_outside_view": 321
+      },
+      "pca-laplacian": {
+        "render_mode": "density",
+        "n_points": 89996,
+        "n_classes": 9,
+        "identity_channel": "labels",
+        "points_outside_view": 411
+      }
+    },
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\comparison.png"
+  },
+  "embedding_pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 315,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\embedding_pca.png"
+  },
+  "plot_b_pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 253,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\plot_b_pca.png"
+  },
+  "embedding_selected-pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 763,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\embedding_selected-pca.png"
+  },
+  "plot_b_selected-pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 251,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\plot_b_selected-pca.png"
+  },
+  "embedding_pca-kernel-pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 0,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\embedding_pca-kernel-pca.png"
+  },
+  "plot_b_pca-kernel-pca": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 0,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\plot_b_pca-kernel-pca.png"
+  },
+  "embedding_pca-diffusion": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 321,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\embedding_pca-diffusion.png"
+  },
+  "embedding_pca-laplacian": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 411,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\embedding_pca-laplacian.png"
+  },
+  "plot_b_pca-laplacian": {
+    "render_mode": "density",
+    "n_points": 89996,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 11,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\plot_b_pca-laplacian.png"
+  },
+  "class_facet": {
+    "n_classes": 9,
+    "render_mode": "density",
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\class_facet.png"
+  },
+  "shepard": {
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\shepard.png"
+  },
+  "class_facet_selected-pca": {
+    "n_classes": 9,
+    "render_mode": "density",
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\class_facet_selected-pca.png"
+  },
+  "shepard_selected-pca": {
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\shepard_selected-pca.png"
+  },
+  "d_curves": {
+    "candidates": [
+      "pca",
+      "selected-pca",
+      "pca-kernel-pca",
+      "pca-diffusion",
+      "pca-laplacian"
+    ],
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\d_curves.png"
+  },
+  "metrics": {
+    "metrics": [
+      "trustworthiness",
+      "continuity",
+      "shepard_correlation",
+      "silhouette",
+      "knn_label_preservation",
+      "runtime_s"
+    ],
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\metrics.png"
+  },
+  "scree": {
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\scree.png"
+  },
+  "recon_thumbnail": {
+    "drawn": true,
+    "source": "first two components of the probe representation",
+    "caveat": "a projection of the probe coordinates, not a fitted embedding; read it for the shape of the data, not as a result",
+    "render_mode": "points",
+    "n_points": 4995,
+    "n_classes": 9,
+    "identity_channel": "labels",
+    "points_outside_view": 25,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260930-000816\\runs\\graded-pathmnist\\results\\figures\\recon_thumbnail.png"
+  }
+}

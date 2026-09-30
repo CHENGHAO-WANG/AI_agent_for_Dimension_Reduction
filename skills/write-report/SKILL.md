@@ -94,7 +94,8 @@ competitor with those figures unnamed.
 
 Where the Plan holds a Selected baseline, read each selecting Candidate's score against
 it as well as against the Linear baseline. Section 2 says what each difference
-measures, and section 8 says how much of a lead is the method's.
+measures, and section 8 says how much of a lead is the method's -- which it can say
+only where the two share a d, as the last restraint below explains.
 
 ## What you may claim
 
@@ -104,7 +105,7 @@ it. **It is not proof that a rationale is true.** A real key with a false readin
 — a silhouette of 0.7 is 0.7, and "confirms distinct biological cell types" is not
 thereby supported. Claim the narrower thing.
 
-Three specific restraints:
+Four specific restraints:
 
 - **A picture means what its method's `reading` says.** Section 5 prints each method's
   reading beside its picture; claim no more about distances, gaps or group sizes than
@@ -114,6 +115,14 @@ Three specific restraints:
 - **A failed Candidate** says this configuration did not work. It does not say the
   method is unsuitable, unless the failure itself is the evidence — a disconnected
   neighbourhood graph is a fact about the data.
+- **Two Candidates at different d differ in method and in d at once.** A gap between
+  a 38-dimensional PCA and a 2-dimensional Diffusion Maps is not the spectral method's
+  deficit, nor evidence that it "added nothing": the Run never compared them at equal
+  d. Shared preprocessing rules out the preprocessing, not the dimension. The path of
+  winners is the statement of that trade-off -- what a dimension must be worth for the
+  smaller Candidate to win -- so cite it, and attribute a gap to the method only
+  between Candidates at exactly the same d. "Similar" d is different d: 7 against 5
+  is not a fair comparison of methods either.
 
 ## What belongs in Limitations
 

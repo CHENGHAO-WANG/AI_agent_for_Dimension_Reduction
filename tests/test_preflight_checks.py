@@ -81,6 +81,14 @@ def test_a_loop_over_a_slow_command_counts_as_chaining():
     loop = Call("Bash", {"command": "for c in a b; do drtools evaluate --id $c; done"})
     assert chained_slow(_with(loop))
     assert not chained_slow(_with(Call("Bash", {"command": "drtools checkpoint && drtools status"})))
+    multiline = Call("Bash", {"command": "for c in a b\ndo drtools embed --id $c\ndone"})
+    assert chained_slow(_with(multiline))
+
+
+def test_a_comprehension_inside_python_is_not_a_shell_loop():
+    # The graded PathMNIST Run piped one embed into `python -c "...for c in ..."`.
+    piped = Call("Bash", {"command": 'drtools embed --id p | python -c "print([c for c in x])"'})
+    assert not chained_slow(_with(piped))
 
 
 from preflight.checks import finished, representation, resume, visualization

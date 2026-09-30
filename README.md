@@ -113,6 +113,7 @@ that broke them.
 | `preflight/` | The headless launch and the agent-behaviour checks |
 | `.claude/` | Build configuration for working *on* dr-agent, not part of the product |
 | `runs/` | Run directories (git-ignored) |
+| `generated_report_1/`, `generated_report_2/` | The graded reports, PBMC3k and PathMNIST, with their figures and export |
 | `tests/` | Pipeline tests over synthetic fixtures, and the pre-flight's checks |
 | `design/notes.md` | Design decisions and their rationale |
 

@@ -100,6 +100,24 @@ def test_the_profile_block_prints_the_shape_the_profile_recorded(finished_run):
     assert profile["dataset_digest"][:12] in body
 
 
+def test_the_profile_block_prints_each_observation_as_text(tmp_path):
+    # Day 24: the block read a `statement` key the profiler never writes, and printed
+    # every observation as a raw dict in both graded reports.
+    root = tmp_path / "runs"
+    assert main(["profile", "--data", "blobs", "--runs-root", str(root),
+                 "--run-id", "obs"]) == 0
+    path = root / "obs" / "profile.json"
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    profile["observations"] = [{"observation": "89,996 samples.",
+                                "evidence": ["profile.shape.n_samples"]}]
+    path.write_text(json.dumps(profile), encoding="utf-8")
+
+    body = build_blocks(RunDir(root / "obs"))["profile"]
+
+    assert "{'" not in body
+    assert "- 89,996 samples. (`profile.shape.n_samples`)" in body
+
+
 def test_the_ranking_block_carries_the_weighting_and_every_note(finished_run):
     ranking = json.loads((finished_run.path / "ranking.json").read_text(encoding="utf-8"))
 
@@ -330,3 +348,7 @@ def test_the_preprocessing_block_gives_the_selection_rule_and_the_selected_basel
 
     assert "are kept and z-scored before the method in `sel-iso`" in block
     assert "the Selected baseline, `sel-pca`" in block
+    # Day 24: the block told the agent the difference "measures its method", and the
+    # graded reports then credited gaps at d = 38 against d = 2 to the method.
+    assert "measures its method" not in block
+    assert "only where the two share a d" in block

@@ -1,0 +1,158 @@
+{
+  "comparison": {
+    "panels": {
+      "selected-pca": {
+        "render_mode": "points",
+        "n_points": 2700,
+        "n_classes": 0,
+        "identity_channel": "none",
+        "points_outside_view": 6
+      },
+      "pca-isomap": {
+        "render_mode": "points",
+        "n_points": 2700,
+        "n_classes": 0,
+        "identity_channel": "none",
+        "points_outside_view": 1
+      },
+      "pca": {
+        "render_mode": "points",
+        "n_points": 2700,
+        "n_classes": 0,
+        "identity_channel": "none",
+        "points_outside_view": 7
+      },
+      "pca-diffusion": {
+        "render_mode": "points",
+        "n_points": 2700,
+        "n_classes": 0,
+        "identity_channel": "none",
+        "points_outside_view": 12
+      },
+      "pca-laplacian": {
+        "render_mode": "points",
+        "n_points": 2700,
+        "n_classes": 0,
+        "identity_channel": "none",
+        "points_outside_view": 0
+      }
+    },
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\comparison.png"
+  },
+  "embedding_selected-pca": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 6,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\embedding_selected-pca.png"
+  },
+  "plot_b_selected-pca": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 11,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\plot_b_selected-pca.png"
+  },
+  "embedding_pca-isomap": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 1,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\embedding_pca-isomap.png"
+  },
+  "plot_b_pca-isomap": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 0,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\plot_b_pca-isomap.png"
+  },
+  "embedding_pca": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 7,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\embedding_pca.png"
+  },
+  "plot_b_pca": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 12,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\plot_b_pca.png"
+  },
+  "embedding_pca-diffusion": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 12,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\embedding_pca-diffusion.png"
+  },
+  "plot_b_pca-diffusion": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 11,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\plot_b_pca-diffusion.png"
+  },
+  "embedding_pca-laplacian": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 0,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\embedding_pca-laplacian.png"
+  },
+  "plot_b_pca-laplacian": {
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 11,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\plot_b_pca-laplacian.png"
+  },
+  "shepard": {
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\shepard.png"
+  },
+  "d_curves": {
+    "candidates": [
+      "selected-pca",
+      "pca-isomap",
+      "pca",
+      "pca-diffusion",
+      "pca-laplacian"
+    ],
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\d_curves.png"
+  },
+  "metrics": {
+    "metrics": [
+      "trustworthiness",
+      "continuity",
+      "shepard_correlation",
+      "runtime_s"
+    ],
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\metrics.png"
+  },
+  "scree": {
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\scree.png"
+  },
+  "recon_thumbnail": {
+    "drawn": true,
+    "source": "first two components of the probe representation",
+    "caveat": "a projection of the probe coordinates, not a fitted embedding; read it for the shape of the data, not as a result",
+    "render_mode": "points",
+    "n_points": 2700,
+    "n_classes": 0,
+    "identity_channel": "none",
+    "points_outside_view": 14,
+    "path": "D:\\PythonProject\\dr-agent-graded-4\\graded-20260929-235734\\runs\\graded-pbmc3k\\results\\figures\\recon_thumbnail.png"
+  }
+}

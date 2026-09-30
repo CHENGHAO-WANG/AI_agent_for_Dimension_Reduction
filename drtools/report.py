@@ -216,8 +216,9 @@ def _block_profile(run: RunDir) -> str:
     observations = profile.get("observations") or []
     if observations:
         body += "\n\n" + "\n".join(
-            f"- {observation['statement']}"
-            if isinstance(observation, dict) and "statement" in observation
+            f"- {observation['observation']} "
+            f"({', '.join(f'`{key}`' for key in observation.get('evidence', []))})"
+            if isinstance(observation, dict) and "observation" in observation
             else f"- {observation}"
             for observation in observations
         )
@@ -311,10 +312,11 @@ def _block_preprocessing(run: RunDir) -> str:
             "selects by variance. The Linear baseline never selects"
             + (
                 f"; the Selected baseline, {', '.join(f'`{i}`' for i in twins)}, is the "
-                "same PCA behind the same selection. A selecting Candidate's difference "
-                "from the Selected baseline measures its method, and the Selected "
-                "baseline's difference from the Linear baseline measures the selection "
-                "and z-score."
+                "same PCA behind the same selection. With the preprocessing held fixed, "
+                "a selecting Candidate's difference from the Selected baseline is its "
+                "method's, and the Selected baseline's difference from the Linear "
+                "baseline is the selection and z-score's -- but only where the two share "
+                "a d. At different d, each difference is also the dimension's."
                 if twins
                 else "."
             )

@@ -4373,3 +4373,64 @@ first on the code about to change. No cut is planned for now; the rule above sta
     with a stub that fails.
 
   827 tests and 3 skipped, 303s.
+
+- **Day 24** -- The graded Runs, four pairs of them, and the reports submitted from the
+  last. Every pair finished in one headless session per dataset with no intervention,
+  and every Run passed the pre-flight's conduct checks. What moved the day was the
+  audit: each report read claim by claim against its Run's records by a separate agent.
+  Every score, standard error and d was right in all eight reports. The sentences
+  around them were not.
+
+  | Pair | Model | What the audit found, and what changed |
+  |---|---|---|
+  | 1 | Opus | Gaps credited to the method across d: 38 against 2 on PathMNIST, 83 against 4 to 7 on PBMC3k; one number wrong, 0.0206 as "less than 0.02". The write-report skill gains a fourth restraint |
+  | 2 | Sonnet | Not audited: the launcher had inherited the user's default model. It now pins `claude-opus-5-5`, the model the pre-flight was validated on |
+  | 3 | Opus | The gross confounds gone, but d = 7 against 5 called "the one comparison the design made fairly"; and the toolbox's own preprocessing block said a selecting Candidate's difference from the Selected baseline "measures its method" |
+  | 4 | Opus | Submitted, unedited |
+
+  *The toolbox told the agent the claim the skill forbade.* Day 21's preprocessing block,
+  and the glossary's Selected baseline, said the difference from the Selected baseline
+  measures the method. That holds only at equal d, and the two baselines are the only
+  pair that ever shares one. The agent read the tool's sentence as fact and the skill's
+  restraint as advice. Both now say the split holds at equal d, and the skill says
+  "similar" d is different d.
+
+  *The fourth pair.* PBMC3k registered the same five Candidates as pairs 1 and 3 and
+  scored identically: the Selected baseline at d = 83, 0.905. PathMNIST nominated Kernel
+  PCA where pair 3 had Isomap, and a subsample of 8,000 where it had 5,000; `pca` won at
+  d = 38, 0.804, with the Selected baseline its Close competitor, tied. Where the Plans
+  matched, the numbers matched to the last digit, which is section 2.2's conditional
+  reproducibility seen from both sides.
+  - What its audit still found: Kernel PCA at d = 3 credited over d = 2 and 6; a plan
+    rationale describing a PCA pre-step "near the elbow", when tuning chose 38 against
+    an elbow of 15; Isomap called "the smallest Candidate that wins at any price", when
+    `pca` at d = 4 wins above 0.011; "Fidelity rises with d", which nothing measured; a
+    mechanism for Diffusion Maps' arms that nothing records.
+  - *Decided with the user:* submit these unedited, and record what the audit found
+    here and in `report.pdf`. Editing a graded report by hand would end the claim that
+    it was produced with zero intervention, and a fifth pair would find other sentences.
+    Rejected: a further re-run.
+
+  *The profile block printed raw dicts.* It read a `statement` key; the profiler and
+  reconnaissance write `observation`, so every observation reached the report as a
+  Python dict. Found by the fourth audit and fixed after it; the submitted reports keep
+  the defect.
+
+  *Seen and left.*
+  - Pair 2's PathMNIST `embed` for Laplacian Eigenmaps met the Bash tool's 600 s timeout
+    just as it met its own 600 s budget; the harness moved the call to the background,
+    and the conduct check caught it. The agent waited for it correctly. Not seen on Opus.
+  - The loop check read a comprehension inside `python -c` as a shell loop; it now
+    requires a `do` after `;` or a newline. The harness had refused that call anyway.
+
+  *Deliverables.* `generated_report_1/` (PBMC3k) and `generated_report_2/` (PathMNIST)
+  are the fourth pair's `results/` folders, at the repository root, since nothing
+  named a place for them. The
+  PathMNIST coordinate CSV, 67 MB, is left out for size, and a note stands in its place.
+  `report.pdf` is drafted to three pages, from these notes and the Runs, for the user to
+  finish. The earlier pairs stay beside the repository, in `dr-agent-graded*/`, as the
+  record of why each was repeated.
+
+  Each fix has a test that fails without it.
+
+  829 tests and 3 skipped, 296s.
