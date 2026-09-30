@@ -81,3 +81,30 @@ def test_a_loop_over_a_slow_command_counts_as_chaining():
     loop = Call("Bash", {"command": "for c in a b; do drtools evaluate --id $c; done"})
     assert chained_slow(_with(loop))
     assert not chained_slow(_with(Call("Bash", {"command": "drtools checkpoint && drtools status"})))
+
+
+from preflight.checks import finished, representation, resume, visualization
+
+
+def test_finished_names_the_stage_a_bare_run_is_at(tmp_path):
+    from drtools.cli import main
+    assert main(["profile", "--data", "blobs", "--runs-root", str(tmp_path), "--run-id", "r"]) == 0
+    problems = finished(tmp_path / "r")
+    assert any("not done" in p for p in problems)
+    assert any("report.pdf" in p for p in problems)
+
+
+def test_representation_reads_the_decision_and_the_plan(finished_run):
+    # blobs is not counts and selects nothing, so both checks must speak.
+    problems = representation(finished_run.path, {}, [])
+    assert any("raw_counts" in p for p in problems)
+    assert any("Selected baseline" in p for p in problems)
+
+
+def test_visualization_refuses_a_ranked_run(finished_run):
+    assert any("ranking" in p for p in visualization(finished_run.path, {}, []))
+
+
+def test_resume_says_it_tested_nothing_when_the_first_launch_finished(finished_run):
+    summary = {"launches": [{"next": "done"}, {"next": "done"}]}
+    assert any("tested nothing" in p for p in resume(finished_run.path, summary, [Transcript(), Transcript()]))
