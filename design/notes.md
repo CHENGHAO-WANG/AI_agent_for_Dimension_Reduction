@@ -4431,6 +4431,16 @@ first on the code about to change. No cut is planned for now; the rule above sta
   finish. The earlier pairs stay beside the repository, in `dr-agent-graded*/`, as the
   record of why each was repeated.
 
+  *The pre-flight, again.* The day 23 spec asks for it after any late change to the
+  skills, and write-report changed twice, so the three scenarios ran on the final code,
+  on Opus: representation 75 turns, $2.31; resume 26 + 44, $1.07 + $0.96; visualization
+  73, $2.14. Representation and visualization passed. Resume failed on its own check:
+  the first launch registered, met a warning that PCA's suggestions had not been
+  requested, fixed it and registered the same Plan again -- which `_check_reregistration`
+  allows. The check counted registrations; what it exists for is a resumed launch that
+  plans again, so it now asks that the second launch run no `validate-plan`. The second
+  launch had read `status`, run only what was left, and reached `done`.
+
   Each fix has a test that fails without it.
 
-  829 tests and 3 skipped, 296s.
+  831 tests and 3 skipped, 306s.
