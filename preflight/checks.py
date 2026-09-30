@@ -15,8 +15,14 @@ from preflight.transcript import Call, Transcript
 #: The commands that can take minutes. Two in one call can outlast the tool's 600 s
 #: timeout, and the harness then moves the call to the background (day 21).
 SLOW = re.compile(r"\bdrtools\s+(embed|evaluate|prepare-reference|recon|render)\b")
-LOOP = re.compile(r"\b(for|while)\b")
-READING_TOOLS = {"Read", "Glob", "Grep", "Bash"}
+LOOP = re.compile(r"\bfor\s+\w+\s+in\b|\bwhile\s|;\s*do\b")
+#: The fields of each reading tool that name what it reads. A Grep's pattern or a Bash
+#: call's description is text, not a destination.
+READ_FIELDS = {"Read": ("file_path",), "Glob": ("path", "pattern"),
+               "Grep": ("path", "glob"), "Bash": ("command",)}
+#: `runs/<name>`, where a wildcard name counts as another Run once the path descends
+#: into it: `ls runs/` finds a Run to resume, `runs/*/plan.json` reads them all.
+RUN_PATH = re.compile(r"runs/([\w.*-]+)(/?)")
 
 
 def _show(call: Call) -> str:
@@ -54,10 +60,11 @@ def foreign_reads(t: Transcript, run_id: str, repo: Path) -> list[str]:
     forms = _repo_forms(repo)
     found = []
     for c in t.calls:
-        if c.name not in READING_TOOLS:
+        if c.name not in READ_FIELDS:
             continue
-        text = _norm(json.dumps(c.input))
-        others = {m for m in re.findall(r"runs/([\w.-]+)", text) if m != run_id.lower()}
+        text = _norm(" ".join(str(c.input.get(f, "")) for f in READ_FIELDS[c.name]))
+        others = {name for name, slash in RUN_PATH.findall(text)
+                  if name != run_id.lower() and ("*" not in name or slash)}
         if any(form in text for form in forms) or others:
             found.append(_show(c))
     return found
@@ -150,9 +157,12 @@ def resume(run_dir: Path, summary: dict, transcripts: list[Transcript]) -> list[
         tries = attempts(run, candidate)
         if tries and tries[0].get("outcome") == "ok" and len(tries) > 1:
             found.append(f"{candidate} succeeded first time and ran again")
+    # Positions as (call, offset), so two commands in one call are ordered too.
     bash = [c.input.get("command", "") for c in transcripts[1].calls if c.name == "Bash"]
-    status_at = next((i for i, cmd in enumerate(bash) if "drtools status" in cmd), None)
-    stage_at = next((i for i, cmd in enumerate(bash) if STAGE.search(cmd)), None)
+    status_at = next(((i, m.start()) for i, cmd in enumerate(bash)
+                      for m in re.finditer(r"\bdrtools\s+status\b", cmd)), None)
+    stage_at = next(((i, m.start()) for i, cmd in enumerate(bash)
+                     for m in STAGE.finditer(cmd)), None)
     if status_at is None or (stage_at is not None and stage_at < status_at):
         found.append("the second launch ran a stage before reading status")
     return found

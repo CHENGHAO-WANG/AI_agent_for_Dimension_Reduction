@@ -108,3 +108,39 @@ def test_visualization_refuses_a_ranked_run(finished_run):
 def test_resume_says_it_tested_nothing_when_the_first_launch_finished(finished_run):
     summary = {"launches": [{"next": "done"}, {"next": "done"}]}
     assert any("tested nothing" in p for p in resume(finished_run.path, summary, [Transcript(), Transcript()]))
+
+
+# ------------------------------------------------ fixes from the day 23 Codex review
+
+
+def test_a_wildcard_read_across_runs_is_caught():
+    assert foreign_reads(_with(Call("Glob", {"pattern": "runs/*/plan.json"})), "r1", REPO)
+    assert foreign_reads(_with(Call("Bash", {"command": "cat runs/*/plan.json"})), "r1", REPO)
+    assert not foreign_reads(_with(Call("Bash", {"command": "ls runs/"})), "r1", REPO)
+
+
+def test_only_the_fields_that_name_a_path_are_read():
+    search = Call("Grep", {"path": "D:/e/runs/r1/results/report.md", "pattern": "runs/other"})
+    described = Call("Bash", {"command": "drtools status --run-dir runs/r1",
+                              "description": "compare with runs/other"})
+    assert not foreign_reads(_with(search, described), "r1", REPO)
+
+
+def test_the_word_for_is_not_a_loop():
+    single = Call("Bash", {"command": 'echo "waiting for it"; drtools evaluate --run-dir D:/for/runs/r1 --id a'})
+    assert not chained_slow(_with(single))
+
+
+def test_a_damaged_utf8_tail_still_yields_the_calls_before_it(tmp_path):
+    good = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "a", "name": "Bash", "input": {"command": "drtools status"}}]}}
+    path = tmp_path / "t.jsonl"
+    path.write_bytes((json.dumps(good) + "\n").encode() + b'{"type": "\xe4\xb8')
+    assert [c.name for c in read(path).calls] == ["Bash"]
+
+
+def test_resume_refuses_a_stage_run_before_status_in_the_same_call(finished_run):
+    first = Transcript()
+    second = _with(Call("Bash", {"command": "drtools embed --run-dir runs/r --id a; drtools status --run-dir runs/r"}))
+    summary = {"launches": [{"next": "execute"}, {"next": "done"}]}
+    assert any("before reading status" in p for p in resume(finished_run.path, summary, [first, second]))

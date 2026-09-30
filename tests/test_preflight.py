@@ -56,3 +56,46 @@ def test_scenario(scenario):
         problems += foreign_reads(t, summary["run_id"], REPO) + stray_writes(t, summary["run_id"])
     problems += finished(run_dir) + SCENARIO_CHECKS[scenario](run_dir, summary, transcripts)
     assert not problems, "\n".join(problems)
+
+
+# ------------------------------------------------ fixes from the day 23 Codex review
+
+
+def test_an_output_folder_inside_the_repository_is_refused(monkeypatch):
+    import preflight.launch as launch
+
+    # A launch must never happen here, guard or no guard: without the guard this test
+    # once started a real agent inside the repository.
+    def no_agent(*args, **kwargs):
+        raise AssertionError("an agent was launched")
+
+    monkeypatch.setattr(launch, "_launch", no_agent)
+    monkeypatch.setattr(launch.shutil, "which", lambda name, path=None: name)
+    with pytest.raises(SystemExit, match="outside the repository"):
+        launch.main(["representation", "--out", str(REPO / "preflight-output")])
+    assert not (REPO / "preflight-output").exists()
+
+
+def test_a_plugin_that_did_not_load_stops_the_agent_at_once(tmp_path):
+    import sys
+    import time
+
+    from preflight.launch import _launch
+
+    # Prints an init event without the plugin, then would run for a minute.
+    fake = [sys.executable, "-c",
+            "import json, sys, time; print(json.dumps({'type': 'system', 'subtype': 'init',"
+            " 'slash_commands': ['analyze']}), flush=True); time.sleep(60)"]
+    started = time.monotonic()
+    with pytest.raises(SystemExit, match="did not load"):
+        _launch(fake, tmp_path, "t.jsonl", "r", dict(os.environ))
+    assert time.monotonic() - started < 20
+
+
+def test_a_graded_run_that_did_not_finish_fails_the_launch(tmp_path, monkeypatch):
+    import preflight.launch as launch
+
+    monkeypatch.setattr(launch.shutil, "which", lambda name, path=None: name)
+    monkeypatch.setattr(launch, "_launch", lambda *a, **k: {"transcript": "t", "next": "report"})
+    with pytest.raises(SystemExit, match="not done"):
+        launch.main(["graded", "--dataset", "pbmc3k", "--run-id", "g", "--out", str(tmp_path)])

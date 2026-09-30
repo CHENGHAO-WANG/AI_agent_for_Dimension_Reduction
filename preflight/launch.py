@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +34,8 @@ SCENARIOS = {
 #: Registration finished inside 25 turns on days 20 and 21, so this stops the first
 #: `resume` launch partway through execution.
 RESUME_FIRST_TURNS = 25
+#: How long to wait for the transcript's first event before judging the plugin.
+INIT_TIMEOUT_S = 120
 
 
 def build_command(claude: str, prompt: str, max_turns: int | None) -> list[str]:
@@ -59,20 +62,35 @@ def _next_stage(run_dir: Path) -> str | None:
     return run_status(RunDir(run_dir, create=False))["next"] if run_dir.exists() else None
 
 
-def _launch(claude: str, prompt: str, workdir: Path, name: str, run_id: str,
-            env: dict, max_turns: int | None) -> dict:
+def _first_event_loaded(path: Path, process: subprocess.Popen) -> bool:
+    """Wait for the init event and judge it, so an agent without the plugin is stopped
+    at once rather than left to wander for its whole session (day 21)."""
+    deadline = time.monotonic() + INIT_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if read(path).init:
+            return plugin_loaded(read(path))
+        if process.poll() is not None:
+            return plugin_loaded(read(path))
+        time.sleep(0.5)
+    return False
+
+
+def _launch(command: list[str], workdir: Path, name: str, run_id: str, env: dict) -> dict:
     with open(workdir / name, "w", encoding="utf-8") as out, \
             open(workdir / f"{name}.err", "w", encoding="utf-8") as err:
-        subprocess.run(build_command(claude, prompt, max_turns), cwd=workdir,
-                       stdout=out, stderr=err, env=env, check=False)
+        process = subprocess.Popen(command, cwd=workdir, stdout=out, stderr=err, env=env)
+        if not _first_event_loaded(workdir / name, process):
+            process.kill()
+            process.wait()
+            raise SystemExit(f"the dr-agent plugin did not load from {REPO.as_posix()}; "
+                             f"see {workdir / name}")
+        process.wait()
     transcript = read(workdir / name)
-    if not plugin_loaded(transcript):
-        raise SystemExit(f"the dr-agent plugin did not load from {REPO.as_posix()}; "
-                         f"see {workdir / name}")
     result = transcript.result or {}
     return {"transcript": name, "turns": result.get("num_turns"),
             "minutes": round((result.get("duration_ms") or 0) / 60000, 1),
             "cost_usd": result.get("total_cost_usd"),
+            "exit_code": process.returncode,
             "next": _next_stage(workdir / "runs" / run_id)}
 
 
@@ -91,6 +109,10 @@ def main(argv: list[str] | None = None) -> Path:
     else:
         arguments, run_id = SCENARIOS[args.scenario]
     prompt = f"/dr-agent:analyze {arguments} --run-id {run_id}"
+    out = args.out.resolve()
+    if out == REPO or REPO in out.parents:
+        raise SystemExit(f"--out must be outside the repository, where .claude/ holds "
+                         f"the build instructions; got {out}")
 
     claude = shutil.which("claude")
     if claude is None:
@@ -100,19 +122,25 @@ def main(argv: list[str] | None = None) -> Path:
     if shutil.which("drtools", path=env["PATH"]) is None:
         raise SystemExit("drtools is not on PATH; install the toolbox into this Python")
 
-    workdir = args.out / f"{args.scenario}-{datetime.now():%Y%m%d-%H%M%S}"
+    workdir = out / f"{args.scenario}-{datetime.now():%Y%m%d-%H%M%S}"
     workdir.mkdir(parents=True)
     launches = []
     if args.scenario == "resume":
-        launches.append(_launch(claude, prompt, workdir, "transcript-1.jsonl", run_id, env,
-                                RESUME_FIRST_TURNS))
-        launches.append(_launch(claude, prompt, workdir, "transcript-2.jsonl", run_id, env, None))
+        launches.append(_launch(build_command(claude, prompt, RESUME_FIRST_TURNS), workdir,
+                                "transcript-1.jsonl", run_id, env))
+        launches.append(_launch(build_command(claude, prompt, None), workdir,
+                                "transcript-2.jsonl", run_id, env))
     else:
-        launches.append(_launch(claude, prompt, workdir, "transcript.jsonl", run_id, env, None))
+        launches.append(_launch(build_command(claude, prompt, None), workdir,
+                                "transcript.jsonl", run_id, env))
     summary = {"scenario": args.scenario, "run_id": run_id, "launches": launches}
     (workdir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
-    print(f"\ncheck it with: DRAGENT_PREFLIGHT={args.out.as_posix()} pytest tests/test_preflight.py")
+    if launches[-1].get("next") != "done":
+        # The graded Runs have no checks after them, so an unfinished Run fails here.
+        raise SystemExit(f"the Run is not done: status says {launches[-1].get('next')}; "
+                         f"see {workdir}")
+    print(f"\ncheck it with: DRAGENT_PREFLIGHT={out.as_posix()} pytest tests/test_preflight.py")
     return workdir
 
 

@@ -33,7 +33,9 @@ class Transcript:
 
 
 def _events(path: Path):
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    # A crash can cut a line inside a multi-byte character; replace it rather than lose
+    # every event before it.
+    for line in Path(path).read_bytes().decode("utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
