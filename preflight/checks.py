@@ -152,15 +152,19 @@ def resume(run_dir: Path, summary: dict, transcripts: list[Transcript]) -> list[
     found = []
     decisions = _decisions(run_dir)
     registrations = [r for r in decisions if r.get("stage") == "register_plan"]
-    if len(registrations) != 1:
-        found.append(f"{len(registrations)} registrations, not 1")
+    if not registrations:
+        found.append("no registration")
+    # Registering the same Plan again is legal, so the first launch may do it; what a
+    # resumed launch must not do is plan again.
+    bash = [c.input.get("command", "") for c in transcripts[1].calls if c.name == "Bash"]
+    if any(re.search(r"\bdrtools\s+validate-plan\b", cmd) for cmd in bash):
+        found.append("the second launch registered again")
     run = RunDir(run_dir, create=False)
     for candidate in (registrations[-1].get("candidates") or []) if registrations else []:
         tries = attempts(run, candidate)
         if tries and tries[0].get("outcome") == "ok" and len(tries) > 1:
             found.append(f"{candidate} succeeded first time and ran again")
     # Positions as (call, offset), so two commands in one call are ordered too.
-    bash = [c.input.get("command", "") for c in transcripts[1].calls if c.name == "Bash"]
     status_at = next(((i, m.start()) for i, cmd in enumerate(bash)
                       for m in re.finditer(r"\bdrtools\s+status\b", cmd)), None)
     stage_at = next(((i, m.start()) for i, cmd in enumerate(bash)

@@ -147,6 +147,30 @@ def test_a_damaged_utf8_tail_still_yields_the_calls_before_it(tmp_path):
     assert [c.name for c in read(path).calls] == ["Bash"]
 
 
+def test_resume_refuses_a_second_launch_that_registers_again(finished_run):
+    status = Call("Bash", {"command": "drtools status --run-dir runs/r"})
+    again = Call("Bash", {"command": "drtools validate-plan --run-dir runs/r"})
+    summary = {"launches": [{"next": "execute"}, {"next": "done"}]}
+    problems = resume(finished_run.path, summary, [Transcript(), _with(status, again)])
+    assert any("registered again" in p for p in problems)
+
+
+def test_resume_allows_the_first_launch_to_register_twice(finished_run, tmp_path):
+    # Day 24: the first launch fixed a registration warning and registered the same
+    # Plan again, which the contract allows; the check counted both.
+    import shutil
+    run = tmp_path / "r"
+    shutil.copytree(finished_run.path, run)
+    log = run / "decisions.jsonl"
+    first = next(line for line in log.read_text(encoding="utf-8").splitlines()
+                 if json.loads(line).get("stage") == "register_plan")
+    with log.open("a", encoding="utf-8") as f:
+        f.write(first + "\n")
+    status = Call("Bash", {"command": "drtools status --run-dir runs/r"})
+    summary = {"launches": [{"next": "execute"}, {"next": "done"}]}
+    assert not resume(run, summary, [Transcript(), _with(status)])
+
+
 def test_resume_refuses_a_stage_run_before_status_in_the_same_call(finished_run):
     first = Transcript()
     second = _with(Call("Bash", {"command": "drtools embed --run-dir runs/r --id a; drtools status --run-dir runs/r"}))
