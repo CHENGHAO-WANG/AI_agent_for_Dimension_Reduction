@@ -4351,4 +4351,25 @@ first on the code about to change. No cut is planned for now; the rule above sta
   spec -- and two were a term's concept in other words, the Ceiling in execute-plan and
   the Adoption in write-report, now named. No concept lacked a term.
 
-  819 tests and 3 skipped, 322s.
+  *A Codex review of the day*, eleven findings, all of the pre-flight's own code. Fixed
+  eight, each with a test that fails without it:
+  - Check 3 missed a wildcard read across Runs, `runs/*/plan.json`, and read a Grep's
+    pattern and a Bash call's description as if they were paths; it now reads only the
+    fields that name one. Check 2 took the word `for` in any text for a loop. The
+    `resume` check ordered `status` and a stage only across calls, not within one. A
+    crash that cut a line inside a UTF-8 character lost the whole transcript.
+  - The launcher accepted an `--out` inside the repository, where `.claude/` reaches the
+    agent; checked the plugin only after the whole session; and returned normally from
+    a Run that did not finish, which for a graded Run nothing checks afterwards. It now
+    refuses the first, stops the agent at its first event without the plugin, and fails
+    when the Run is not `done`.
+  - Not fixed: a relative Write path, since Claude Code's Write and Edit take absolute
+    paths; a `..` traversal, which nothing recorded resembles; and a shell write, which
+    the harness refuses under this allowlist in every Run recorded.
+  - One cost of the fixing. The test that `--out` inside the repository is refused,
+    run before the guard existed, launched a real agent there: 36 calls and about a
+    dollar before it was stopped, and nothing but its own folder written. A test of a
+    refusal to spend runs the spending path when it is red; it now replaces the launch
+    with a stub that fails.
+
+  827 tests and 3 skipped, 303s.
