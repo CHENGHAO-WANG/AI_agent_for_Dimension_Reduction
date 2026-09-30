@@ -26,6 +26,9 @@ from preflight.transcript import Transcript, read
 REPO = Path(__file__).resolve().parents[1]
 ALLOWED = ["Bash(drtools:*)", "Bash(ls:*)", "Bash(cat:*)",
            "Read", "Write", "Edit", "Glob", "Grep", "Skill"]
+#: Pinned, so a Run does not take whatever model the user's settings default to. The
+#: pre-flight was validated on this one.
+MODEL = "claude-opus-5-5"
 SCENARIOS = {
     "representation": ("wide_counts --auto", "pf-rep"),
     "resume": ("wide_counts --auto", "pf-resume"),
@@ -40,6 +43,7 @@ INIT_TIMEOUT_S = 120
 
 def build_command(claude: str, prompt: str, max_turns: int | None) -> list[str]:
     command = [claude, "-p", prompt,
+               "--model", MODEL,
                "--plugin-dir", REPO.as_posix(),
                "--settings", json.dumps({"disableAllHooks": True}),
                "--strict-mcp-config",

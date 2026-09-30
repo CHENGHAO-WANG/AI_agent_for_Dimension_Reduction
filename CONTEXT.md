@@ -56,7 +56,8 @@ _Avoid_: PCA baseline, control, reference candidate
 The Linear baseline behind the variance selection and z-score that other Candidates
 carry. A Plan holds one whenever another Candidate selects features, so that a
 Candidate's difference from the Linear baseline can be split between its method and its
-preprocessing.
+preprocessing. The split holds at equal d; between Candidates at different d, each part
+is also the dimension's.
 _Avoid_: selected PCA, preprocessing control
 
 **Stage**:

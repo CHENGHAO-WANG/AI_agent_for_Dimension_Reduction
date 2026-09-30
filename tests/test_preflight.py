@@ -15,7 +15,7 @@ import pytest
 
 from preflight.checks import (SCENARIO_CHECKS, background, chained_slow, finished,
                               foreign_reads, stray_writes)
-from preflight.launch import ALLOWED, REPO, build_command, plugin_loaded
+from preflight.launch import ALLOWED, MODEL, REPO, build_command, plugin_loaded
 from preflight.transcript import Transcript, read
 
 FIXTURES = Path(__file__).parent / "fixtures" / "transcripts"
@@ -28,6 +28,8 @@ def test_the_command_carries_day_24s_configuration_unchanged():
     assert all(tool in cmd for tool in ALLOWED)
     assert cmd[cmd.index("--disallowedTools") + 1] == "PowerShell"
     assert "--max-turns" not in cmd
+    # Day 24: an unpinned launch took the user's default model, Sonnet, not Opus.
+    assert cmd[cmd.index("--model") + 1] == MODEL == "claude-opus-5-5"
     assert build_command("claude", "x", 25)[-2:] == ["--max-turns", "25"]
 
 

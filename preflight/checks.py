@@ -15,7 +15,9 @@ from preflight.transcript import Call, Transcript
 #: The commands that can take minutes. Two in one call can outlast the tool's 600 s
 #: timeout, and the harness then moves the call to the background (day 21).
 SLOW = re.compile(r"\bdrtools\s+(embed|evaluate|prepare-reference|recon|render)\b")
-LOOP = re.compile(r"\bfor\s+\w+\s+in\b|\bwhile\s|;\s*do\b")
+#: A shell loop's body opens with `do` after a `;` or a newline; a Python comprehension
+#: inside `python -c` has `for x in` but no `do`.
+LOOP = re.compile(r"[;\n]\s*do\b")
 #: The fields of each reading tool that name what it reads. A Grep's pattern or a Bash
 #: call's description is text, not a destination.
 READ_FIELDS = {"Read": ("file_path",), "Glob": ("path", "pattern"),
