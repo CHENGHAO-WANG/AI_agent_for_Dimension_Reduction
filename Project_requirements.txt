@@ -1,0 +1,105 @@
+Project 1: Building an AI Agent for Dimension Reduction and Exploratory Data Analysis
+
+In this project, you will build an AI agent that automatically performs exploratory data analysis through dimension reduction. Unlike a traditional benchmarking study, your goal is to develop an automated analysis system that can analyze previously unseen datasets with minimal human intervention.
+
+Given a new dataset, your agent should automatically determine an appropriate analysis workflow, execute the selected methods, evaluate the results, and generate a summary of its findings.
+
+Requirements
+
+Task
+
+Your agent should automatically perform the following steps:
+
+    Inspect the dataset (e.g., number of samples, number of features, missing values, sparsity, feature types, etc.).
+    Recommend and perform appropriate preprocessing when necessary.
+    Select one or more suitable dimension reduction methods.
+    Select appropriate hyperparameters.
+    Generate low-dimensional representations and visualizations.
+    Evaluate the resulting embeddings using appropriate quantitative or qualitative criteria.
+    Produce a final analysis report summarizing the decisions and findings.
+
+The objective is to build a system that can analyze new datasets automatically rather than manually applying every available algorithm.
+
+Dimension Reduction Methods
+
+Your agent should be capable of using the dimension reduction methods covered in class. These may include, but are not limited to,
+
+    PCA
+    At least one variant of PCA
+    MDS
+    Isomap
+    LLE
+    Laplacian Eigenmaps
+    Diffusion Maps
+    GPLVM
+    t-SNE
+    UMAP
+
+Your agent does not need to apply every method to every dataset. Instead, it should determine which methods are appropriate for the given data and explain its choices.
+
+Datasets
+
+Evaluate your agent on at least two real datasets. You may use your own data (ideally related to your dissertation), or you can select from the following backup datasets:
+
+PathMNIST or its variants within MedMNIST (see a quick summary here: MedMNIST)
+
+Single-cell RNA sequencing data (see an example here: Scanpy 3K PBMC)
+
+Deliverables
+
+Submit the following materials through Canvas.
+
+    Source code
+
+Your agent should execute the planning, analysis, evaluation, etc, and complete the pipeline with minimal manual guidance/intervention after providing a dataset and/or instructions.
+
+    Generated outputs
+
+For each of the two chosen datasets, your agent should generate:
+
+    visualizations of the learned representations,
+    quantitative evaluation results,
+    a summary of the selected methods and preprocessing steps,
+    a final analysis report.
+
+The exact format of these outputs is up to you. The two reports should be named “generated_report_1” and “generated_report_2”. These two AI-generated reports should be submitted with the source code.
+
+    Report
+
+In addition to the source code and the two AI-generated reports, submit a manually prepared PDF report named “report” of at most four pages (excluding references and appendices).
+
+Your report should include:
+
+    an overview of your system architecture,
+    how the agent makes analysis decisions,
+    the tools or AI models used,
+    experimental results on all datasets,
+    strengths and limitations of your system.
+
+The report should focus on the design and behavior of the AI agent rather than providing an exhaustive benchmark of individual dimension reduction algorithms.
+
+Evaluation
+
+Projects will be evaluated based on the following criteria:
+
+    Degree of automation and autonomy of the analysis pipeline.
+    Quality of the analysis decisions made by the agent.
+    Correct use of dimension reduction methods.
+    Quality and clarity of the generated visualizations.
+    Quality of the generated reports and interpretations.
+    Robustness on different datasets.
+    Overall software design and reproducibility.
+
+The emphasis of this project is on building an intelligent and reusable analysis system, not on obtaining the best performance on a particular dataset.
+
+Tools & Examples
+
+You may use any publicly available software packages or AI models. Libraries such as scikit-learn, Scanpy, PyTorch, TensorFlow, LangChain, OpenAI Codex, Anthropic Claude Code, OpenAI APIs, Anthropic APIs, or other agent frameworks using open-source models are all acceptable.
+
+The specific implementation is entirely up to you.
+
+For inspiration, the following Kaggle page (you may need to sign up for a free Kaggle account to view) highlights a few STAI-X 2026 statistical agent designs (Award Challenge C) with affiliated GitHub links available:
+
+    https://www.kaggle.com/competitions/stai-x-challenge-2026/discussion?sort=votes
+
+The winning agent designs were: Biostat-Superpowers, DGPForge, and Sentinelle, but you may also consider the other highly upvoted designs for implementation ideas. Note that many of these designs use either popular subscription or API services such as Codex or Claude Code, however, it is acceptable to replace API calls with open-source models.
